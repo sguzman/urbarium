@@ -1,0 +1,40 @@
+name: Verify Downtown LA elevation source
+
+# Validate upstream DEM access separately from publishing a playable website.
+on:
+  push:
+    paths:
+      - .github/workflows/terrain-snapshot.yml
+  workflow_dispatch:
+
+jobs:
+  fetch-dem:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch real bare-earth Terrarium tiles
+        run: |
+          python3 -m pip install Pillow
+          python3 scripts/fetch-terrain.py \
+            --region regions/downtown-la.json \
+            --out data/processed/downtown-la-terrain.json
+      - name: Validate grid and terrain relief
+        run: |
+          python3 - <<'PY'
+          import json,math
+          data=json.load(open('data/processed/downtown-la-terrain.json'))
+          a=data['heights_m']
+          assert len(a)==data['width']*data['height']==65*65
+          assert all(math.isfinite(h) for h in a)
+          assert max(a)-min(a)>2, "Downtown elevation relief unexpectedly flat"
+          print("Terrain relief meters:",round(max(a)-min(a),2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: downtown-la-dem-grid
+          path: data/processed/downtown-la-terrain.json
+          retention-days: 7
