@@ -262,7 +262,11 @@ mod tests {
         assert_eq!(mesh.indices.len(),6);
         assert!((mesh.vertices[0].position[2]-3.25).abs()<1e-4);
         assert!((mesh.vertices[1].position[2]+3.25).abs()<1e-4);
-        let p=mesh.indices[0..3].map(|i|mesh.vertices[i as usize].position);
+        let p=[
+            mesh.vertices[mesh.indices[0] as usize].position,
+            mesh.vertices[mesh.indices[1] as usize].position,
+            mesh.vertices[mesh.indices[2] as usize].position,
+        ];
         let signed=(p[1][0]-p[0][0])*(p[2][2]-p[0][2])
             -(p[1][2]-p[0][2])*(p[2][0]-p[0][0]);
         assert!(signed < 0.0,"winding must face +Y");
