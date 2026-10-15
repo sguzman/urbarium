@@ -47,11 +47,12 @@ struct Camera {
     pitch: f32,
     speed: f32,
     eye_clearance: f32,
+    fast_mode: bool,
 }
 impl Default for Camera {
     fn default() -> Self {
         Self { position: Vec3::new(0.0, 1.7, 0.0),
-            yaw: std::f32::consts::PI, pitch: 0.0, speed: 3.4, eye_clearance:1.7 }
+            yaw: std::f32::consts::PI, pitch: 0.0, speed: 3.4, eye_clearance:1.7, fast_mode:false }
     }
 }
 impl Camera {
@@ -74,7 +75,7 @@ impl Camera {
                 let x=(pair[0].x+pair[1].x)*0.5;
                 let z=(pair[0].z+pair[1].z)*0.5;
                 let score=x*x+z*z;
-                let eye=terrain.sample(&city.region,x,z) as f64 + 1.7;
+                let eye=terrain.sample_surface(&city.region,x,z) as f64 + 1.7;
                 if score<closest && !world.blocked(x,z,eye,0.35) {
                     closest=score;
                     camera.position=Vec3::new(x as f32,eye as f32,z as f32);
@@ -119,14 +120,13 @@ impl Camera {
         if pressed.contains(&KeyCode::ArrowUp) { self.mouse_look(0.0, -130.0*elapsed); }
         if pressed.contains(&KeyCode::ArrowDown) { self.mouse_look(0.0, 130.0*elapsed); }
         if delta.length_squared() > 0.0 {
-            let boost = if pressed.contains(&KeyCode::ShiftLeft) ||
-                pressed.contains(&KeyCode::ShiftRight) { 4.0 } else { 1.0 };
+            let boost = if self.fast_mode { 18.0 } else { 1.0 };
             let movement=delta.normalize() * elapsed.min(0.08) * self.speed * boost;
             self.eye_clearance=(self.eye_clearance+movement.y).max(1.7);
             let start=[self.position.x as f64,self.position.z as f64];
             let end=[start[0]+movement.x as f64,start[1]+movement.z as f64];
             let ground_at=|x:f64,z:f64| -> f32 {
-                terrain.map(|(grid,region)| grid.sample(region,x,z)).unwrap_or(0.0)
+                terrain.map(|(grid,region)| grid.sample_surface(region,x,z)).unwrap_or(0.0)
             };
             let eye=ground_at(end[0],end[1])+self.eye_clearance;
             let resolved=if let Some(world)=world {
@@ -580,6 +580,15 @@ impl ApplicationHandler<AppEvent> for App {
             },
             WindowEvent::KeyboardInput{event,..}=>{
                 if let PhysicalKey::Code(key)=event.physical_key {
+                    // Shift toggles fast travel on key-down, not a hold.
+                    // Ignore key-repeat so one key press changes mode once.
+                    if matches!(key,KeyCode::ShiftLeft|KeyCode::ShiftRight)
+                        && event.state==ElementState::Pressed && !event.repeat {
+                        if let Stage::Ready(gfx)=&mut self.state {
+                            gfx.camera.fast_mode=!gfx.camera.fast_mode;
+                            set_speed_label(gfx.camera.fast_mode);
+                        }
+                    }
                     if event.state==ElementState::Pressed {
                         self.keys.insert(key);
                     } else {self.keys.remove(&key);}
@@ -655,6 +664,20 @@ fn install_pointerlockchange(proxy:EventLoopProxy<AppEvent>) {
     );
     callback.forget();
 }
+fn set_speed_label(fast:bool) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("speed-state") {
+            el.set_text_content(Some(if fast {
+                "FAST · 61 m/s"
+            }else{
+                "WALK · 3.4 m/s"
+            }));
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=fast;
+}
 fn expose_camera_pose(camera:&Camera) {
     #[cfg(target_arch="wasm32")]
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
@@ -664,6 +687,9 @@ fn expose_camera_pose(camera:&Camera) {
             let _=el.set_attribute("data-camera-yaw",&camera.yaw.to_string());
             let _=el.set_attribute("data-camera-x",&camera.position.x.to_string());
             let _=el.set_attribute("data-camera-z",&camera.position.z.to_string());
+            let _=el.set_attribute("data-speed-mode",if camera.fast_mode {"fast"} else {"walk"});
+            let _=el.set_attribute("data-speed-mps",&(camera.speed *
+                if camera.fast_mode {18.0}else{1.0}).to_string());
         }
     }
     #[cfg(not(target_arch="wasm32"))]
@@ -721,6 +747,23 @@ mod tests {
         assert!(camera.forward().x > 0.0, "rightward mouse motion looks right");
         assert!((camera.position.y-1.7).abs()<f32::EPSILON);
         assert!(camera.speed < 5.0);
+    }
+
+    #[test]
+    fn fast_travel_is_over_ten_times_walking_speed() {
+        let mut walk=Camera::default();
+        let mut fast=Camera::default();
+        fast.fast_mode=true;
+        let mut keys=HashSet::new();
+        keys.insert(KeyCode::KeyW);
+        walk.move_by(&keys,0.05,None,None);
+        fast.move_by(&keys,0.05,None,None);
+        let walk_distance=(walk.position.x*walk.position.x+
+            walk.position.z*walk.position.z).sqrt();
+        let fast_distance=(fast.position.x*fast.position.x+
+            fast.position.z*fast.position.z).sqrt();
+        assert!(fast_distance>walk_distance*15.0);
+        assert_eq!(fast.eye_clearance,1.7);
     }
 
     #[test]
