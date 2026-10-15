@@ -138,6 +138,23 @@ materials; the scene has no textures, accurate terrain, road junction patches,
 bridges, or collision yet. Geometry remains generated in Rust; a future
 WebGPU/WASM runtime will use the same geometry pipeline.
 
+## Experimental WebGPU browser viewer
+
+A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.
+It generates GPU buffers from the same Rust `mesh_city` and `mesh_streets`
+functions used by the OBJ/GLB exporters, without a second JS mesh generator.
+The browser loads `assets/downtown-la.json` and supports WASD, Shift, E/Q,
+mouse drag and arrow-key camera navigation. The viewer is **not yet a
+deployed public site**, and terrain, grade separation, true intersection
+surfaces and player collision are pending.
+
+For a local browser bundle, install the `wasm32-unknown-unknown` Rust
+target and Trunk v0.21.14, generate `data/processed/downtown-la.json`
+using the existing Overture workflow, then copy that city JSON to
+`web/assets/downtown-la.json` and use `trunk serve --open`. The
+`web/assets` folder is intentionally excluded from Git. CI checks
+native and wasm compilation separately.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.

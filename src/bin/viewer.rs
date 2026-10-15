@@ -1,0 +1,519 @@
+//! First WASM/WebGPU city viewer: actual procedural Urbarium meshes, no JS geometry.
+//! Left-drag / arrow keys look, WASD move, E/Q rise/descend, Shift accelerates.
+
+use std::collections::HashSet;
+use std::mem::size_of;
+use std::time::Instant;
+
+use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Vec3};
+use urbarium::geometry::{mesh_city, HeightPolicy, Mesh, Vertex};
+use urbarium::roads::{mesh_streets, SurfaceKind};
+use urbarium::City;
+use wgpu::util::DeviceExt;
+use winit::application::ApplicationHandler;
+use winit::dpi::PhysicalSize;
+use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::window::{Window, WindowId};
+
+#[cfg(target_arch = "wasm32")]
+type SharedWindow = std::rc::Rc<Window>;
+#[cfg(not(target_arch = "wasm32"))]
+type SharedWindow = std::sync::Arc<Window>;
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct GpuVertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    color: [f32; 3],
+}
+const VERTEX_ATTRS: [wgpu::VertexAttribute; 3] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CameraUniform { view_proj: [[f32; 4]; 4] }
+
+#[derive(Clone, Debug)]
+struct Camera {
+    position: Vec3,
+    yaw: f32,
+    pitch: f32,
+    speed: f32,
+}
+impl Default for Camera {
+    fn default() -> Self {
+        Self { position: Vec3::new(0.0, 95.0, 205.0),
+            yaw: std::f32::consts::PI, pitch: -0.32, speed: 42.0 }
+    }
+}
+impl Camera {
+    fn forward(&self) -> Vec3 {
+        Vec3::new(self.yaw.sin() * self.pitch.cos(), self.pitch.sin(),
+            self.yaw.cos() * self.pitch.cos())
+    }
+    fn view_projection(&self, width: u32, height: u32) -> Mat4 {
+        let aspect = width as f32 / height.max(1) as f32;
+        let view = Mat4::look_to_rh(self.position, self.forward(), Vec3::Y);
+        let projection = Mat4::perspective_rh(65.0_f32.to_radians(), aspect, 0.1, 6000.0);
+        projection * view
+    }
+    fn mouse_look(&mut self, dx: f32, dy: f32) {
+        self.yaw += dx * 0.003;
+        self.pitch = (self.pitch - dy * 0.003).clamp(-1.52, 1.52);
+    }
+    fn move_by(&mut self, pressed: &HashSet<KeyCode>, elapsed: f32) {
+        let ground_forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
+        let right = Vec3::new(-ground_forward.z, 0.0, ground_forward.x);
+        let mut delta = Vec3::ZERO;
+        if pressed.contains(&KeyCode::KeyW) { delta += ground_forward; }
+        if pressed.contains(&KeyCode::KeyS) { delta -= ground_forward; }
+        if pressed.contains(&KeyCode::KeyD) { delta += right; }
+        if pressed.contains(&KeyCode::KeyA) { delta -= right; }
+        if pressed.contains(&KeyCode::KeyE) || pressed.contains(&KeyCode::Space) {
+            delta += Vec3::Y;
+        }
+        if pressed.contains(&KeyCode::KeyQ) || pressed.contains(&KeyCode::ControlLeft) {
+            delta -= Vec3::Y;
+        }
+        if pressed.contains(&KeyCode::ArrowLeft) { self.mouse_look(-130.0*elapsed, 0.0); }
+        if pressed.contains(&KeyCode::ArrowRight) { self.mouse_look(130.0*elapsed, 0.0); }
+        if pressed.contains(&KeyCode::ArrowUp) { self.mouse_look(0.0, -130.0*elapsed); }
+        if pressed.contains(&KeyCode::ArrowDown) { self.mouse_look(0.0, 130.0*elapsed); }
+        if delta.length_squared() > 0.0 {
+            let boost = if pressed.contains(&KeyCode::ShiftLeft) ||
+                pressed.contains(&KeyCode::ShiftRight) { 4.0 } else { 1.0 };
+            self.position += delta.normalize() * elapsed.min(0.08) * self.speed * boost;
+            self.position.y = self.position.y.max(1.8);
+        }
+    }
+}
+
+fn append_part(
+    mesh: &Mesh, color: [f32;3], verts: &mut Vec<GpuVertex>, indices: &mut Vec<u32>
+) -> Result<(), String> {
+    let base = u32::try_from(verts.len()).map_err(|_| "too many city vertices")?;
+    if mesh.indices.iter().any(|idx| *idx as usize >= mesh.vertices.len() ||
+        idx.checked_add(base).is_none()) {
+        return Err("invalid source geometry index".into());
+    }
+    verts.extend(mesh.vertices.iter().map(|v| GpuVertex {
+        position: v.position, normal: v.normal, color,
+    }));
+    indices.extend(mesh.indices.iter().map(|idx| idx+base));
+    Ok(())
+}
+
+fn combined_city(city: &City) -> Result<(Vec<GpuVertex>, Vec<u32>), String> {
+    let (buildings, building_report) = mesh_city(city, HeightPolicy::default())?;
+    let (roads, road_report) = mesh_streets(city)?;
+    if building_report.buildings_meshed == 0 || building_report.buildings_skipped > 0 {
+        return Err(format!("city has {} buildings meshed, {} skipped",
+            building_report.buildings_meshed, building_report.buildings_skipped));
+    }
+    let mut verts = Vec::new();
+    let mut indices = Vec::new();
+    let lo = city.region.project(city.region.bbox[0], city.region.bbox[1]);
+    let hi = city.region.project(city.region.bbox[2], city.region.bbox[3]);
+    let ground = Mesh {
+        vertices: [
+            [lo.x as f32,-0.12,lo.z as f32],
+            [hi.x as f32,-0.12,lo.z as f32],
+            [lo.x as f32,-0.12,hi.z as f32],
+            [hi.x as f32,-0.12,hi.z as f32],
+        ].into_iter().map(|position| Vertex{
+            position,normal:[0.0,1.0,0.0]
+        }).collect(),
+        indices: vec![0,2,1,1,2,3],
+    };
+    append_part(&ground,[0.39,0.44,0.42],&mut verts,&mut indices)?;
+    append_part(&buildings,[0.71,0.76,0.81],&mut verts,&mut indices)?;
+    for (kind,mesh) in roads.layers {
+        let color=match kind {
+            SurfaceKind::Road => [0.24,0.26,0.29],
+            SurfaceKind::Walk => [0.73,0.65,0.52],
+            SurfaceKind::Steps => [0.84,0.55,0.36],
+            SurfaceKind::Rail => [0.40,0.52,0.61],
+        };
+        append_part(&mesh,color,&mut verts,&mut indices)?;
+    }
+    info(&format!("Loaded {} buildings, {} transport spans, {} vertices, {} triangles",
+        building_report.buildings_meshed,road_report.segments_meshed,
+        verts.len(),indices.len()/3));
+    Ok((verts,indices))
+}
+
+fn info(message: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+            if let Some(el) = doc.get_element_by_id("status") {
+                el.set_text_content(Some(message));
+            }
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    eprintln!("Urbarium: {message}");
+}
+
+async fn fetch_city() -> Result<City, String> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let response = gloo_net::http::Request::get("./assets/downtown-la.json")
+            .send().await.map_err(|e| format!("city fetch: {e}"))?;
+        if !response.ok() {
+            return Err(format!("city asset returned HTTP {}",response.status()));
+        }
+        let data=response.text().await.map_err(|e| format!("city body: {e}"))?;
+        serde_json::from_str(&data).map_err(|e| format!("city JSON: {e}"))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let data=std::fs::read_to_string("data/processed/downtown-la.json")
+            .map_err(|e| format!("native viewer requires data/processed/downtown-la.json: {e}"))?;
+        serde_json::from_str(&data).map_err(|e| format!("city JSON: {e}"))
+    }
+}
+
+struct Graphics {
+    window: SharedWindow,
+    surface: wgpu::Surface<'static>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    config: wgpu::SurfaceConfiguration,
+    pipeline: wgpu::RenderPipeline,
+    depth: wgpu::TextureView,
+    camera: Camera,
+    camera_buffer: wgpu::Buffer,
+    camera_bind_group: wgpu::BindGroup,
+    vertices: wgpu::Buffer,
+    indices: wgpu::Buffer,
+    index_count: u32,
+}
+impl Graphics {
+    fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Urbarium depth"),
+            size: wgpu::Extent3d { width: width.max(1), height: height.max(1),
+                depth_or_array_layers: 1 },
+            mip_level_count: 1, sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth24Plus,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        }).create_view(&wgpu::TextureViewDescriptor::default())
+    }
+    fn resize(&mut self, size: PhysicalSize<u32>) {
+        self.config.width = size.width.max(1);
+        self.config.height = size.height.max(1);
+        self.surface.configure(&self.device, &self.config);
+        self.depth=Self::depth_view(&self.device,self.config.width,self.config.height);
+    }
+    fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
+        self.camera.move_by(pressed,dt);
+        let vp=self.camera.view_projection(self.config.width,self.config.height);
+        self.queue.write_buffer(&self.camera_buffer,0,
+            bytemuck::bytes_of(&CameraUniform{view_proj:vp.to_cols_array_2d()}));
+    }
+    fn draw(&mut self) {
+        let frame = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(frame) |
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                self.resize(self.window.inner_size()); return;
+            }
+            wgpu::CurrentSurfaceTexture::Timeout |
+            wgpu::CurrentSurfaceTexture::Occluded |
+            wgpu::CurrentSurfaceTexture::Validation => return,
+        };
+        let view=frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
+            label:Some("Urbarium encoder")
+        });
+        {
+            let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label:Some("Urbarium city"),
+                color_attachments:&[Some(wgpu::RenderPassColorAttachment {
+                    view:&view,depth_slice:None,resolve_target:None,
+                    ops:wgpu::Operations {
+                        load:wgpu::LoadOp::Clear(wgpu::Color{r:0.065,g:0.09,b:0.13,a:1.0}),
+                        store:wgpu::StoreOp::Store
+                    }
+                })],
+                depth_stencil_attachment:Some(wgpu::RenderPassDepthStencilAttachment {
+                    view:&self.depth,
+                    depth_ops:Some(wgpu::Operations{
+                        load:wgpu::LoadOp::Clear(1.0),store:wgpu::StoreOp::Store
+                    }),
+                    stencil_ops:None,
+                }),
+                timestamp_writes:None,occlusion_query_set:None,multiview_mask:None,
+            });
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0,&self.camera_bind_group,&[]);
+            pass.set_vertex_buffer(0,self.vertices.slice(..));
+            pass.set_index_buffer(self.indices.slice(..),wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..self.index_count,0,0..1);
+        }
+        self.queue.submit([encoder.finish()]);
+        self.queue.present(frame);
+    }
+}
+
+async fn init_graphics(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) {
+    let result=try_init(window,proxy.clone()).await;
+    if let Err(err)=result {
+        info(&format!("Viewer error: {err}"));
+        let _=proxy.send_event(AppEvent::Error(err));
+    }
+}
+
+async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<(), String> {
+    info("Loading Downtown LA streets and buildings...");
+    let city=fetch_city().await?;
+    let (vertices,indices)=combined_city(&city)?;
+    info("Connecting to WebGPU...");
+    let instance=wgpu::util::new_instance_with_webgpu_detection(
+        wgpu::InstanceDescriptor::new_without_display_handle()).await;
+    let surface=instance.create_surface(window.clone())
+        .map_err(|e|format!("surface: {e}"))?;
+    let adapter=instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference:wgpu::PowerPreference::HighPerformance,
+        force_fallback_adapter:false,
+        compatible_surface:Some(&surface),
+        apply_limit_buckets:false,
+    }).await.map_err(|e|format!("WebGPU adapter: {e}"))?;
+    let (device,queue)=adapter.request_device(&wgpu::DeviceDescriptor {
+        label:Some("Urbarium device"),
+        required_features:wgpu::Features::empty(),
+        required_limits:wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+        memory_hints:wgpu::MemoryHints::Performance,
+        trace:Default::default(),
+        experimental_features:Default::default(),
+    }).await.map_err(|e|format!("WebGPU device: {e}"))?;
+    let size=window.inner_size();
+    let mut config=surface.get_default_config(&adapter,size.width.max(1),size.height.max(1))
+        .ok_or("No compatible GPU surface configuration")?;
+    config.present_mode=wgpu::PresentMode::Fifo;
+    surface.configure(&device,&config);
+    let camera=Camera::default();
+    let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label:Some("Camera uniform"),
+        contents:bytemuck::bytes_of(&CameraUniform {
+            view_proj:camera.view_projection(config.width,config.height).to_cols_array_2d()
+        }),
+        usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,
+    });
+    let camera_layout=device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
+        label:Some("Camera layout"),
+        entries:&[wgpu::BindGroupLayoutEntry{
+            binding:0,visibility:wgpu::ShaderStages::VERTEX,
+            ty:wgpu::BindingType::Buffer{
+                ty:wgpu::BufferBindingType::Uniform,has_dynamic_offset:false,min_binding_size:None
+            },
+            count:None,
+        }],
+    });
+    let camera_bind_group=device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label:Some("Camera"),
+        layout:&camera_layout,
+        entries:&[wgpu::BindGroupEntry{
+            binding:0,resource:camera_buffer.as_entire_binding()
+        }],
+    });
+    let shader=device.create_shader_module(wgpu::ShaderModuleDescriptor{
+        label:Some("Urbarium shader"),
+        source:wgpu::ShaderSource::Wgsl(include_str!("viewer.wgsl").into()),
+    });
+    let layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
+        label:Some("City pipeline layout"),
+        bind_group_layouts:&[&camera_layout],
+        immediate_size:0,
+    });
+    let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+        label:Some("Urbarium city pipeline"),
+        layout:Some(&layout),
+        vertex:wgpu::VertexState{
+            module:&shader,entry_point:Some("vs_main"),
+            buffers:&[wgpu::VertexBufferLayout{
+                array_stride:size_of::<GpuVertex>() as u64,
+                step_mode:wgpu::VertexStepMode::Vertex,
+                attributes:&VERTEX_ATTRS,
+            }],
+            compilation_options:Default::default(),
+        },
+        fragment:Some(wgpu::FragmentState{
+            module:&shader,entry_point:Some("fs_main"),
+            targets:&[Some(config.format.into())],
+            compilation_options:Default::default(),
+        }),
+        primitive:wgpu::PrimitiveState {
+            topology:wgpu::PrimitiveTopology::TriangleList,
+            cull_mode:None,..Default::default()
+        },
+        depth_stencil:Some(wgpu::DepthStencilState {
+            format:wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled:true,depth_compare:wgpu::CompareFunction::LessEqual,
+            stencil:Default::default(),bias:Default::default(),
+        }),
+        multisample:Default::default(),multiview_mask:None,cache:None,
+    });
+    let depth=Graphics::depth_view(&device,config.width,config.height);
+    let vertex_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+        label:Some("Urbarium vertices"),contents:bytemuck::cast_slice(&vertices),
+        usage:wgpu::BufferUsages::VERTEX,
+    });
+    let index_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+        label:Some("Urbarium indices"),contents:bytemuck::cast_slice(&indices),
+        usage:wgpu::BufferUsages::INDEX,
+    });
+    let index_count=u32::try_from(indices.len()).map_err(|_|"scene has too many indices")?;
+    let graphics=Graphics {
+        window,surface,device,queue,config,pipeline,depth,camera,
+        camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
+    };
+    info("Downtown LA ready — WASD move, Shift sprint, E/Q up/down, drag to look");
+    proxy.send_event(AppEvent::Ready(graphics))
+        .map_err(|_|"Viewer window closed before initialization".to_string())
+}
+
+enum AppEvent { Ready(Graphics), Error(String) }
+enum Stage { Boot, Ready(Graphics), Error(String) }
+struct App {
+    state:Stage,
+    window:Option<SharedWindow>,
+    keys:HashSet<KeyCode>,
+    dragging:bool,
+    last_cursor:Option<(f64,f64)>,
+    last_frame:Instant,
+}
+impl App {
+    fn new() -> Self {
+        Self{state:Stage::Boot,window:None,keys:HashSet::new(),
+            dragging:false,last_cursor:None,last_frame:Instant::now()}
+    }
+}
+impl ApplicationHandler<AppEvent> for App {
+    fn resumed(&mut self,event_loop:&ActiveEventLoop) {
+        if self.window.is_some() {return;}
+        let mut attrs=Window::default_attributes()
+            .with_title("Urbarium | Downtown Los Angeles")
+            .with_inner_size(PhysicalSize::new(1280,800));
+        #[cfg(target_arch="wasm32")]
+        {
+            use winit::platform::web::WindowAttributesExtWebSys;
+            attrs=attrs.with_append(true);
+        }
+        let window=SharedWindow::new(event_loop.create_window(attrs)
+            .expect("could not create Urbarium canvas"));
+        #[cfg(target_arch="wasm32")]
+        {
+            use winit::platform::web::WindowExtWebSys;
+            if let Some(canvas)=window.canvas() {canvas.set_tab_index(0);}
+        }
+        self.window=Some(window.clone());
+        // Initialization is asynchronous on WebGPU browsers.
+        let proxy=self_proxy(event_loop);
+        #[cfg(target_arch="wasm32")]
+        wasm_bindgen_futures::spawn_local(init_graphics(window,proxy));
+        #[cfg(not(target_arch="wasm32"))]
+        pollster::block_on(init_graphics(window,proxy));
+    }
+    fn user_event(&mut self,_event_loop:&ActiveEventLoop,event:AppEvent) {
+        match event {
+            AppEvent::Ready(gfx)=>{gfx.window.request_redraw();self.state=Stage::Ready(gfx);}
+            AppEvent::Error(msg)=>{self.state=Stage::Error(msg);}
+        }
+    }
+    fn window_event(&mut self,event_loop:&ActiveEventLoop,_id:WindowId,event:WindowEvent) {
+        match event {
+            WindowEvent::CloseRequested=>event_loop.exit(),
+            WindowEvent::Resized(size)=>{
+                if let Stage::Ready(gfx)=&mut self.state {gfx.resize(size);}
+            },
+            WindowEvent::Focused(false)=>{
+                self.keys.clear();self.dragging=false;self.last_cursor=None;
+            },
+            WindowEvent::KeyboardInput{event,..}=>{
+                if let PhysicalKey::Code(key)=event.physical_key {
+                    if event.state==ElementState::Pressed {
+                        self.keys.insert(key);
+                    } else {self.keys.remove(&key);}
+                    if key==KeyCode::Escape {self.dragging=false;}
+                }
+            },
+            WindowEvent::MouseInput{button:MouseButton::Left,state,..}=>{
+                self.dragging=state==ElementState::Pressed;
+                self.last_cursor=None;
+            },
+            WindowEvent::CursorMoved{position,..}=>{
+                let now=(position.x,position.y);
+                if self.dragging {
+                    if let Some((x,y))=self.last_cursor {
+                        if let Stage::Ready(gfx)=&mut self.state {
+                            gfx.camera.mouse_look((now.0-x) as f32,(now.1-y) as f32);
+                        }
+                    }
+                }
+                self.last_cursor=Some(now);
+            },
+            WindowEvent::RedrawRequested=>{
+                let dt=self.last_frame.elapsed().as_secs_f32().min(0.08);
+                self.last_frame=Instant::now();
+                if let Stage::Ready(gfx)=&mut self.state {
+                    gfx.update(&self.keys,dt);
+                    gfx.draw();
+                }
+            },
+            _=>{}
+        }
+    }
+    fn about_to_wait(&mut self,_event_loop:&ActiveEventLoop) {
+        if let Stage::Ready(gfx)=&self.state {gfx.window.request_redraw();}
+    }
+}
+
+// Store the event loop proxy in a thread-local once at startup; ApplicationHandler
+// does not itself provide the proxy in resumed().
+thread_local! {
+    static PROXY: std::cell::RefCell<Option<EventLoopProxy<AppEvent>>> =
+        const { std::cell::RefCell::new(None) };
+}
+fn self_proxy(_: &ActiveEventLoop) -> EventLoopProxy<AppEvent> {
+    PROXY.with(|cell|cell.borrow().as_ref().expect("viewer proxy set in main").clone())
+}
+
+fn main() {
+    #[cfg(target_arch="wasm32")]
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    let event_loop=EventLoop::<AppEvent>::with_user_event().build()
+        .expect("window event loop");
+    event_loop.set_control_flow(ControlFlow::Poll);
+    PROXY.with(|cell|*cell.borrow_mut()=Some(event_loop.create_proxy()));
+    #[cfg(target_arch="wasm32")]
+    {
+        use winit::platform::web::EventLoopExtWebSys;
+        event_loop.spawn_app(App::new());
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    event_loop.run_app(&mut App::new()).expect("event loop failure");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn camera_moves_and_pitch_stays_bounded() {
+        let mut camera=Camera::default();
+        let before=camera.position;
+        let mut keys=HashSet::new();
+        keys.insert(KeyCode::KeyW);
+        camera.move_by(&keys,0.04);
+        assert_ne!(camera.position,before);
+        camera.mouse_look(0.0,1e6);
+        assert!(camera.pitch >= -1.52);
+    }
+}

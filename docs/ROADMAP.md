@@ -36,7 +36,7 @@
 - [x] Validate actual Downtown LA GLB: 34,660 triangles, 6 scene meshes, 1,719,448 bytes, independently loaded via trimesh.
 - [ ] Add physically correct intersections, crossings, grade separation and additional roof primitives.
 - [ ] Tile spatial indexing, culling, LOD, material batching and simple collision.
-- [ ] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer walk controls.
+- [ ] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer walk controls (implementation introduced; browser packaging and QA pending).
 - [ ] Start at a recognizable Downtown LA site; navigation, FPS and error overlay.
 - [ ] Reproducible browser QA in Chromium and a publicly accessible demo URL.
 

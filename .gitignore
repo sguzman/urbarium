@@ -2,3 +2,7 @@
 /data/raw/
 /data/processed/
 .DS_Store
+
+/dist/
+/web/assets/*
+!/web/assets/.gitkeep

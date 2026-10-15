@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101921">
+  <title>Urbarium · Downtown Los Angeles</title>
+  <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer">
+  <link data-trunk rel="copy-dir" href="web/assets">
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    html, body {margin:0;width:100%;height:100%;overflow:hidden;background:#101921;color:#e7eef3;}
+    canvas {display:block;width:100vw;height:100vh;outline:none;touch-action:none;}
+    .hud {position:fixed;top:16px;left:18px;z-index:2;padding:12px 16px;
+      background:rgba(8,17,24,.82);border:1px solid #394b55;border-radius:10px;
+      max-width:min(600px, calc(100vw - 68px));pointer-events:none;backdrop-filter:blur(7px);}
+    h1 {margin:0 0 5px;font-size:18px;letter-spacing:.06em;}
+    p {margin:3px 0;font-size:12px;line-height:1.5;color:#cad3d8;}
+    #status {color:#d4eeb4;}
+    .footer {position:fixed;bottom:12px;left:18px;font-size:11px;color:#e6e5d5;
+      background:rgba(8,17,24,.7);padding:7px;border-radius:7px;z-index:2;}
+    a {color:#a3cfed;pointer-events:auto;}
+  </style>
+</head>
+<body>
+  <div class="hud">
+    <h1>URBARIUM <span style="color:#b6bbc5">/ Downtown LA</span></h1>
+    <p id="status">Starting Rust / WebGPU viewer...</p>
+    <p>Click the city to focus. WASD move · Shift fast · E/Q up/down · Drag or arrow keys to look.</p>
+  </div>
+  <div class="footer">Geometry: <a href="https://overturemaps.org/">Overture Maps</a>
+    · data subject to source licenses · procedural massing, not surveyed facades</div>
+</body>
+</html>
