@@ -9,6 +9,7 @@ on:
       - src/bin/viewer.rs
       - src/bin/viewer.wgsl
       - web/minimap.js
+      - web/data-cache.js
       - web/landmarks.json
       - web/stats.js
       - src/lib.rs
@@ -81,6 +82,8 @@ jobs:
           js=list(dist.glob("*.js"))
           assert wasm and js,(wasm,js)
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
+          assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
+          assert "urbarium-geography-downtown-la-v1" in (dist/"data-cache.js").read_text()
           landmarks=json.loads((dist/"assets"/"landmarks.json").read_text())
           assert landmarks["region_id"] == city["region"]["id"]
           assert len(landmarks["landmarks"]) == 8
@@ -91,6 +94,8 @@ jobs:
           page=(dist/"index.html").read_text()
           assert 'minimap-canvas' in page
           assert 'map-zoom-in' in page
+          assert 'layer-landmarks' in page and 'time-of-day' in page
+          assert 'refresh-geography' in page
           print("Browser package:",len(city["streets"]),"streets;",
                 len(city["buildings"]),"buildings;",
                 wasm[0].stat().st_size,"WASM bytes")
@@ -176,6 +181,8 @@ jobs:
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/assets/landmarks.json" -o /tmp/urbarium-landmarks-live.json
           python3 -c "import json; assert len(json.load(open('/tmp/urbarium-landmarks-live.json'))['landmarks']) == 8"
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/data-cache.js" -o /tmp/urbarium-cache-live.js
+          grep -q 'urbarium-geography-downtown-la-v1' /tmp/urbarium-cache-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/stats.js" -o /tmp/urbarium-stats-live.js
           grep -q 'gpu-mesh-bytes' /tmp/urbarium-stats-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \

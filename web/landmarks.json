@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "region_id": "downtown-la",
-  "description": "Initial georeferenced landmark label anchors; no custom 3D building models.",
+  "description": "Georeferenced classification anchors. Categories color verified containing building footprints and location discs; detailed landmarks are future meshes.",
   "coordinate_order": "longitude,latitude WGS84",
   "landmarks": [
     {
@@ -92,7 +92,7 @@
       "id": "central-library",
       "name": "Los Angeles Central Library",
       "short": "Central Library",
-      "kind": "culture",
+      "kind": "library",
       "coordinates": [
         -118.255,
         34.0506

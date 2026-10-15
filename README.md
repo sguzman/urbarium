@@ -241,6 +241,46 @@ actual curb edges need distinct treatment and better source data.
 See [Mapzen's Terrarium encoding](https://github.com/tilezen/joerd/blob/master/docs/formats.md)
 for the height decoder.
 
+## Persistent geography cache and refresh
+
+Urbarium now stores the *successfully downloaded* Downtown LA city and
+elevation JSON in browser CacheStorage on the first visit. A cache hit is
+returned before Rust starts parsing and meshing, so refreshing the page does
+**not** redownload both geographic assets. Cached data survives normal page
+reloads, browser restarts and application redeploys (subject to the browser's
+storage eviction policies). The minimap still consumes the Rust viewer's
+validated shared scene; it does not download a second copy.
+
+Application scripts, Rust WASM and the page are **not** pinned in this
+geography cache, so deploying a viewer update still loads current code.
+Use **Refresh geography** in the HUD when explicitly wanting new downloaded
+city/terrain data. Clearing site data also clears the geographic cache.
+Future geographic region/schema releases must change the cache namespace;
+the default remains stable so merely updating the viewer never forces an
+expensive redownload. Browser cache availability is best-effort, not a promise
+of permanent offline storage.
+
+## Landmark categories and time-of-day sky
+
+**Landmark colors** in the HUD toggles category tinting in the actual Rust
+building mesh for a landmark whose verified geographic anchor lies inside the
+source building polygon. The north-up minimap uses the same containment
+rule and palette, as do the world labels. Parks and other sites without a
+matching building receive small, explicitly **representative** ground discs;
+these are not surveyed park outlines or custom landmark architecture.
+The legend includes Civic, Legal, Library, Culture, Park, Transit, Market and
+Historic (not every category has a landmark in the eight-site pilot).
+
+The **Sky** slider displays a procedural camera-oriented sky gradient and
+sun position, with dawn, noon, dusk and night previews. The **Now · LA**
+button samples Los Angeles local clock time at the moment it is pressed.
+Neither the sun position nor ambient lighting is a seasonally/astronomically
+accurate solar model; building shading still uses a fixed directional light.
+The slider setting and category toggle persist locally.
+
+The eight pins/labels and these simple color-coded markers do **not** mean
+the actual landmarks are finished as distinctive high-fidelity structures.
+
 ## Reliable minimap loading
 
 The Rust WASM loader now publishes its already-decoded source city and

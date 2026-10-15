@@ -28,7 +28,8 @@
     "tertiary_link","residential","living_street","service","unclassified","track"]);
   const colors={road:"#668497",path:"#b6b9a5",rail:"#80a4ac",
     steps:"#b4aa91",buildings:"#425e68",ground:"#273f3d"};
-  const state={city:null,terrain:null,landmarks:[],width:650,cache:false,
+  const palette=window.urbariumLandmarkPalette||{};
+  const state={city:null,terrain:null,landmarks:[],categoryVisible:false,width:650,cache:false,
     cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0};
   function project(lon,lat,region) {
     return {x:(lon-region.origin[0])*radius*Math.cos(region.origin[1]*Math.PI/180),
@@ -56,6 +57,20 @@
   ["click","mousedown","mouseup"].forEach(event=>
     canvas.addEventListener(event,e=>e.stopPropagation()));
 
+  function buildingKind(building) {
+    // Color the actual Overture footprint only when its landmark anchor is
+    // INSIDE the polygon (and outside courtyard holes). No fake matching to
+    // an unrelated nearest building.
+    for (const lm of state.landmarks) {
+      for(const polygon of building.polygons||[]) {
+        const rings=polygon.rings||[];
+        if(rings.length && withinRing(lm.x,lm.z,rings[0]) &&
+            !rings.slice(1).some(r=>withinRing(lm.x,lm.z,r)))
+          return lm.kind;
+      }
+    }
+    return null;
+  }
   function rebuild(x,z) {
     const city=state.city,ppm=size/state.width;
     state.cx=x;state.cz=z;state.cache=true;state.mapRedraws++;
@@ -66,8 +81,9 @@
     const ne=xy(project(city.region.bbox[2],city.region.bbox[3],city.region));
     bc.fillStyle=colors.ground;
     bc.fillRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
-    bc.fillStyle=colors.buildings;
     for(const building of city.buildings) {
+      const kind=state.categoryVisible?buildingKind(building):null;
+      bc.fillStyle=palette[kind]||colors.buildings;
       for(const polygon of building.polygons||[]) {
         bc.beginPath();
         for(const ring of polygon.rings||[]) {
@@ -168,7 +184,26 @@
         return mark;
       });
     canvas.setAttribute("data-landmark-count",String(state.landmarks.length));
+    state.cache=false;
+    setCategoryVisibility();
   }
+  function setCategoryVisibility() {
+    state.categoryVisible=document.getElementById("layer-landmarks")
+      ?.getAttribute("data-visible")==="true";
+    state.cache=false;
+    for(const mark of state.landmarks) {
+      if(mark.el) {
+        if(state.categoryVisible)
+          mark.el.style.setProperty("--lm-color",palette[mark.kind]||"#ffd77d");
+        else mark.el.style.removeProperty("--lm-color");
+      }
+    }
+    canvas.setAttribute("data-category-colors",String(state.categoryVisible));
+  }
+  document.getElementById("layer-landmarks")?.addEventListener("change",
+    setCategoryVisibility);
+  setCategoryVisibility();
+
   function drawLandmarks(p,ppm) {
     ctx.save();
     ctx.font="11px system-ui, sans-serif";
@@ -176,7 +211,8 @@
       const sx=size/2+(lm.x-p.x)*ppm;
       const sy=size/2-(lm.z-p.z)*ppm;
       if(sx < -25||sx>size+25||sy< -15||sy>size+15)continue;
-      ctx.fillStyle=lm.kind==="park"?"#92d3a4":"#f4cc7b";
+      ctx.fillStyle=state.categoryVisible?
+        (palette[lm.kind]||"#f4cc7b"):"#f4cc7b";
       ctx.strokeStyle="#0b1c25";
       ctx.lineWidth=2;
       ctx.beginPath();

@@ -7,9 +7,9 @@ use web_time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
-use urbarium::geometry::{HeightPolicy, Mesh};
+use urbarium::geometry::{mesh_building, HeightPolicy, Mesh, Vertex};
 use urbarium::roads::{mesh_streets, SurfaceKind};
-use urbarium::City;
+use urbarium::{Building, City, Point};
 use urbarium::collision::CollisionWorld;
 use urbarium::terrain::TerrainGrid;
 use urbarium::Region;
@@ -32,13 +32,21 @@ struct GpuVertex {
     position: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
+    category_color: [f32; 3],
 }
-const VERTEX_ATTRS: [wgpu::VertexAttribute; 3] =
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x3];
+const VERTEX_ATTRS: [wgpu::VertexAttribute; 4] =
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3,
+                             2 => Float32x3, 3 => Float32x3];
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct CameraUniform { view_proj: [[f32; 4]; 4] }
+struct CameraUniform {
+    view_proj: [[f32; 4]; 4],
+    // x: category tint enabled, y: hour, z: yaw, w: pitch
+    options: [f32; 4],
+    // x: canvas aspect ratio
+    sky: [f32; 4],
+}
 
 #[derive(Clone, Debug)]
 struct Camera {
@@ -151,21 +159,97 @@ fn append_part(
         return Err("invalid source geometry index".into());
     }
     verts.extend(mesh.vertices.iter().map(|v| GpuVertex {
-        position: v.position, normal: v.normal, color,
+        position: v.position, normal: v.normal, color, category_color:[0.0;3],
     }));
     indices.extend(mesh.indices.iter().map(|idx| idx+base));
     Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SceneLayer { Ground, Buildings, Road, Walk, Steps, Rail }
+enum SceneLayer { Ground, Buildings, Road, Walk, Steps, Rail, Markers }
 #[derive(Clone, Copy)]
 struct DrawBatch {
     layer: SceneLayer,
     first_index: u32,
     count: u32,
 }
+#[derive(serde::Deserialize)]
+struct LandmarkCatalog {
+    region_id:String,
+    landmarks:Vec<LandmarkAnchor>,
+}
+#[derive(serde::Deserialize)]
+struct LandmarkAnchor {
+    kind:String,
+    coordinates:[f64;2],
+}
+fn category_rgb(kind:&str)->Option<[f32;3]> {
+    match kind {
+        "civic"=>Some([0.933,0.663,0.420]),
+        "legal"=>Some([0.467,0.827,0.812]),
+        "library"=>Some([0.506,0.749,1.0]),
+        "culture"=>Some([0.804,0.604,0.965]),
+        "park"=>Some([0.506,0.851,0.612]),
+        "railway"=>Some([0.961,0.773,0.408]),
+        "market"=>Some([0.949,0.553,0.529]),
+        "historic"=>Some([0.761,0.698,0.647]),
+        _=>None,
+    }
+}
+fn inside_ring(p:Point,ring:&[Point])->bool {
+    if ring.len()<3 {return false;}
+    let mut inside=false;
+    for i in 0..ring.len() {
+        let a=ring[i];
+        let b=ring[(i+1)%ring.len()];
+        if (a.z>p.z)!=(b.z>p.z) &&
+            p.x < (b.x-a.x)*(p.z-a.z)/(b.z-a.z)+a.x {
+            inside=!inside;
+        }
+    }
+    inside
+}
+fn building_landmark_color(building:&Building,region:&Region, marks:&[LandmarkAnchor])
+    -> Option<[f32;3]>
+{
+    for mark in marks {
+        let anchor=region.project(mark.coordinates[0],mark.coordinates[1]);
+        for polygon in &building.polygons {
+            if let Some(outer)=polygon.rings.first() {
+                if inside_ring(anchor,outer) &&
+                    !polygon.rings.iter().skip(1).any(|hole|inside_ring(anchor,hole)) {
+                    return category_rgb(&mark.kind);
+                }
+            }
+        }
+    }
+    None
+}
+fn landmark_disc(terrain:&TerrainGrid,region:&Region,p:Point,radius:f64)->Mesh {
+    // Small representative ground marker. NOT a surveyed park boundary.
+    let mut mesh=Mesh::default();
+    let center_y=terrain.sample_surface(region,p.x,p.z)+0.6;
+    mesh.vertices.push(Vertex{
+        position:[p.x as f32,center_y,p.z as f32],normal:[0.0,1.0,0.0]});
+    for i in 0..16 {
+        let angle=i as f64*std::f64::consts::TAU/16.0;
+        let x=p.x+radius*angle.cos();
+        let z=p.z+radius*angle.sin();
+        let y=terrain.sample_surface(region,x,z)+0.6;
+        mesh.vertices.push(Vertex{position:[x as f32,y,z as f32],
+            normal:[0.0,1.0,0.0]});
+    }
+    for i in 0..16 {
+        mesh.indices.extend([0,1+i as u32,1+(i as u32+1)%16]);
+    }
+    mesh
+}
 fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String> {
+    let catalog:LandmarkCatalog=serde_json::from_str(include_str!("../../web/landmarks.json"))
+        .map_err(|e|format!("bundled landmark catalog: {e}"))?;
+    if catalog.region_id!=city.region.id {
+        return Err("landmark catalog must match the current region".into());
+    }
     let (buildings,building_report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
     let (mut roads,road_report)=mesh_streets(city)?;
     terrain.drape_roads(&city.region,&mut roads);
@@ -197,6 +281,34 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
         };
         add(&mesh,color,layer)?;
     }
+    // For parks and sites not enclosed in a building polygon, a small colored
+    // ground disc represents the geographic anchor, not an invented footprint.
+    for mark in &catalog.landmarks {
+        let [lon,lat]=mark.coordinates;
+        if lon<city.region.bbox[0]||lon>city.region.bbox[2]||
+           lat<city.region.bbox[1]||lat>city.region.bbox[3] {continue;}
+        if let Some(rgb)=category_rgb(&mark.kind) {
+            let p=city.region.project(lon,lat);
+            let disc=landmark_disc(terrain,&city.region,p,
+                if mark.kind=="park" {15.0} else {6.0});
+            add(&disc,rgb,SceneLayer::Markers)?;
+        }
+    }
+    // Category tints are assigned to real matched building geometry, using
+    // precisely the same per-building mesh ordering as TerrainGrid.
+    // All other massing retains its original color when the toggle is off.
+    let mut cursor=ground.vertices.len();
+    let building_end=cursor+buildings.vertices.len();
+    for building in &city.buildings {
+        let Ok(mesh)=mesh_building(building,HeightPolicy::default()) else {continue;};
+        let end=cursor+mesh.vertices.len();
+        if end>building_end {return Err("landmark vertex ranges exceed building layer".into());}
+        if let Some(rgb)=building_landmark_color(building,&city.region,&catalog.landmarks) {
+            for vertex in &mut verts[cursor..end] {vertex.category_color=rgb;}
+        }
+        cursor=end;
+    }
+    if cursor!=building_end {return Err("landmark building ranges do not match terrain mesh".into());}
     info(&format!("Loaded {} buildings, {} transport spans, {} vertices, {} triangles",
         building_report.buildings_meshed,road_report.segments_meshed,
         verts.len(),indices.len()/3));
@@ -335,11 +447,23 @@ fn set_terrain_size(_:usize) {}
 fn scene_layer_visible(layer:SceneLayer)->bool {
     match layer {
         SceneLayer::Ground | SceneLayer::Buildings | SceneLayer::Road => true,
+        SceneLayer::Markers => layer_enabled("layer-landmarks",false),
         // These independent centerlines are not surveyed sidewalk boundaries
         // or grade-correct rail beds; isolate layers for debugging.
         SceneLayer::Walk | SceneLayer::Steps => layer_enabled("layer-walk",true),
         SceneLayer::Rail => layer_enabled("layer-rail",false),
     }
+}
+fn browser_sky_hour()->f32 {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("time-of-day") {
+            return el.get_attribute("data-hour")
+                .and_then(|s|s.parse::<f32>().ok())
+                .unwrap_or(12.0).clamp(0.0,24.0);
+        }
+    }
+    12.0
 }
 fn layer_enabled(id:&str,default:bool)->bool {
     #[cfg(target_arch="wasm32")]
@@ -361,6 +485,7 @@ struct Graphics {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
     pipeline: wgpu::RenderPipeline,
+    sky_pipeline: wgpu::RenderPipeline,
     depth: wgpu::TextureView,
     camera: Camera,
     collision: CollisionWorld,
@@ -403,7 +528,14 @@ impl Graphics {
         self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
         let vp=self.camera.view_projection(self.config.width,self.config.height);
         self.queue.write_buffer(&self.camera_buffer,0,
-            bytemuck::bytes_of(&CameraUniform{view_proj:vp.to_cols_array_2d()}));
+            bytemuck::bytes_of(&CameraUniform{
+                view_proj:vp.to_cols_array_2d(),
+                options:[
+                    if layer_enabled("layer-landmarks",false) {1.0} else {0.0},
+                    browser_sky_hour(),self.camera.yaw,self.camera.pitch],
+                sky:[self.config.width as f32/self.config.height.max(1) as f32,
+                     0.0,0.0,0.0],
+            }));
     }
     fn draw(&mut self) -> bool {
         let frame = match self.surface.get_current_texture() {
@@ -441,6 +573,12 @@ impl Graphics {
                 }),
                 timestamp_writes:None,occlusion_query_set:None,multiview_mask:None,
             });
+            // Procedural sky is camera-oriented and depth-independent.
+            // It draws first; terrain/buildings/roads then depth-test over it.
+            pass.set_pipeline(&self.sky_pipeline);
+            pass.set_bind_group(0,&self.camera_bind_group,&[]);
+            pass.draw(0..3,0..1);
+            drawn_calls+=1;
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0,&self.camera_bind_group,&[]);
             pass.set_vertex_buffer(0,self.vertices.slice(..));
@@ -509,14 +647,16 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label:Some("Camera uniform"),
         contents:bytemuck::bytes_of(&CameraUniform {
-            view_proj:camera.view_projection(config.width,config.height).to_cols_array_2d()
+            view_proj:camera.view_projection(config.width,config.height).to_cols_array_2d(),
+            options:[0.0,12.0,camera.yaw,camera.pitch],
+            sky:[config.width as f32/config.height.max(1) as f32,0.0,0.0,0.0],
         }),
         usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,
     });
     let camera_layout=device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor{
         label:Some("Camera layout"),
         entries:&[wgpu::BindGroupLayoutEntry{
-            binding:0,visibility:wgpu::ShaderStages::VERTEX,
+            binding:0,visibility:wgpu::ShaderStages::VERTEX_FRAGMENT,
             ty:wgpu::BindingType::Buffer{
                 ty:wgpu::BufferBindingType::Uniform,has_dynamic_offset:false,min_binding_size:None
             },
@@ -567,6 +707,25 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         }),
         multisample:Default::default(),multiview_mask:None,cache:None,
     });
+    let sky_pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+        label:Some("Urbarium procedural time-of-day sky"),
+        layout:Some(&layout),
+        vertex:wgpu::VertexState{
+            module:&shader,entry_point:Some("sky_vs"),buffers:&[],
+            compilation_options:Default::default(),
+        },
+        fragment:Some(wgpu::FragmentState{
+            module:&shader,entry_point:Some("sky_fs"),
+            targets:&[Some(config.format.into())],
+            compilation_options:Default::default(),
+        }),
+        primitive:wgpu::PrimitiveState {
+            topology:wgpu::PrimitiveTopology::TriangleList,
+            cull_mode:None,..Default::default()
+        },
+        depth_stencil:None,
+        multisample:Default::default(),multiview_mask:None,cache:None,
+    });
     let depth=Graphics::depth_view(&device,config.width,config.height);
     let vertex_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
         label:Some("Urbarium vertices"),contents:bytemuck::cast_slice(&vertices),
@@ -580,7 +739,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
         indices.len()*size_of::<u32>();
     let graphics=Graphics {
-        window,surface,device,queue,config,pipeline,depth,camera,collision,terrain,region:city.region,
+        window,surface,device,queue,config,pipeline,sky_pipeline,depth,camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,

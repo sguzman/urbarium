@@ -24,11 +24,22 @@
     })();
   </script>
   <title>Urbarium · Downtown Los Angeles</title>
+  <!-- Install persistent geo fetch interception before the WASM bootloader. -->
+  <script src="./data-cache.js"></script>
   <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="0">
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/landmarks.json" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/minimap.js">
-  <script src="./minimap.js?v=shared-data-2" defer></script>
+  <link data-trunk rel="copy-file" href="web/data-cache.js">
+  <!-- Geography cache intercepts the initial Rust download, not just reloads. -->
+  <script>
+    window.urbariumLandmarkPalette = Object.freeze({
+      civic:"#eea96b", legal:"#77d3cf", library:"#81bfff",
+      culture:"#cd9af6", park:"#81d99c", railway:"#f5c568",
+      market:"#f28d87", historic:"#c2b2a5"
+    });
+  </script>
+  <script src="./minimap.js?v=categories-1" defer></script>
   <link data-trunk rel="copy-file" href="web/stats.js">
   <script src="./stats.js" defer></script>
   <style>
@@ -99,6 +110,23 @@
       border:4px solid transparent;border-top-color:#ffd77d;
       transform:translateX(-50%);}
     .world-landmark[hidden]{display:none;}
+    .world-landmark {border-color:var(--lm-color,#cda85d);}
+    .world-landmark::after {border-top-color:var(--lm-color,#ffd77d);}
+    .scene-controls {pointer-events:auto;display:flex;flex-wrap:wrap;
+      gap:8px 16px;align-items:center;margin:7px 0 2px;font-size:12px;}
+    .scene-controls label {display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
+    .scene-controls input[type=checkbox] {accent-color:#8fc2cf;}
+    #time-of-day {width:128px;accent-color:#9bc9db;cursor:pointer;}
+    #time-label {min-width:49px;font-variant-numeric:tabular-nums;color:#ffdb9b;}
+    #time-la-now,#refresh-geography {background:#203847;border:1px solid #547081;
+      border-radius:5px;color:#eaf3f8;padding:4px 7px;cursor:pointer;}
+    #geodata-cache-state {color:#accbc5;font-size:11px;}
+    .landmark-legend {display:flex;flex-wrap:wrap;gap:5px 9px;
+      font-size:10px;color:#d9e9ed;max-width:440px;}
+    .landmark-legend[hidden]{display:none;}
+    .legend-entry {display:inline-flex;gap:4px;align-items:center;}
+    .legend-dot {display:inline-block;width:9px;height:9px;border-radius:3px;
+      background:var(--legend-color);}
     #stats-panel {position:fixed;z-index:5;left:18px;bottom:48px;
       width:280px;max-width:calc(100vw - 50px);max-height:42vh;overflow:auto;
       background:rgba(7,16,22,.94);border:1px solid #45606b;
@@ -147,6 +175,22 @@
         Rail
       </label>
     </div>
+    <div class="scene-controls">
+      <label title="Color real matched building footprints and landmark map pins by type">
+        <input id="layer-landmarks" type="checkbox" data-visible="false">
+        Landmark colors
+      </label>
+      <label for="time-of-day">Sky
+        <input id="time-of-day" type="range" min="0" max="24" step=".25" value="12">
+      </label>
+      <span id="time-label">12:00</span>
+      <button id="time-la-now" type="button" title="Set the preview to current time in Los Angeles">Now · LA</button>
+    </div>
+    <div id="landmark-legend" class="landmark-legend" hidden aria-label="Landmark type colors"></div>
+    <div class="scene-controls">
+      <span id="geodata-cache-state" role="status">Geography: cache starting</span>
+      <button id="refresh-geography" type="button" title="Delete saved Downtown LA geography and reload from source">Refresh geography</button>
+    </div>
   </div>
   <section id="stats-panel" aria-label="Renderer diagnostics" hidden>
     <h2>URBARIUM / Performance</h2>
@@ -190,6 +234,59 @@
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");
+      const landmarkToggle = document.getElementById("layer-landmarks");
+      const legend = document.getElementById("landmark-legend");
+      const colors = window.urbariumLandmarkPalette;
+      for(const [kind,color] of Object.entries(colors)){
+        const item=document.createElement("span");
+        item.className="legend-entry";
+        const dot=document.createElement("span");
+        dot.className="legend-dot";
+        dot.style.setProperty("--legend-color",color);
+        item.append(dot,document.createTextNode(kind==="railway"?"Transit":kind[0].toUpperCase()+kind.slice(1)));
+        legend.append(item);
+      }
+      function setLandmarkColors(){
+        const visible=landmarkToggle.checked;
+        landmarkToggle.setAttribute("data-visible",String(visible));
+        legend.hidden=!visible;
+        try{localStorage.setItem("urbarium-landmark-colors",String(visible));}catch(_){}
+      }
+      try{landmarkToggle.checked=localStorage.getItem("urbarium-landmark-colors")==="true";}catch(_){}
+      landmarkToggle.addEventListener("change",setLandmarkColors);
+      setLandmarkColors();
+      const sky=document.getElementById("time-of-day");
+      const skyLabel=document.getElementById("time-label");
+      function setSky(value){
+        const n=Number(value);
+        if(!Number.isFinite(n))return;
+        sky.value=String(n);
+        sky.setAttribute("data-hour",String(n));
+        skyLabel.textContent=String(Math.floor(n)%24).padStart(2,"0")+":"+
+          String(Math.round((n%1)*60)).padStart(2,"0");
+        try{localStorage.setItem("urbarium-sky-hour",String(n));}catch(_){}
+      }
+      let initial=12;
+      try{initial=Number(localStorage.getItem("urbarium-sky-hour")??12);}catch(_){}
+      setSky(Math.max(0,Math.min(24,initial)));
+      sky.addEventListener("input",()=>setSky(sky.value));
+      document.getElementById("time-la-now").addEventListener("click",()=>{
+        const parts=new Intl.DateTimeFormat("en-US",{
+          timeZone:"America/Los_Angeles",hour:"2-digit",minute:"2-digit",
+          hourCycle:"h23"
+        }).formatToParts(new Date());
+        const val=part=>Number(parts.find(p=>p.type===part)?.value||0);
+        setSky(Math.round((val("hour")+val("minute")/60)*4)/4);
+      });
+      document.getElementById("refresh-geography").addEventListener("click",async()=>{
+        const button=document.getElementById("refresh-geography");
+        button.disabled=true;button.textContent="Clearing...";
+        try{await window.urbariumClearGeography();location.reload();}
+        catch(error){console.warn("Cache clear failed",error);button.disabled=false;
+          button.textContent="Refresh geography";}
+      });
+      document.getElementById("geodata-cache-state").textContent=
+        "Geography: "+(window.__urbariumCacheState||"cache ready");
       menu.value = mode;
       menu.addEventListener("change", () => {
         const url = new URL(location.href);

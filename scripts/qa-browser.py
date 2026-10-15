@@ -267,6 +267,54 @@ with sync_playwright() as p:
         assert page.locator("#world-landmarks").is_visible()
         assert page.locator("#status").get_attribute("data-camera-pose") is not None
         print("Eight source-backed landmarks are mapped and anchored to the camera")
+        # A repeat fetch must be fulfilled from persistent CacheStorage,
+        # without any second HTTP transfer to this flaky-network-sensitive app.
+        saved=page.evaluate("""async () => {
+            const store=await caches.open("urbarium-geography-downtown-la-v1");
+            const city=await store.match("./assets/downtown-la.json");
+            const dem=await store.match("./assets/downtown-la-terrain.json");
+            return [Boolean(city),Boolean(dem)];
+        }""")
+        assert saved == [True, True], f"Geography not persisted on first visit: {saved}"
+        before=len([u for u in requests if "/assets/downtown-la" in u])
+        page.evaluate("""async () => {
+            const responses=await Promise.all([
+                fetch("./assets/downtown-la.json"),
+                fetch("./assets/downtown-la-terrain.json")
+            ]);
+            if(responses.some(r=>!r.ok))throw Error("Cached geographic fetch failed");
+        }""")
+        after=len([u for u in requests if "/assets/downtown-la" in u])
+        assert after==before, "Cached geography caused redundant network requests"
+        print("Geography CacheStorage persisted and reused both assets without HTTP")
+
+        palette=page.evaluate("() => window.urbariumLandmarkPalette")
+        assert palette.get("park") and palette.get("library") and palette.get("legal")
+        assert page.locator("#landmark-legend").is_hidden()
+        page.locator("#layer-landmarks").check()
+        page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.dataset.categoryColors === 'true'",
+            timeout=8000,
+        )
+        assert page.locator("#landmark-legend").is_visible()
+        assert page.locator("#world-landmarks .world-landmark").count()==8
+        page.locator("#layer-landmarks").uncheck()
+        page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.dataset.categoryColors === 'false'",
+            timeout=8000,
+        )
+        print("Landmark category toggle, minmap category flag and legend passed")
+        page.locator("#time-of-day").evaluate("""e => {
+            e.value="18";e.dispatchEvent(new Event("input",{bubbles:true}));
+        }""")
+        assert page.locator("#time-label").inner_text()=="18:00"
+        assert page.locator("#time-of-day").get_attribute("data-hour")=="18"
+        page.locator("#time-of-day").evaluate("""e => {
+            e.value="6";e.dispatchEvent(new Event("input",{bubbles:true}));
+        }""")
+        assert page.locator("#time-label").inner_text()=="06:00"
+        print("Procedural sky time-of-day input and Rust-visible hour passed")
+
         page.wait_for_function(
             "() => document.querySelector('#world-landmarks')?.getAttribute('data-labels-mode') === 'view-frustum'",
             timeout=8000,
