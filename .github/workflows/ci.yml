@@ -109,3 +109,25 @@ jobs:
           assert 'newmtl road_asphalt' in mtl
           print('Classified road surface mesh smoke test passed')
           PY
+      - name: Generate self-contained glTF 2.0 scene
+        run: |
+          cargo run -- glb \
+            --city /tmp/urbarium-overture-only-smoke.json \
+            --out /tmp/urbarium-smoke.glb
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct, json
+          raw=Path("/tmp/urbarium-smoke.glb").read_bytes()
+          magic,version,total=struct.unpack_from("<III",raw)
+          assert magic==0x46546C67 and version==2 and total==len(raw)
+          size,kind=struct.unpack_from("<II",raw,12)
+          assert kind==0x4e4f534a
+          doc=json.loads(raw[20:20+size])
+          assert doc["asset"]["version"]=="2.0"
+          assert len(doc["meshes"]) >= 3, "Ground, buildings and transportation"
+          offset=20+size
+          length,kind=struct.unpack_from("<II",raw,offset)
+          assert kind==0x004e4942
+          assert offset+8+length==len(raw)
+          print("GLB binary structure validated")
+          PY

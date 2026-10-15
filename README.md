@@ -118,6 +118,22 @@ Crossings, junction patches, level changes, navigability and terrain are
 **not** yet solved. Keep road and building OBJ files together when inspecting
 the combined pilot model.
 
+## Compact combined 3D scene (.glb)
+
+```sh
+cargo run --release -- glb \
+  --city data/processed/downtown-la.json \
+  --out data/processed/downtown-la.glb
+```
+
+This creates a **single glTF 2.0 binary** containing a flat reference ground
+plane, building massing and categorized road/walk/rail/step meshes, retaining
+source attribution in scene metadata. Geometry and normals are stored as 32-bit
+binary values rather than verbose OBJ text. Colors are simple neutral PBR
+materials; the scene has no textures, accurate terrain, road junction patches,
+bridges, or collision yet. Geometry remains generated in Rust; a future
+WebGPU/WASM runtime will use the same geometry pipeline.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.

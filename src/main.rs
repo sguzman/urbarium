@@ -4,6 +4,7 @@ use std::fs;
 use std::io::BufWriter;
 use urbarium::geometry::{mesh_city, write_obj, HeightPolicy};
 use urbarium::roads::{mesh_streets, write_road_mtl, write_road_obj};
+use urbarium::gltf::write_glb;
 use urbarium::{buildings_from_geojson, count_by_road_kind, from_overpass, streets_from_geojson, City, HeightUnit, Provenance, Region};
 
 fn main() {
@@ -19,6 +20,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         println!("Usage: urbarium ingest --region FILE --out FILE [--osm FILE] [--streets-geojson FILE] [--buildings-geojson FILE --height-unit meters|feet] [--source-name NAME --source-url URL --source-license LICENSE]");
         println!("       urbarium mesh --city FILE --out FILE [--missing-height M] [--meters-per-level M]");
         println!("       urbarium mesh-roads --city FILE --out FILE");
+        println!("       urbarium glb --city FILE --out FILE");
         println!("All positions in output are local meters (X east, Z north).");
         return Ok(());
     }
@@ -27,6 +29,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     if args[0] == "mesh-roads" {
         return run_roads(&args[1..]);
+    }
+    if args[0] == "glb" {
+        return run_glb(&args[1..]);
     }
     if args[0] != "ingest" {
         return Err(format!("unsupported command: {}", args[0]).into());
@@ -170,5 +175,31 @@ fn run_roads(args: &[String]) -> Result<(), Box<dyn Error>> {
         println!("  {kind}: {count}");
     }
     println!("OBJ: {}; materials: {}",output.display(),dir.join("urbarium-transport.mtl").display());
+    Ok(())
+}
+
+fn run_glb(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut opts=std::collections::BTreeMap::new();
+    let mut chunks=args.chunks_exact(2);
+    for chunk in &mut chunks {
+        if !["--city","--out"].contains(&chunk[0].as_str())
+            || opts.insert(chunk[0].as_str(),chunk[1].as_str()).is_some()
+        { return Err(format!("unknown or duplicate argument: {}",chunk[0]).into()); }
+    }
+    if !chunks.remainder().is_empty() || !opts.contains_key("--city") || !opts.contains_key("--out") {
+        return Err("glb requires --city FILE and --out FILE".into());
+    }
+    let city: City=serde_json::from_str(&fs::read_to_string(opts["--city"])?)?;
+    let (buildings, report)=mesh_city(&city,HeightPolicy::default())?;
+    let (roads, road_report)=mesh_streets(&city)?;
+    let output=std::path::Path::new(opts["--out"]);
+    if let Some(parent)=output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    write_glb(BufWriter::new(fs::File::create(output)?),&city,&buildings,&roads)?;
+    println!("GLB: {} buildings ({} skipped), {} road/path spans ({} skipped), {} triangles; output: {}",
+        report.buildings_meshed,report.buildings_skipped,road_report.segments_meshed,
+        road_report.segments_skipped,report.triangles+road_report.total_triangles+2,
+        output.display());
     Ok(())
 }

@@ -32,6 +32,7 @@
 - [x] Construct indexed building massing meshes from polygons, with concave/courtyard roofs, wall normals, and OBJ export.
 - [x] Validate actual Downtown LA OBJ generation: 563 meshed, zero skipped, 38,210 vertices, 21,888 triangles.
 - [x] Generate classified, indexed roadway / footpath / stairway / rail surface meshes with bounded joins and material groups.
+- [x] Export self-contained combined glTF 2.0 binary with materials, indexed buildings and transportation meshes.
 - [ ] Add physically correct intersections, crossings, grade separation and additional roof primitives.
 - [ ] Tile spatial indexing, culling, LOD, material batching and simple collision.
 - [ ] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer walk controls.
