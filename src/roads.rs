@@ -55,6 +55,7 @@ pub struct RoadReport {
     pub segments_skipped: usize,
     pub segments_degenerate: usize,
     pub elevated_spans: usize,
+    pub pedestrian_overlap_triangles_removed:usize,
     /// Filled at-grade T/cross intersections inferred from shared road endpoints.
     pub junction_patches: usize,
     pub total_vertices: usize,
@@ -317,6 +318,73 @@ fn junction_hull(mut points:Vec<(f64,f64)>) -> Vec<(f64,f64)> {
     lower
 }
 
+// The Overture footpath dataset is centerline-only: sidewalks and pedestrian
+// linework sometimes run directly into the road asphalt. Without surveyed
+// crossing polygons, eliminate those unsightly coincident patches instead of
+// letting the pedestrian ribbon poke through the driving surface.
+// The spatial hash avoids a streets × pedestrian-triangles full scan.
+const OVERLAP_CELL_M:f64=24.0;
+fn at_grade_motor_road(street:&Street)->bool {
+    surface_class(street).is_some_and(|(kind,_)|kind==SurfaceKind::Road)
+        && !street.tags.get("bridge").is_some_and(|v|v!="no")
+        && !street.tags.get("tunnel").is_some_and(|v|v!="no")
+        && !street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
+            .is_some_and(|layer|layer!=0)
+}
+fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene)->usize {
+    let mut roads=Vec::<(Point,Point,f64)>::new();
+    let mut buckets=BTreeMap::<(i32,i32),Vec<usize>>::new();
+    for street in &city.streets {
+        if !at_grade_motor_road(street){continue;}
+        let Some((_,width))=surface_class(street) else{continue;};
+        let reach=width*0.5+2.6;
+        for pair in street.path.windows(2) {
+            if direction(pair[0],pair[1]).is_none(){continue;}
+            let index=roads.len();
+            roads.push((pair[0],pair[1],reach));
+            let left=((pair[0].x.min(pair[1].x)-reach)/OVERLAP_CELL_M).floor() as i32;
+            let right=((pair[0].x.max(pair[1].x)+reach)/OVERLAP_CELL_M).floor() as i32;
+            let bottom=((pair[0].z.min(pair[1].z)-reach)/OVERLAP_CELL_M).floor() as i32;
+            let top=((pair[0].z.max(pair[1].z)+reach)/OVERLAP_CELL_M).floor() as i32;
+            for x in left..=right {
+                for z in bottom..=top{buckets.entry((x,z)).or_default().push(index);}
+            }
+        }
+    }
+    let on_asphalt=|x:f64,z:f64|->bool{
+        let key=((x/OVERLAP_CELL_M).floor() as i32,
+                 (z/OVERLAP_CELL_M).floor() as i32);
+        buckets.get(&key).is_some_and(|indices|indices.iter().any(|&i|{
+            let (a,b,reach)=roads[i];
+            let dx=b.x-a.x;
+            let dz=b.z-a.z;
+            let length=dx*dx+dz*dz;
+            let t=if length>0.0 {
+                (((x-a.x)*dx+(z-a.z)*dz)/length).clamp(0.0,1.0)
+            } else {0.0};
+            let xx=a.x+t*dx-x;
+            let zz=a.z+t*dz-z;
+            xx*xx+zz*zz<=reach*reach
+        }))
+    };
+    let mut omitted=0usize;
+    for kind in [SurfaceKind::Walk,SurfaceKind::Steps]{
+        let Some(mesh)=scene.layers.get_mut(&kind) else{continue;};
+        let hidden=mesh.vertices.iter().map(|v|
+            on_asphalt(v.position[0] as f64,v.position[2] as f64))
+            .collect::<Vec<_>>();
+        let mut output=Vec::with_capacity(mesh.indices.len());
+        for triangle in mesh.indices.chunks_exact(3) {
+            // A connected pedestrian ribbon stays visible until it reaches
+            // the carriageway's buffered footprint, leaving a clean gap.
+            let collide=triangle.iter().any(|&i|hidden[i as usize]);
+            if collide {omitted+=1;}else{output.extend_from_slice(triangle);}
+        }
+        mesh.indices=output;
+    }
+    omitted
+}
+
 pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
     let mut scene=RoadScene::default();
     let mut report=RoadReport {source_segments:city.streets.len(),..Default::default()};
@@ -376,6 +444,8 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
         *report.by_surface.entry(kind.material().into()).or_insert(0)+=1;
     }
     add_junction_patches(city,&mut scene,&mut report)?;
+    let omitted=remove_pedestrian_asphalt_overlap(city,&mut scene);
+    report.pedestrian_overlap_triangles_removed=omitted;
     crate::road_grade::build_bridge_layers(&mut scene,|_,_|0.0)?;
     report.total_vertices=scene.layers.values().map(|l| l.vertices.len()).sum();
     report.total_triangles=scene.layers.values().map(|l| l.indices.len()/3).sum();
@@ -513,6 +583,27 @@ mod tests {
         assert_eq!(report.segments_skipped,2);
         assert_eq!(report.segments_degenerate,1);
         assert!(scene.layers[&SurfaceKind::Road].indices.len()>=96);
+    }
+    #[test]
+    fn at_grade_walk_surface_is_trimmed_at_actual_carriageway_not_overpass() {
+        let mut atgrade=street("primary",&[[-20.,0.],[20.,0.]]);
+        atgrade.tags.insert("width".into(),"12m".into());
+        let path=street("footway",&[[0.,-20.],[0.,20.]]);
+        let (clean,report)=mesh_streets(&city(vec![atgrade,path.clone()])).unwrap();
+        assert!(report.pedestrian_overlap_triangles_removed>0);
+        let clean_walk=&clean.layers[&SurfaceKind::Walk];
+        for tri in clean_walk.indices.chunks_exact(3){
+            for &index in tri {
+                let z=clean_walk.vertices[index as usize].position[2];
+                assert!(z.abs()>6.0,"walk surface extended into the 12m asphalt corridor");
+            }
+        }
+        let mut bridge=street("primary",&[[-20.,0.],[20.,0.]]);
+        bridge.tags.insert("bridge".into(),"yes".into());
+        let (separated,separate_report)=mesh_streets(&city(vec![bridge,path])).unwrap();
+        assert_eq!(separate_report.pedestrian_overlap_triangles_removed,0);
+        assert!(separated.layers[&SurfaceKind::Walk].indices.len()>
+            clean_walk.indices.len(),"elevated road must not erase path underneath");
     }
     #[test]
     fn shared_t_junction_gets_a_square_asphalt_patch() {

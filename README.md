@@ -275,6 +275,24 @@ the default remains stable so merely updating the viewer never forces an
 expensive redownload. Browser cache availability is best-effort, not a promise
 of permanent offline storage.
 
+## Browser stability and pedestrian overlap handling
+
+The WebGL2/WebGPU browser event loop now waits for scheduled redraws instead
+of continuously busy-polling, and suspends city rendering when the tab is
+hidden (resuming when visible). Fullscreen GPU backing resolution is bounded
+to approximately 1.8 million pixels even on HiDPI monitors; the CSS canvas
+still fills the viewport. This limits color/depth attachment pressure but
+**does not establish that user-specific Edge crashes are solved**. Chromium
+automated testing cannot replicate every user hardware/driver combination.
+
+Source footpaths are thin centerline ribbons, not surveyed sidewalk polygons.
+The importer now removes pedestrian mesh triangles intersecting a buffered
+at-grade road corridor using a 24-meter spatial hash. This prevents sidewalks
+and footpaths from visibly punching through asphalt. Source-tagged
+elevated roads and tunnels are excluded from that clipping, so their
+underlying pedestrian paths remain visible. Real pedestrian crossings
+and exact curb geometry require better source data and are not inferred.
+
 ## Named buildings and real 3D transport grades
 
 The acquired Overture building features already store optional **names**,
@@ -311,7 +329,11 @@ without elevating the rest of the road. Height remains a visual
 approximation; the newly split parts are not yet connected by smooth
 vertical ramp profiles. True level-continuous freeway ramps, terrain
 cutouts, retaining walls, bridge deck collision and real connector topology
-remain unfinished. The named-road exporter reports the number of
+remain unfinished. **Inspect overpass (N)** jumps the camera to a real
+source-tagged elevated section and faces its deck from a nearby overlook, so
+the user can inspect the 3D height without manually discovering it.
+The minimap draws source-tagged elevated road sections in cyan; ordinary
+motorways are not falsely shown as bridges. The named-road exporter reports the number of
 source-qualified bridge spans so a geography release without any evidence
 does not silently create fake freeways.
 
@@ -353,7 +375,7 @@ live time. Switching renderer or refreshing the page defaults to live again.
 
 Neither the sun position nor ambient lighting is a seasonally/astronomically
 accurate solar model; building shading still uses a fixed directional light.
-The category-color toggle persists locally, while manual time does not.
+The category filters persist locally, while manual time does not.
 
 The nine pins/labels and these simple color-coded markers do **not** mean
 the actual landmarks are finished as distinctive high-fidelity structures.

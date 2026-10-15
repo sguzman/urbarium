@@ -123,6 +123,25 @@
       });
       bc.stroke();
     }
+    // Show where source-qualified elevated roads actually are. These are
+    // not everywhere on the city map, so do not imply every motorway is raised.
+    bc.save();
+    bc.lineWidth=3.0;
+    bc.lineCap="round";
+    bc.strokeStyle="#78d8fb";
+    for(const street of city.streets){
+      if(!kinds.has(street.kind)||!street.path||street.path.length<2)continue;
+      const elevated=street.tags?.bridge==="yes"||
+        Number(street.tags?.layer||0)>0;
+      if(!elevated||street.tags?.tunnel==="yes")continue;
+      bc.beginPath();
+      street.path.forEach((p,i)=>{
+        const pt=xy(p);
+        if(i)bc.lineTo(pt[0],pt[1]);else bc.moveTo(pt[0],pt[1]);
+      });
+      bc.stroke();
+    }
+    bc.restore();
     bc.strokeStyle="#81979b";
     bc.lineWidth=1;
     bc.strokeRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);

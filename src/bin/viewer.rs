@@ -398,6 +398,10 @@ fn set_elevated_span_count(count:usize) {
         if let Some(el)=doc.get_element_by_id("status") {
             let _=el.set_attribute("data-elevated-road-spans",&count.to_string());
         }
+        if let Some(button)=doc.get_element_by_id("inspect-overpass") {
+            button.set_text_content(Some(&format!("Inspect overpass ({count})")));
+            if count>0 {let _=button.remove_attribute("disabled");}
+        }
     }
 }
 #[cfg(not(target_arch="wasm32"))]
@@ -551,6 +555,8 @@ struct Graphics {
     gpu_mesh_bytes: usize,
     active_draw_calls:u32,
     active_triangles:u32,
+    bridge_overlook:Option<Camera>,
+    inspect_request:u32,
 }
 impl Graphics {
     fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -578,6 +584,15 @@ impl Graphics {
         self.reconfigure_surface(size);
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
+        let request=browser_inspect_overpass_request();
+        if request!=self.inspect_request {
+            self.inspect_request=request;
+            if let Some(camera)=self.bridge_overlook.clone() {
+                self.camera=camera;
+                self.camera.fast_mode=false;
+                set_speed_label(false);
+            }
+        }
         self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
         let vp=self.camera.view_projection(self.config.width,self.config.height);
         self.queue.write_buffer(&self.camera_buffer,0,
@@ -675,6 +690,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     terrain.validate(&city.region)?;
     set_terrain_size(terrain.heights_m.len());
     let (vertices,indices,batches)=combined_city(&city,&terrain)?;
+    let bridge_overlook=bridge_overlook(&city,&terrain);
     set_browser_stage("gpu-init");
     info("Geography ready; initializing WebGPU or WebGL2...");
     let instance=wgpu::util::new_instance_with_webgpu_detection(
@@ -812,13 +828,14 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
+        bridge_overlook,inspect_request:0,
     };
     info(&format!("Downtown LA ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release"));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }
 
-enum AppEvent { Ready(Graphics), Error(String), PointerLock(bool), ViewportResize(PhysicalSize<u32>) }
+enum AppEvent { Ready(Graphics), Error(String), PointerLock(bool), ViewportResize(PhysicalSize<u32>), VisibilityChanged }
 enum Stage { Boot, Ready(Graphics), Error(String) }
 struct App {
     state:Stage,
@@ -867,6 +884,7 @@ impl ApplicationHandler<AppEvent> for App {
             if let Some(canvas)=window.canvas() {canvas.set_tab_index(0);}
             install_pointerlockchange(self_proxy(event_loop));
             install_viewport_resize(self_proxy(event_loop));
+            install_visibility_change(self_proxy(event_loop));
         }
         self.window=Some(window.clone());
         // Initialization is asynchronous on WebGPU browsers.
@@ -887,6 +905,12 @@ impl ApplicationHandler<AppEvent> for App {
             AppEvent::PointerLock(locked)=>{
                 self.pointer_locked=locked;
                 show_mouse_state(locked);
+            }
+            AppEvent::VisibilityChanged=>{
+                if browser_page_visible(){
+                    self.last_frame=Instant::now();
+                    if let Some(window)=&self.window {window.request_redraw();}
+                }
             }
             AppEvent::ViewportResize(size)=>{
                 if let Some(window)=&self.window {
@@ -992,16 +1016,84 @@ impl ApplicationHandler<AppEvent> for App {
         }
     }
     fn about_to_wait(&mut self,_event_loop:&ActiveEventLoop) {
-        if let Stage::Ready(gfx)=&self.state {gfx.window.request_redraw();}
+        // Browser visibility must gate redraw. Running a perpetual Poll event
+        // loop in a hidden tab was wasting GPU/CPU and exacerbating instability.
+        if browser_page_visible() {
+            if let Stage::Ready(gfx)=&self.state {gfx.window.request_redraw();}
+        }
     }
 }
 
+fn browser_page_visible()->bool {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        return !doc.hidden();
+    }
+    true
+}
+#[cfg(target_arch="wasm32")]
+fn install_visibility_change(proxy:EventLoopProxy<AppEvent>) {
+    use wasm_bindgen::{closure::Closure,JsCast};
+    let Some(doc)=web_sys::window().and_then(|w|w.document()) else{return;};
+    let callback=Closure::<dyn FnMut(web_sys::Event)>::new(move |_|{
+        let _=proxy.send_event(AppEvent::VisibilityChanged);
+    });
+    let _=doc.add_event_listener_with_callback(
+        "visibilitychange",callback.as_ref().unchecked_ref());
+    callback.forget();
+}
+#[cfg(not(target_arch="wasm32"))]
+fn browser_inspect_overpass_request()->u32 {0}
+#[cfg(target_arch="wasm32")]
+fn browser_inspect_overpass_request()->u32 {
+    web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status"))
+        .and_then(|e|e.get_attribute("data-inspect-overpass-request"))
+        .and_then(|s|s.parse().ok()).unwrap_or(0)
+}
+// An inspection camera proves the visible deck elevation at a source-tagged
+// location. It does not imply walkable bridge collision or surveyed altitude.
+fn bridge_overlook(city:&City,terrain:&TerrainGrid)->Option<Camera> {
+    let mut best:Option<(&urbarium::Street,Point,Point,f64)>=None;
+    for street in &city.streets{
+        let is_bridge=street.tags.get("bridge").is_some_and(|v|v=="yes") ||
+            street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
+                .is_some_and(|n|n>0);
+        if !is_bridge || street.tags.get("tunnel").is_some_and(|v|v=="yes"){continue;}
+        for pair in street.path.windows(2){
+            let len=(pair[1].x-pair[0].x).hypot(pair[1].z-pair[0].z);
+            if len>best.as_ref().map_or(0.0,|b|b.3){
+                best=Some((street,pair[0],pair[1],len));
+            }
+        }
+    }
+    let (street,a,b,len)=best?;
+    if len<1.0 {return None;}
+    let mid=Point{x:(a.x+b.x)*0.5,z:(a.z+b.z)*0.5};
+    let perp=Point{x:-(b.z-a.z)/len,z:(b.x-a.x)/len};
+    let side=24.0;
+    let x=mid.x+perp.x*side;
+    let z=mid.z+perp.z*side;
+    let ground=terrain.sample_surface(&city.region,x,z);
+    let level=street.tags.get("layer")
+        .and_then(|v|v.parse::<f32>().ok()).unwrap_or(1.0).clamp(1.0,3.0);
+    let deck_y=terrain.sample_surface(&city.region,mid.x,mid.z)+5.8*level+0.24;
+    let position=Vec3::new(x as f32,ground+2.8,z as f32);
+    let yaw=((mid.x-x) as f32).atan2((mid.z-z) as f32);
+    let pitch=((deck_y-position.y)/side as f32).atan();
+    Some(Camera{position,yaw,pitch,eye_clearance:2.8,
+        speed:3.4,fast_mode:false})
+}
 #[cfg(target_arch="wasm32")]
 fn browser_viewport_size() -> PhysicalSize<u32> {
     if let Some(win)=web_sys::window() {
-        let dpr=win.device_pixel_ratio().clamp(1.0,2.0);
         let width=win.inner_width().ok().and_then(|v|v.as_f64()).unwrap_or(1280.0);
         let height=win.inner_height().ok().and_then(|v|v.as_f64()).unwrap_or(800.0);
+        // Bound framebuffer/depth texture footprint on HiDPI fullscreen Edge.
+        // CSS viewport remains full-width; only drawing resolution scales.
+        let pixel_budget=1_800_000.0;
+        let max_scale=(pixel_budget/(width.max(1.0)*height.max(1.0))).sqrt();
+        let dpr=win.device_pixel_ratio().min(2.0).min(max_scale).max(0.45);
         return PhysicalSize::new(
             (width*dpr).round().clamp(1.0,8192.0) as u32,
             (height*dpr).round().clamp(1.0,8192.0) as u32);
@@ -1143,6 +1235,10 @@ fn main() {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     let event_loop=EventLoop::<AppEvent>::with_user_event().build()
         .expect("window event loop");
+    // Poll busy-loops on browsers; Wait lets request_redraw pace frames.
+    #[cfg(target_arch="wasm32")]
+    event_loop.set_control_flow(ControlFlow::Wait);
+    #[cfg(not(target_arch="wasm32"))]
     event_loop.set_control_flow(ControlFlow::Poll);
     PROXY.with(|cell|*cell.borrow_mut()=Some(event_loop.create_proxy()));
     #[cfg(target_arch="wasm32")]

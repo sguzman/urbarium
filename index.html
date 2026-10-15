@@ -196,6 +196,10 @@
     </label>
     <p id="renderer-health" role="status">Loading the Rust viewer...</p>
     <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
+    <div class="scene-controls">
+      <button id="inspect-overpass" type="button" disabled title="Move the camera to a mapped elevated road and view its height from street level">Inspect overpass (loading)</button>
+      <span class="scene-note">Bridge heights are visual estimates, not surveyed.</span>
+    </div>
     <div class="debug-controls">
       <button id="stats-toggle" type="button" aria-controls="stats-panel"
         aria-pressed="false">Stats: off</button>
@@ -429,6 +433,13 @@
         if(skyMode==="live")syncLaClock();
       });
       resumeLive();
+      document.getElementById("inspect-overpass").addEventListener("click",()=>{
+        const status=document.getElementById("status");
+        const count=Number(status.dataset.inspectOverpassRequest||0);
+        status.dataset.inspectOverpassRequest=String(count+1);
+        document.getElementById("input-state").textContent=
+          "Camera moved to source-tagged overpass · WASD to explore";
+      });
       document.getElementById("refresh-geography").addEventListener("click",async()=>{
         const button=document.getElementById("refresh-geography");
         button.disabled=true;button.textContent="Clearing...";

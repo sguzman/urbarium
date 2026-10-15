@@ -58,6 +58,10 @@
 - [ ] Investigate hardware-specific WebGPU black presentation and browser/GPU context-loss reports.
 - [x] Report actual per-asset CacheStorage hits/network downloads and startup phases rather than claiming the cache is ready before checking it.
 - [ ] Diagnose/reproduce user hardware-specific browser crashes and CPU/GPU stalls with retained telemetry, not just successful CI screenshots.
+- [x] Replace browser busy Poll loop with Wait-scheduled redraw, pause hidden-tab drawing, bound HiDPI framebuffer size, and resume drawing on visibility changes; verify browser soak.
+- [x] Mask pedestrian path mesh triangles inside actual at-grade carriageway footprints; preserve paths beneath bridges and exclude tunnels from road masking.
+- [x] Provide source-tagged elevated road inspection camera jump and minimap visual differentiation.
+- [ ] Profile a real-user Edge/Hyprland GPU context crash: this CI runner does not reproduce intermittent hardware failures.
 - [ ] Add surveyed-grade street surfaces, map coverage beyond the pilot, and optional location jumping.
 - [x] Reproducible browser QA in Chromium with real Downtown LA scene.
 - [ ] Public GitHub Pages URL serving the verified playable browser bundle (deployment workflow configured, live deployment pending).
