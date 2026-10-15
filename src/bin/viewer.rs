@@ -548,14 +548,17 @@ impl Graphics {
             view_formats: &[],
         }).create_view(&wgpu::TextureViewDescriptor::default())
     }
-    fn resize(&mut self, size: PhysicalSize<u32>) {
-        if self.config.width==size.width.max(1) &&
-            self.config.height==size.height.max(1) {return;}
-        self.config.width = size.width.max(1);
-        self.config.height = size.height.max(1);
-        self.surface.configure(&self.device, &self.config);
+    fn reconfigure_surface(&mut self, size:PhysicalSize<u32>) {
+        self.config.width=size.width.max(1);
+        self.config.height=size.height.max(1);
+        self.surface.configure(&self.device,&self.config);
         self.depth=Self::depth_view(&self.device,self.config.width,self.config.height);
         expose_surface_size(self.config.width,self.config.height);
+    }
+    fn resize(&mut self,size:PhysicalSize<u32>) {
+        if self.config.width==size.width.max(1) &&
+            self.config.height==size.height.max(1) {return;}
+        self.reconfigure_surface(size);
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
@@ -574,7 +577,11 @@ impl Graphics {
             wgpu::CurrentSurfaceTexture::Success(frame) |
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.resize(self.window.inner_size()); return false;
+                // The surface can be lost WITHOUT a window dimension change.
+                // resize() deliberately no-ops for equal dimensions, so it
+                // cannot recover a lost swapchain. Force configure instead.
+                self.reconfigure_surface(self.window.inner_size());
+                return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout |
             wgpu::CurrentSurfaceTexture::Occluded |

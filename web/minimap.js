@@ -358,12 +358,62 @@
   // network request that previously failed on intermittent connections.
   let landmarksStarted=false;
   let citySource="";
+  const buildingSearch=document.getElementById("named-building-search");
+  const buildingResults=document.getElementById("named-building-results");
+  const namedCount=document.getElementById("named-building-count");
+  let namedBuildings=[];
+  function renderNamedBuildings(){
+    if(!buildingResults)return;
+    const filter=(buildingSearch?.value||"").trim().toLocaleLowerCase();
+    const matches=namedBuildings.filter(b=>b.name.toLocaleLowerCase().includes(filter));
+    const limited=matches.slice(0,60);
+    buildingResults.replaceChildren();
+    if(!limited.length){
+      const item=document.createElement("p");
+      item.textContent=filter?"No source-named buildings match that search.":
+        "No building names supplied by the source for this area.";
+      buildingResults.append(item);
+      return;
+    }
+    for(const b of limited){
+      const item=document.createElement("div");
+      item.className="named-building-item";
+      item.setAttribute("role","listitem");
+      const title=document.createElement("strong");
+      title.textContent=b.name;
+      const detail=document.createElement("small");
+      const facts=[];
+      if(Number.isFinite(b.height_m)&&b.height_m>0)
+        facts.push("recorded height: "+b.height_m.toFixed(1)+" m");
+      if(Number.isFinite(b.levels)&&b.levels>0)
+        facts.push("source floors: "+b.levels);
+      facts.push("footprint: "+b.source_id);
+      detail.textContent=facts.join(" · ");
+      item.append(title,detail);
+      buildingResults.append(item);
+    }
+    if(matches.length>limited.length){
+      const note=document.createElement("small");
+      note.textContent="Showing "+limited.length+" of "+matches.length+"; refine search.";
+      buildingResults.append(note);
+    }
+  }
+  buildingSearch?.addEventListener("input",renderNamedBuildings);
+  function fillNamedBuildings(city){
+    namedBuildings=city.buildings
+      .filter(b=>typeof b.name==="string" && b.name.trim())
+      .sort((a,b)=>a.name.localeCompare(b.name));
+    if(namedCount)namedCount.textContent=String(namedBuildings.length);
+    renderNamedBuildings();
+  }
+
   function applyCity(city,source) {
     if(state.city) return;
     if(!city?.region||!Array.isArray(city.streets)||
        !Array.isArray(city.buildings))
       throw new Error("Invalid geographic city scene");
     state.city=city;
+    fillNamedBuildings(city);
     citySource=source;
     state.cache=false;
     canvas.setAttribute("data-map-source",source);

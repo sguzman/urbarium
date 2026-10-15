@@ -263,7 +263,10 @@ the current phase (fetch, JSON decoding, 3D geometry generation, GPU setup,
 first frame). This distinguishes a genuine network download from slower
 local Rust/WASM parsing or GPU initialization. It does **not** mean the
 browser can guarantee offline access forever or that a hung GPU can always
-be recovered inside a page. The old meaningless "cache ready" label has
+be recovered inside a page. Lost or outdated GPU swapchain surfaces now
+force reconfiguration even if the browser viewport dimensions are unchanged;
+this fixes a deterministic recovery bug but does not prove all
+hardware-specific crashes have been resolved. The old meaningless "cache ready" label has
 been removed.
 Use **Refresh geography** in the HUD when explicitly wanting new downloaded
 city/terrain data. Clearing site data also clears the geographic cache.
@@ -275,9 +278,12 @@ of permanent offline storage.
 ## Named buildings and real 3D transport grades
 
 The acquired Overture building features already store optional **names**,
-recorded heights and floor counts. Only nine places have manually sourced
-landmark annotations; named buildings not among them can be discovered from
-the building inventory without calling them full architectural recreations.
+recorded heights and floor counts. An expandable **More named buildings**
+panel beneath the minimap now searches those names in memory and shows
+the available source height, number of floors, and original feature ID.
+It does not download new metadata and does not pretend every footprint has a
+name. Only nine places have manually sourced landmark annotations; named
+buildings not among them are not architectural recreations.
 External heritage descriptions and Wikipedia/Wikidata identifiers require
 independent source matching and provenance, not guesses.
 
