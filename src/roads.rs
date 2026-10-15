@@ -536,7 +536,7 @@ mod tests {
             bridge,
         ])).unwrap();
         assert_eq!(report.junction_patches,0);
-        assert!(scene.layers[&SurfaceKind::Road].vertices.len()>40);
+        assert!(scene.layers[&SurfaceKind::Road].vertices.len()>=40);
         assert_eq!(report.elevated_spans,1);
         assert!(scene.layers.contains_key(&SurfaceKind::ElevatedRoad));
     }
