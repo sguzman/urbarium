@@ -154,7 +154,15 @@ fn append_part(
     Ok(())
 }
 
-fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec<u32>),String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SceneLayer { Ground, Buildings, Road, Walk, Steps, Rail }
+#[derive(Clone, Copy)]
+struct DrawBatch {
+    layer: SceneLayer,
+    first_index: u32,
+    count: u32,
+}
+fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String> {
     let (buildings,building_report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
     let (mut roads,road_report)=mesh_streets(city)?;
     terrain.drape_roads(&city.region,&mut roads);
@@ -162,24 +170,34 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
         return Err(format!("city has {} buildings meshed, {} skipped",
             building_report.buildings_meshed, building_report.buildings_skipped));
     }
-    let mut verts = Vec::new();
-    let mut indices = Vec::new();
+    let mut verts=Vec::new();
+    let mut indices=Vec::new();
+    let mut batches=Vec::new();
+    let mut add = |mesh:&Mesh,color:[f32;3],layer:SceneLayer| -> Result<(),String> {
+        let start=u32::try_from(indices.len()).map_err(|_|"too many city indices")?;
+        append_part(mesh,color,&mut verts,&mut indices)?;
+        let end=u32::try_from(indices.len()).map_err(|_|"too many city indices")?;
+        if end>start {
+            batches.push(DrawBatch{layer,first_index:start,count:end-start});
+        }
+        Ok(())
+    };
     let ground=terrain.mesh(&city.region)?;
-    append_part(&ground,[0.39,0.44,0.42],&mut verts,&mut indices)?;
-    append_part(&buildings,[0.71,0.76,0.81],&mut verts,&mut indices)?;
+    add(&ground,[0.39,0.44,0.42],SceneLayer::Ground)?;
+    add(&buildings,[0.71,0.76,0.81],SceneLayer::Buildings)?;
     for (kind,mesh) in roads.layers {
-        let color=match kind {
-            SurfaceKind::Road => [0.24,0.26,0.29],
-            SurfaceKind::Walk => [0.73,0.65,0.52],
-            SurfaceKind::Steps => [0.84,0.55,0.36],
-            SurfaceKind::Rail => [0.40,0.52,0.61],
+        let (layer,color)=match kind {
+            SurfaceKind::Road => (SceneLayer::Road,[0.24,0.26,0.29]),
+            SurfaceKind::Walk => (SceneLayer::Walk,[0.60,0.58,0.51]),
+            SurfaceKind::Steps => (SceneLayer::Steps,[0.74,0.62,0.46]),
+            SurfaceKind::Rail => (SceneLayer::Rail,[0.40,0.52,0.61]),
         };
-        append_part(&mesh,color,&mut verts,&mut indices)?;
+        add(&mesh,color,layer)?;
     }
     info(&format!("Loaded {} buildings, {} transport spans, {} vertices, {} triangles",
         building_report.buildings_meshed,road_report.segments_meshed,
         verts.len(),indices.len()/3));
-    Ok((verts,indices))
+    Ok((verts,indices,batches))
 }
 
 fn info(message: &str) {
@@ -285,6 +303,28 @@ fn set_terrain_size(points:usize) {
 #[cfg(not(target_arch="wasm32"))]
 fn set_terrain_size(_:usize) {}
 
+fn scene_layer_visible(layer:SceneLayer)->bool {
+    match layer {
+        SceneLayer::Ground | SceneLayer::Buildings | SceneLayer::Road => true,
+        // These independent centerlines are not surveyed sidewalk boundaries
+        // or grade-correct rail beds; isolate layers for debugging.
+        SceneLayer::Walk | SceneLayer::Steps => layer_enabled("layer-walk",true),
+        SceneLayer::Rail => layer_enabled("layer-rail",false),
+    }
+}
+fn layer_enabled(id:&str,default:bool)->bool {
+    #[cfg(target_arch="wasm32")]
+    {
+        if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+            if let Some(el)=doc.get_element_by_id(id) {
+                return el.get_attribute("data-visible").as_deref()==Some("true");
+            }
+        }
+    }
+    let _=id;
+    default
+}
+
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -302,6 +342,7 @@ struct Graphics {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
+    batches:Vec<DrawBatch>,
     rendered_frames: u64,
 }
 impl Graphics {
@@ -368,7 +409,10 @@ impl Graphics {
             pass.set_bind_group(0,&self.camera_bind_group,&[]);
             pass.set_vertex_buffer(0,self.vertices.slice(..));
             pass.set_index_buffer(self.indices.slice(..),wgpu::IndexFormat::Uint32);
-            pass.draw_indexed(0..self.index_count,0,0..1);
+            for batch in &self.batches {
+                if !scene_layer_visible(batch.layer) {continue;}
+                pass.draw_indexed(batch.first_index..batch.first_index+batch.count,0,0..1);
+            }
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
@@ -391,7 +435,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let terrain=fetch_terrain().await?;
     terrain.validate(&city.region)?;
     set_terrain_size(terrain.heights_m.len());
-    let (vertices,indices)=combined_city(&city,&terrain)?;
+    let (vertices,indices,batches)=combined_city(&city,&terrain)?;
     info("Connecting to WebGPU or WebGL2...");
     let instance=wgpu::util::new_instance_with_webgpu_detection(
         wgpu::InstanceDescriptor::new_without_display_handle()).await;
@@ -495,7 +539,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let graphics=Graphics {
         window,surface,device,queue,config,pipeline,depth,camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
-        rendered_frames:0,
+        rendered_frames:0,batches,
     };
     info(&format!("Downtown LA ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release"));
     proxy.send_event(AppEvent::Ready(graphics))

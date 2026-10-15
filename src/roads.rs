@@ -249,7 +249,7 @@ fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport
         }
         // A 1mm height bias prevents z-fighting without covering vertical
         // features; the patch is deliberately the same asphalt material.
-        let y=0.081;
+        let y=0.245;
         layer.vertices.push(Vertex{
             position:[x as f32,y,z as f32],normal:[0.0,1.0,0.0]
         });
@@ -312,11 +312,14 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
         // Roads should visually cover crossing footpath ribbons on the flat
         // preview. Distinct mapping of footways is not a route overlay and
         // must not be draped over asphalt without surveyed grade information.
+        // Stable layer priority on a shared ground DEM. Ground < rail <
+        // pedestrian < road. No arbitrary rail-over-road patches when
+        // actual bridge decks or crossing surveys are missing.
         let height=match kind {
-            SurfaceKind::Road=>0.08,
-            SurfaceKind::Walk=>0.035,
-            SurfaceKind::Steps=>0.040,
-            SurfaceKind::Rail=>0.085,
+            SurfaceKind::Road=>0.24,
+            SurfaceKind::Walk=>0.09,
+            SurfaceKind::Steps=>0.10,
+            SurfaceKind::Rail=>0.05,
         };
         let Some(strip)=ribbon(&street.path,width,height)? else {
             report.segments_degenerate+=1;
