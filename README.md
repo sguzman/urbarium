@@ -21,8 +21,10 @@ produced a geographic city JSON and a low-poly 3D building OBJ:
 - **1,719,448 bytes** total for the uncompressed GLB, independently loaded through a separate glTF-capable 3D library.
 
 The sample covers approximately 1.5 × 1.2 km around Bunker Hill / Civic
-Center, not the whole city. The outputs are real indexed 3D geometry,
-**not yet a navigable Rust/WASM/WebGPU demo**. Terrain remains flat, roads
+Center, not the whole city. The outputs include real indexed 3D geometry and a first
+**Rust/WASM/WebGPU flythrough viewer**. Chromium automated QA successfully
+loaded the Downtown LA scene and exercised camera movement on October 15, 2026.
+This is a flythrough/prototype, **not a collision-aware walking simulator**. Terrain remains flat, roads
 remain centerlines, and fidelity of individual facades is not established.
 
 [Validated real-data build, OBJ and combined GLB artifacts](https://github.com/sguzman/urbarium/actions/runs/38680594189)
@@ -144,8 +146,8 @@ A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.
 It generates GPU buffers from the same Rust `mesh_city` and `mesh_streets`
 functions used by the OBJ/GLB exporters, without a second JS mesh generator.
 The browser loads `assets/downtown-la.json` and supports WASD, Shift, E/Q,
-mouse drag and arrow-key camera navigation. The viewer is **not yet a
-deployed public site**, and terrain, grade separation, true intersection
+mouse drag and arrow-key camera navigation. Automated Chromium QA has passed canvas startup, WebGPU rendering
+initialization and WASD input. Terrain, grade separation, true intersection
 surfaces and player collision are pending.
 
 For a local browser bundle, install the `wasm32-unknown-unknown` Rust
@@ -154,6 +156,21 @@ using the existing Overture workflow, then copy that city JSON to
 `web/assets/downtown-la.json` and use `trunk serve --open`. The
 `web/assets` folder is intentionally excluded from Git. CI checks
 native and wasm compilation separately.
+
+## GitHub Pages deployment
+
+The [browser demo workflow](.github/workflows/browser-demo.yml)
+acquires the bounded Downtown LA data, compiles Rust to WASM, verifies the
+Trunk-generated static site, runs Chromium/Playwright camera and render
+initialization QA, and then uploads/deploys the **tested** `dist/` site using
+GitHub's official Pages actions. The deploy job runs only after QA succeeds
+on `main`. Nothing under `data/raw`, `data/processed`, or `web/assets`
+needs to be committed to Git.
+
+Site address: https://sguzman.github.io/urbarium/ (requires Pages publication
+to complete successfully). To use this workflow, set **Settings → Pages →
+Build and deployment → Source → GitHub Actions**. Merely enabling the
+branch-based Pages build does not publish the Trunk/WASM output.
 
 ## Geometry contract
 

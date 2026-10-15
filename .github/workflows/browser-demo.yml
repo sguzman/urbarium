@@ -8,13 +8,27 @@ on:
       - .github/workflows/browser-demo.yml
       - src/bin/viewer.rs
       - src/bin/viewer.wgsl
+      - src/lib.rs
+      - src/geometry.rs
+      - src/roads.rs
+      - src/gltf.rs
+      - src/main.rs
+      - regions/downtown-la.json
+      - scripts/build-downtown-overture.sh
       - Cargo.toml
       - index.html
       - scripts/qa-browser.py
   workflow_dispatch:
 
+# Only one Pages deployment at a time; a newer push wins.
+concurrency:
+  group: urbarium-pages
+  cancel-in-progress: false
+
 jobs:
   package:
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -66,6 +80,10 @@ jobs:
         run: |
           python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
           python3 scripts/qa-browser.py
+      - name: Stage GitHub Pages site artifact after successful Chromium QA
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist/
       - name: Retain actual WebGPU render screenshot
         if: success()
         uses: actions/upload-artifact@v4
@@ -95,3 +113,38 @@ jobs:
           path: /tmp/urbarium-browser-debug.png
           if-no-files-found: ignore
           retention-days: 7
+
+  deploy:
+    needs: package
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy verified city site to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Verify the public HTML entrypoint and LA data
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          set -euo pipefail
+          echo "Checking published Urbarium: $PAGE_URL"
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+            "${PAGE_URL%/}/" -o /tmp/urbarium-live.html
+          grep -q 'URBARIUM' /tmp/urbarium-live.html
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+            "${PAGE_URL%/}/assets/downtown-la.json" -o /tmp/urbarium-live.json
+          python3 - <<'PY'
+          import json
+          city=json.load(open('/tmp/urbarium-live.json',encoding='utf-8'))
+          assert len(city['buildings']) > 300
+          assert len(city['streets']) > 500
+          print('Published LA scene:',len(city['buildings']),'buildings;',
+                len(city['streets']),'streets')
+          PY

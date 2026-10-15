@@ -36,9 +36,10 @@
 - [x] Validate actual Downtown LA GLB: 34,660 triangles, 6 scene meshes, 1,719,448 bytes, independently loaded via trimesh.
 - [ ] Add physically correct intersections, crossings, grade separation and additional roof primitives.
 - [ ] Tile spatial indexing, culling, LOD, material batching and simple collision.
-- [ ] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer walk controls (implementation introduced; browser packaging and QA pending).
+- [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [ ] Start at a recognizable Downtown LA site; navigation, FPS and error overlay.
-- [ ] Reproducible browser QA in Chromium and a publicly accessible demo URL.
+- [x] Reproducible browser QA in Chromium with real Downtown LA scene.
+- [ ] Public GitHub Pages URL serving the verified playable browser bundle (deployment workflow configured, live deployment pending).
 
 ## P3 — Regional expansion
 
