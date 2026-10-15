@@ -31,6 +31,8 @@ with sync_playwright() as p:
                 configurable: true, value: undefined
             });
         """)
+    requests = []
+    page.on("request", lambda r: requests.append(r.url))
     errors = []
     page.on("pageerror", lambda e: (errors.append(str(e)), print("PAGE ERROR:", str(e))))
     page.on("console", lambda m: print("CONSOLE", m.type, m.text))
@@ -196,6 +198,20 @@ with sync_playwright() as p:
         player_x=float(minimap.get_attribute("data-player-x"))
         camera_x=float(page.locator("#status").get_attribute("data-camera-x"))
         assert abs(player_x-camera_x) < 2.0, (player_x,camera_x)
+        assert minimap.get_attribute("data-map-source") == "rust-shared", (
+            "Minimap must consume the payload already fetched by Rust, not refetch"
+        )
+        city_requests=[u for u in requests if "/assets/downtown-la.json" in u]
+        dem_requests=[u for u in requests if "/assets/downtown-la-terrain.json" in u]
+        assert len(city_requests) == 1, (
+            f"Duplicate city network loads: {city_requests}"
+        )
+        assert len(dem_requests) == 1, (
+            f"Duplicate elevation network loads: {dem_requests}"
+        )
+        assert page.locator("#map-retry").count() == 1
+        assert page.evaluate("() => window.__urbariumCityJson === undefined")
+        print("Rust-to-minimap shared data works with exactly one city and DEM request")
         print("Minimap scene, camera marker and zoom controls passed")
         page.wait_for_function(
             "() => document.querySelector('#minimap-canvas')?.getAttribute('data-landmark-count') === '8'",

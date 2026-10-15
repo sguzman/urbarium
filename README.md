@@ -241,6 +241,21 @@ actual curb edges need distinct treatment and better source data.
 See [Mapzen's Terrarium encoding](https://github.com/tilezen/joerd/blob/master/docs/formats.md)
 for the height decoder.
 
+## Reliable minimap loading
+
+The Rust WASM loader now publishes its already-decoded source city and
+terrain payloads through small browser events. The minimap consumes these
+directly **instead of issuing duplicate geographic downloads**. This prevents
+the previous "TypeError: Failed to fetch" error when the viewer had
+successfully loaded the scene but the minimap's redundant request failed.
+The map listens for future city/terrain-ready events, so an extended load
+does not permanently strand the map in an error state. The in-map ↻ control
+provides an explicit independent retry if the shared payload is unavailable.
+Optional landmark metadata retries separately and never blocks base-map
+drawing. The source JSON's content is not committed; the handoff happens
+within the browser. Browser CI requires exactly one city and one terrain
+request across the 3D viewer and minimap.
+
 ## Live landmark catalog and smooth locator
 
 Eight **georeferenced** Downtown LA landmarks are now included as a
