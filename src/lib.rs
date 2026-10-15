@@ -6,6 +6,7 @@ pub mod geometry;
 pub mod roads;
 pub mod gltf;
 pub mod collision;
+pub mod terrain;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
