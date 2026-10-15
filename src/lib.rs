@@ -424,6 +424,66 @@ pub fn buildings_from_geojson(
     Ok(buildings)
 }
 
+/// Import Overture (or other GeoJSON) street/transport segments as city-local
+/// metric centerlines. MultiLineString geometries are split into independently
+/// addressable segment parts. Nonlinear geometries are ignored.
+pub fn streets_from_geojson(json: &str, region: &Region) -> Result<Vec<Street>, String> {
+    region.validate()?;
+    let root: Value = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    let features = root.get("features").and_then(Value::as_array)
+        .ok_or("street input must be a GeoJSON FeatureCollection")?;
+    let mut streets = Vec::new();
+    for (index, feature) in features.iter().enumerate() {
+        let Some(geometry) = feature.get("geometry") else { continue };
+        let Some(kind) = geometry.get("type").and_then(Value::as_str) else { continue };
+        let Some(coords) = geometry.get("coordinates") else { continue };
+        let properties = feature.get("properties").and_then(Value::as_object);
+        let prop = |key: &str| properties.and_then(|p| p.get(key));
+        let id = feature.get("id").or_else(|| prop("id"))
+            .map(value_as_identifier).unwrap_or_else(|| index.to_string());
+        let name = prop("name").and_then(Value::as_str)
+            .or_else(|| prop("names").and_then(|n| n.get("primary")).and_then(Value::as_str))
+            .map(str::to_owned);
+        let class = prop("class").or_else(|| prop("subtype"))
+            .and_then(Value::as_str).unwrap_or("unknown").to_owned();
+        let mut tags = BTreeMap::new();
+        for key in ["class", "subtype", "surface", "road", "access_restrictions"] {
+            if let Some(value) = prop(key).and_then(Value::as_str) {
+                tags.insert(key.to_owned(), value.to_owned());
+            }
+        }
+        let paths: Vec<&Value> = match kind {
+            "LineString" => vec![coords],
+            "MultiLineString" => coords.as_array().into_iter().flatten().collect(),
+            _ => continue,
+        };
+        for (part, path) in paths.into_iter().enumerate() {
+            let Some(values) = path.as_array() else { continue };
+            let coordinates: Option<Vec<(f64, f64)>> = values.iter().map(|point| {
+                let a = point.as_array()?;
+                let lon = a.first()?.as_f64()?;
+                let lat = a.get(1)?.as_f64()?;
+                (lon.is_finite() && lat.is_finite()).then_some((lon, lat))
+            }).collect();
+            let Some(coordinates) = coordinates else { continue };
+            if coordinates.len() < 2 || !intersects_coordinates(region, &coordinates) {
+                continue;
+            }
+            streets.push(Street {
+                source_id: format!("geojson:segment:{id}:{part}"),
+                name: name.clone(),
+                kind: class.clone(),
+                path: coordinates.into_iter()
+                    .map(|(lon, lat)| region.project(lon, lat)).collect(),
+                osm_node_ids: Vec::new(),
+                tags: tags.clone(),
+            });
+        }
+    }
+    streets.sort_by(|a, b| a.source_id.cmp(&b.source_id));
+    Ok(streets)
+}
+
 fn value_as_identifier(value: &Value) -> String {
     value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string())
 }
@@ -564,6 +624,30 @@ mod tests {
         assert_eq!(city.buildings[0].polygons[0].rings.len(), 2);
         assert_eq!(city.buildings[0].polygons[0].rings[0].len(), 4);
         assert!((city.buildings[0].height_m.unwrap() - 18.288).abs() < 0.001);
+    }
+
+    #[test]
+    fn imports_geojson_line_and_multiline_streets_without_fake_junctions() {
+        let input = r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","id":"seg-1",
+           "properties":{"class":"residential","names":{"primary":"First Street"}},
+           "geometry":{"type":"MultiLineString","coordinates":[
+             [[-118.251,34.05],[-118.2505,34.0505]],
+             [[-118.2505,34.0505],[-118.250,34.0508]]
+           ]}},
+          {"type":"Feature","properties":{"class":"service"},
+           "geometry":{"type":"LineString","coordinates":[
+             [-121,36],[-121.0001,36.0001]
+           ]}}
+        ]}"#;
+        let streets = streets_from_geojson(input, &downtown()).unwrap();
+        assert_eq!(streets.len(), 2);
+        assert_eq!(streets[0].name.as_deref(), Some("First Street"));
+        assert_eq!(streets[0].kind, "residential");
+        assert_eq!(streets[0].source_id, "geojson:segment:seg-1:0");
+        assert_eq!(streets[1].source_id, "geojson:segment:seg-1:1");
+        assert!(streets.iter().all(|s| s.osm_node_ids.is_empty()));
+        assert_eq!(streets[0].tags.get("class").map(String::as_str), Some("residential"));
     }
 
     #[test]

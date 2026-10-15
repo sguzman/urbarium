@@ -1,0 +1,28 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "seg-11",
+      "properties": {
+        "class": "residential",
+        "names": {
+          "primary": "Fixture Road"
+        }
+      },
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            -118.251,
+            34.05
+          ],
+          [
+            -118.25,
+            34.0501
+          ]
+        ]
+      }
+    }
+  ]
+}

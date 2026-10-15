@@ -31,3 +31,11 @@ You can override the endpoint through `OVERPASS_URL`; overrides never trigger
 the automatic fallback. Do not schedule continuous polling or scale this
 workflow across county-sized extents on public servers. Migrate to versioned
 regional PBF/Parquet extracts for the multi-county ingest.
+
+## Overture-only fallback
+
+Urbarium can ingest **both Overture transportation segments and Overture
+buildings** without calling Overpass. Use `--streets-geojson` and
+`--buildings-geojson` together and omit `--osm`. Road segments are
+renderer-neutral metric polylines; the Overture connector graph and access
+rules are not yet reconstructed. See `scripts/build-downtown-overture.sh`.

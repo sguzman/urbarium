@@ -6,6 +6,7 @@
 - [x] Bounded Overpass acquisition script for Downtown Los Angeles.
 - [x] Import OSM road and building ways, preserving missing survey heights.
 - [x] Import optional GeoJSON footprints with multipolygons/holes and explicit height units.
+- [x] Import Overture/GeoJSON street LineString and MultiLineString segments independently of OSM.
 - [x] Unit tests and CI definition.
 - [x] Optional Overture GeoParquet-to-GeoJSON data acquisition script with release provenance.
 - [x] Synthetic end-to-end smoke tests for OSM and GeoJSON ingestion (CI configured).

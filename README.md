@@ -6,7 +6,7 @@ Urbarium is a Rust-first pipeline for geographically faithful, low-poly, walkabl
 
 ## Status
 
-**Phase 1: data foundation.** This repository currently contains a working Rust ingestion *implementation*, not yet a deployed WebGPU demo. The CLI turns OpenStreetMap Overpass roads/building ways into renderer-independent, region-local geometry. It also accepts an optional GeoJSON building layer (e.g. Overture or a lawfully obtained county source) with explicit height units. Live data acquisition and WASM/WebGPU rendering are not yet validated.
+**Phase 1: data foundation.** This repository currently contains a working Rust ingestion *implementation*, not yet a deployed WebGPU demo. The CLI converts OSM/Overture street networks and building footprints into renderer-independent, region-local geometry. It also accepts optional GeoJSON street segments and a GeoJSON building layer (e.g. Overture or a lawfully obtained county source) with explicit height units. Live data acquisition and WASM/WebGPU rendering are not yet validated.
 
 ## Quick start
 
