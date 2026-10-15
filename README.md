@@ -291,17 +291,26 @@ buildings not among them are not architectural recreations.
 External heritage descriptions and Wikipedia/Wikidata identifiers require
 independent source matching and provenance, not guesses.
 
-The road renderer's meshes are truly 3D, but the current road geometry is
-still **terrain-draped**. Even freeway centerlines render at grade.
-Overture transportation offers `level_rules` (relative stacking order),
-`road_flags` (including `is_bridge`), `width_rules`, and routing connectors.
-The GeoJSON importer now preserves these source attributes for future
-grade-separated decks, sloped ramps, support structures and correct
-over/under crossing handling. The presence of a level is **not** a surveyed
-height in meters. Actual elevated highway geometry, pillars, collisions and
-connectivity-aware ramp grades are **not yet implemented**. Correctness must
-be validated against the source tags and ideally higher-resolution elevation
-or city infrastructure surveys before geographic expansion.
+The road renderer now includes a first real 3D **source-qualified
+bridge/overpass pass**. A road is elevated only where its imported attributes
+explicitly specify `bridge=yes` or a positive stacking layer; being called
+`motorway` alone never causes it to float. Such tagged streets leave the
+at-grade road layer and receive a separate 3D deck, a thickened concrete slab
+and soffit, side barriers and illustrative support piers. The deck follows
+the DEM as a visual height reference, separate from ground-intersection
+patches. The mesh also exports in portable GLB/OBJ with named materials.
+
+**Important limitation:** Overture `level_rules` provide *relative Z-order*,
+not measured meters. Deck height uses approximately 5.8 m of *visual*
+clearance per level (capped at 3), and the side barriers and pier locations
+are not surveyed or engineered. The importer preserves scoped
+`road_flags`, `level_rules` and `width_rules`, but currently elevates
+only unambiguously **whole-segment** bridge/level tags. Partial-segment rules
+still need geometry splitting. True level-continuous freeway ramps, terrain
+cutouts, retaining walls, bridge deck collision and real connector topology
+remain unfinished. The named-road exporter reports the number of
+source-qualified bridge spans so a geography release without any evidence
+does not silently create fake freeways.
 
 ## Landmark categories and time-of-day sky
 

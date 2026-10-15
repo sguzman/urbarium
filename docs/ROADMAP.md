@@ -30,7 +30,8 @@
 - [ ] Upgrade elevation source to high-resolution 3DEP where available; fix bridge/underpass decks and retaining walls.
 - [x] Preserve Overture transportation bridge/tunnel flags, visual level rules and road width rules during GeoJSON ingestion without inventing metric elevations.
 - [ ] Split roads at scoped bridge/level transitions and derive grade separation from Overture Z-order and topology; validate crossings against source features.
-- [ ] Generate real 3D elevated freeway decks with thickness, support columns, ramp gradients, guardrails and underpasses (never infer accurate road altitude solely from Z-order).
+- [x] Generate initial source-qualified elevated freeway/bridge decks with genuine vertical mesh geometry, slab soffits/fascia, side barriers and approximate support columns; default render layers remain separate from at-grade junctions.
+- [ ] Join elevated segment profiles across real Overture connector topology and model true source-scoped bridge transitions, ramps, underpasses, engineering clearances and collisions (never infer surveyed altitude solely from Z-order).
 - [ ] Add optional named building discovery from Overture's source names/heights, with careful label density and independently matched provenance for notable buildings.
 - [ ] Hand-authored corrections for standout landmarks only when primary data cannot represent them.
 

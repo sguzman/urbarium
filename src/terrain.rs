@@ -4,7 +4,7 @@
 //! local X/Z plane as city geometry. Row zero is the south edge.
 
 use crate::geometry::{mesh_building, HeightPolicy, Mesh, MeshReport, Vertex};
-use crate::roads::RoadScene;
+use crate::roads::{RoadScene,SurfaceKind};
 use crate::{City, Region};
 use serde::{Deserialize, Serialize};
 
@@ -117,15 +117,18 @@ impl TerrainGrid {
         Ok(mesh)
     }
 
-    /// Road/path ribbons drape to local elevation; vertical/bridge semantics
-    /// remain pending, so this is not yet a navigable terrain surface.
-    pub fn drape_roads(&self, region:&Region, roads:&mut RoadScene) {
-        for mesh in roads.layers.values_mut() {
+    /// At-grade ribbons follow actual DEM triangles; bridges are regenerated
+    /// independently from source-qualified spans above that same datum.
+    pub fn drape_roads(&self,region:&Region,roads:&mut RoadScene)->Result<(),String> {
+        for (kind,mesh) in roads.layers.iter_mut() {
+            if matches!(kind,SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
+                SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails){continue;}
             for vertex in &mut mesh.vertices {
                 vertex.position[1]+=self.sample_surface(
                     region,vertex.position[0] as f64,vertex.position[2] as f64);
             }
         }
+        crate::road_grade::build_bridge_layers(roads,|x,z|self.sample_surface(region,x,z))
     }
 
     /// Keep each building's foundation and roof horizontal by applying one
@@ -219,7 +222,7 @@ mod tests {
             }]
         };
         let (mut roads,_)=mesh_streets(&city).unwrap();
-        g.drape_roads(&r,&mut roads);
+        g.drape_roads(&r,&mut roads).unwrap();
         let surface=&roads.layers[&SurfaceKind::Road];
         assert!(surface.vertices.len()>100);
         for vertex in &surface.vertices {

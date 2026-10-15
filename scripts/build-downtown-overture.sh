@@ -44,6 +44,14 @@ manifest = {
     "buildings": len(data["buildings"]),
     "recorded_building_heights": sum(b["height_m"] is not None for b in data["buildings"]),
     "street_classes": dict(__import__("collections").Counter(s["kind"] for s in data["streets"]).most_common()),
+    "source_bridge_spans": sum(
+        s["tags"].get("bridge") == "yes" or
+        (s["tags"].get("layer","0").lstrip("-").isdigit()
+         and int(s["tags"].get("layer","0")) > 0)
+        for s in data["streets"]
+    ),
+    "scoped_road_flag_spans": sum("overture:road_flags" in s["tags"]
+        for s in data["streets"]),
     "provenance": data["provenance"],
 }
 Path("data/processed/downtown-la-overture-report.json").write_text(

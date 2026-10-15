@@ -110,6 +110,11 @@ with sync_playwright() as p:
         assert terrain_points == 4225, f"Terrain DEM missing or incomplete: {terrain_points}"
         print("Footprint obstacles loaded:", obstacles)
         print("Geographic elevation samples loaded:", terrain_points)
+        elevated_attr=page.locator("#status").get_attribute("data-elevated-road-spans")
+        assert elevated_attr is not None,"Missing source-grade bridge diagnostics"
+        elevated=int(elevated_attr)
+        assert 0<=elevated<=1600,elevated
+        print("Source-qualified elevated bridge spans:", elevated)
         eye_height=float(page.locator("#status").get_attribute("data-eye-clearance"))
         assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
         canvas.click(position={"x": 500, "y": 420})

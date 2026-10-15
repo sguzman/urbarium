@@ -12,6 +12,10 @@ use std::io::{self, Write};
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceKind {
     Road,
+    ElevatedRoad,
+    BridgeFascia,
+    BridgeSupports,
+    BridgeRails,
     Walk,
     Steps,
     Rail,
@@ -20,6 +24,10 @@ impl SurfaceKind {
     fn material(self) -> &'static str {
         match self {
             Self::Road => "road_asphalt",
+            Self::ElevatedRoad => "bridge_deck",
+            Self::BridgeFascia => "bridge_concrete",
+            Self::BridgeSupports => "bridge_supports",
+            Self::BridgeRails => "bridge_rails",
             Self::Walk => "walk_pavement",
             Self::Steps => "steps_stone",
             Self::Rail => "rail_surface",
@@ -30,6 +38,14 @@ impl SurfaceKind {
 #[derive(Debug, Default)]
 pub struct RoadScene {
     pub layers: BTreeMap<SurfaceKind, Mesh>,
+    pub bridge_spans: Vec<BridgeSpan>,
+}
+#[derive(Clone, Debug)]
+pub struct BridgeSpan {
+    pub path:Vec<Point>,
+    pub width_m:f64,
+    pub relative_level:u8,
+    pub source_id:String,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -38,6 +54,7 @@ pub struct RoadReport {
     pub segments_meshed: usize,
     pub segments_skipped: usize,
     pub segments_degenerate: usize,
+    pub elevated_spans: usize,
     /// Filled at-grade T/cross intersections inferred from shared road endpoints.
     pub junction_patches: usize,
     pub total_vertices: usize,
@@ -101,8 +118,8 @@ fn direction(a: Point, b: Point) -> Option<[f64;2]> {
 /// Before terrain draping, subdivide long centerlines and across their
 /// widths. Otherwise a 50m road triangle cuts directly through relief.
 pub const MAX_RIBBON_STEP_M:f64=3.0;
-const RIBBON_CROSS_STEPS:usize=4;
-fn ribbon(path:&[Point],width:f64,height:f32)->Result<Option<Mesh>,String>{
+pub(crate) const RIBBON_CROSS_STEPS:usize=4;
+pub(crate) fn ribbon(path:&[Point],width:f64,height:f32)->Result<Option<Mesh>,String>{
     let mut source=Vec::<Point>::new();
     for &point in path {
         if !point.x.is_finite() || !point.z.is_finite(){
@@ -317,10 +334,32 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
         // actual bridge decks or crossing surveys are missing.
         let height=match kind {
             SurfaceKind::Road=>0.24,
+            SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
+            SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails=>0.24,
             SurfaceKind::Walk=>0.09,
             SurfaceKind::Steps=>0.10,
             SurfaceKind::Rail=>0.05,
         };
+        // Explicit bridge or above-ground stacking data alone qualifies a road
+        // for a grade-separated visual approximation. Do not float roads
+        // solely because they are classed as motorway.
+        let positive_layer=street.tags.get("layer")
+            .and_then(|s|s.parse::<i32>().ok()).is_some_and(|n|n>0);
+        let is_bridge=kind==SurfaceKind::Road &&
+            street.tags.get("tunnel").is_none_or(|s|s=="no") &&
+            (street.tags.get("bridge").is_some_and(|s|s=="yes")||positive_layer);
+        if is_bridge && street.path.len()>=2 {
+            let level=street.tags.get("layer")
+                .and_then(|s|s.parse::<i32>().ok()).unwrap_or(1).clamp(1,3) as u8;
+            scene.bridge_spans.push(BridgeSpan {
+                path:street.path.clone(),width_m:width,relative_level:level,
+                source_id:street.source_id.clone(),
+            });
+            report.elevated_spans+=1;
+            report.segments_meshed+=1;
+            *report.by_surface.entry("elevated_bridge".into()).or_insert(0)+=1;
+            continue;
+        }
         let Some(strip)=ribbon(&street.path,width,height)? else {
             report.segments_degenerate+=1;
             continue;
@@ -337,6 +376,7 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
         *report.by_surface.entry(kind.material().into()).or_insert(0)+=1;
     }
     add_junction_patches(city,&mut scene,&mut report)?;
+    crate::road_grade::build_bridge_layers(&mut scene,|_,_|0.0)?;
     report.total_vertices=scene.layers.values().map(|l| l.vertices.len()).sum();
     report.total_triangles=scene.layers.values().map(|l| l.indices.len()/3).sum();
     Ok((scene,report))
@@ -376,6 +416,10 @@ pub fn write_road_mtl(mut out: impl Write) -> io::Result<()> {
     writeln!(out,"# Neutral debug materials, not a measured surface color")?;
     for (name,color) in [
         ("road_asphalt",[0.24,0.26,0.29]),
+        ("bridge_deck",[0.27,0.30,0.34]),
+        ("bridge_concrete",[0.50,0.53,0.54]),
+        ("bridge_supports",[0.61,0.62,0.60]),
+        ("bridge_rails",[0.79,0.81,0.78]),
         ("walk_pavement",[0.58,0.60,0.59]),
         ("steps_stone",[0.65,0.62,0.56]),
         ("rail_surface",[0.34,0.43,0.48]),
@@ -493,6 +537,8 @@ mod tests {
         ])).unwrap();
         assert_eq!(report.junction_patches,0);
         assert!(scene.layers[&SurfaceKind::Road].vertices.len()>40);
+        assert_eq!(report.elevated_spans,1);
+        assert!(scene.layers.contains_key(&SurfaceKind::ElevatedRoad));
     }
 
     #[test]

@@ -168,7 +168,7 @@ fn append_part(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SceneLayer { Ground, Buildings, Road, Walk, Steps, Rail, Marker(u32) }
+enum SceneLayer { Ground, Buildings, Road, ElevatedRoad, BridgeStructure, Walk, Steps, Rail, Marker(u32) }
 #[derive(Clone, Copy)]
 struct DrawBatch {
     layer: SceneLayer,
@@ -263,7 +263,7 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
     }
     let (buildings,building_report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
     let (mut roads,road_report)=mesh_streets(city)?;
-    terrain.drape_roads(&city.region,&mut roads);
+    terrain.drape_roads(&city.region,&mut roads)?;
     if building_report.buildings_meshed == 0 || building_report.buildings_skipped > 0 {
         return Err(format!("city has {} buildings meshed, {} skipped",
             building_report.buildings_meshed, building_report.buildings_skipped));
@@ -286,6 +286,10 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
     for (kind,mesh) in roads.layers {
         let (layer,color)=match kind {
             SurfaceKind::Road => (SceneLayer::Road,[0.24,0.26,0.29]),
+            SurfaceKind::ElevatedRoad => (SceneLayer::ElevatedRoad,[0.26,0.29,0.32]),
+            SurfaceKind::BridgeFascia => (SceneLayer::BridgeStructure,[0.48,0.51,0.52]),
+            SurfaceKind::BridgeSupports => (SceneLayer::BridgeStructure,[0.61,0.63,0.62]),
+            SurfaceKind::BridgeRails => (SceneLayer::BridgeStructure,[0.76,0.78,0.78]),
             SurfaceKind::Walk => (SceneLayer::Walk,[0.60,0.58,0.51]),
             SurfaceKind::Steps => (SceneLayer::Steps,[0.74,0.62,0.46]),
             SurfaceKind::Rail => (SceneLayer::Rail,[0.40,0.52,0.61]),
@@ -325,9 +329,10 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
         cursor=end;
     }
     if cursor!=building_end {return Err("landmark building ranges do not match terrain mesh".into());}
-    info(&format!("Loaded {} buildings, {} transport spans, {} vertices, {} triangles",
+    set_elevated_span_count(road_report.elevated_spans);
+    info(&format!("Loaded {} buildings, {} transport spans ({} source-tagged elevated), {} vertices, {} triangles",
         building_report.buildings_meshed,road_report.segments_meshed,
-        verts.len(),indices.len()/3));
+        road_report.elevated_spans,verts.len(),indices.len()/3));
     Ok((verts,indices,batches))
 }
 
@@ -386,6 +391,17 @@ async fn fetch_city() -> Result<City, String> {
         serde_json::from_str(&data).map_err(|e| format!("city JSON: {e}"))
     }
 }
+
+#[cfg(target_arch="wasm32")]
+fn set_elevated_span_count(count:usize) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-elevated-road-spans",&count.to_string());
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_elevated_span_count(_:usize) {}
 
 #[cfg(target_arch="wasm32")]
 fn set_collision_count(count: usize) {
@@ -466,7 +482,8 @@ fn set_terrain_size(_:usize) {}
 
 fn scene_layer_visible(layer:SceneLayer)->bool {
     match layer {
-        SceneLayer::Ground | SceneLayer::Buildings | SceneLayer::Road => true,
+        SceneLayer::Ground | SceneLayer::Buildings | SceneLayer::Road |
+        SceneLayer::ElevatedRoad | SceneLayer::BridgeStructure => true,
         SceneLayer::Marker(category)=>browser_category_mask() & (1<<category)!=0,
         // These independent centerlines are not surveyed sidewalk boundaries
         // or grade-correct rail beds; isolate layers for debugging.
