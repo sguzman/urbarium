@@ -263,11 +263,18 @@ of the previous hard-coded 1280×800 buffer. Window-resize events update the
 winit window, GPU surface, and depth texture together. CI verifies both a
 large 1664×926 browser viewport and another 1120×740 live resize.
 
-World landmark names remain fixed, horizontal HTML pills. Quick mouse-look
-rotation temporarily hides them, preventing distracting text that sweeps
-around the viewpoint; nearby labels return once the camera settles. The
-visible world tags are limited to the nearest three within 350 meters.
-Landmark pins on the north-up minimap remain independent and always available.
+World landmark names are upright HTML overlays projected using the same
+camera handedness, position and 68-degree field of view as the Rust renderer.
+They update while moving or turning and are hidden **only** when genuinely
+outside the camera's view, behind it, or over 1.8 km away. There is no
+turn-time suppression or nearest-three arbitrary disappearance rule.
+Minimap pins remain north-up and available regardless of camera rotation.
+
+Geographic coordinates use **X east, Y up, Z north** (left-handed). Both
+the 3D camera and the minimap now follow compass bearings clockwise from
+north: moving the mouse right increases yaw, moving left decreases it, and
+D strafes east while facing north. CI checks projected east-to-screen-right,
+geographic strafing, and minimap-arrow synchronization with Rust's yaw.
 
 ## Live landmark catalog and smooth locator
 

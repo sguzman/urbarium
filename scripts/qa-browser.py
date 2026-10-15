@@ -122,10 +122,24 @@ with sync_playwright() as p:
         page.mouse.move(590,420,steps=5)
         page.wait_for_timeout(300)
         after_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
-        assert after_yaw < before_yaw-0.03, (
-            f"FPS mouse look did not rotate right: {before_yaw} -> {after_yaw}"
+        assert after_yaw > before_yaw+0.03, (
+            f"Right mouse must turn compass heading eastward: {before_yaw} -> {after_yaw}"
         )
         print("Pointer lock + correct non-drag FPS mouse look passed:",before_yaw,"->",after_yaw)
+        # Cross-check the compass arrow against the precise camera bearing
+        # published by Rust. East is sin(yaw), north is cos(yaw).
+        page.wait_for_function("""() => {
+            const m=document.querySelector('#minimap-canvas');
+            const s=document.querySelector('#status');
+            if (!m||!s)return false;
+            const yaw=Number(s.getAttribute('data-camera-yaw'));
+            const east=Number(m.getAttribute('data-heading-east'));
+            const north=Number(m.getAttribute('data-heading-north'));
+            return Number.isFinite(yaw) &&
+                Math.abs(east-Math.sin(yaw))<0.005 &&
+                Math.abs(north-Math.cos(yaw))<0.005;
+        }""",timeout=8000)
+        print("North-up minimap arrow agrees with Rust's east/north bearing")
         page.keyboard.press("Shift")
         page.wait_for_function(
             "() => document.querySelector('#status')?.getAttribute('data-speed-mode') === 'fast'",
@@ -227,6 +241,9 @@ with sync_playwright() as p:
         player_x=float(minimap.get_attribute("data-player-x"))
         camera_x=float(page.locator("#status").get_attribute("data-camera-x"))
         assert abs(player_x-camera_x) < 2.0, (player_x,camera_x)
+        player_z=float(minimap.get_attribute("data-player-z"))
+        camera_z=float(page.locator("#status").get_attribute("data-camera-z"))
+        assert abs(player_z-camera_z)<2.0, (player_z,camera_z)
         assert minimap.get_attribute("data-map-source") == "rust-shared", (
             "Minimap must consume the payload already fetched by Rust, not refetch"
         )
@@ -251,13 +268,15 @@ with sync_playwright() as p:
         assert page.locator("#status").get_attribute("data-camera-pose") is not None
         print("Eight source-backed landmarks are mapped and anchored to the camera")
         page.wait_for_function(
-            "() => document.querySelector('#world-landmarks')?.getAttribute('data-labels-paused') !== null",
+            "() => document.querySelector('#world-landmarks')?.getAttribute('data-labels-mode') === 'view-frustum'",
             timeout=8000,
         )
+        assert page.locator("#world-landmarks").get_attribute("data-labels-paused") is None
         assert "rotate(" not in page.locator(".world-landmark").first.evaluate(
             "(e) => e.style.transform"
         )
-        print("Landmark labels are screen-upright and camera-turn stabilization is active")
+        assert int(page.locator("#world-landmarks").get_attribute("data-labels-visible")) >= 0
+        print("World labels track the actual camera frustum without movement-based hiding")
         # Compare map frames to the browser's own requestAnimationFrame
         # budget, not wall-clock FPS. SwiftShader CI is a software GPU and
         # sometimes can present only a handful of total page frames.
