@@ -28,6 +28,22 @@ jobs:
           city = json.load(open('data/processed/downtown-la.json', encoding='utf-8'))
           assert len(city['streets']) > 10, 'No substantial transportation dataset'
           assert len(city['buildings']) > 10, 'No substantial building dataset'
+          # Source bbox predicate returns intersecting features whose geometry
+          # extends far outside the tile; importer must clip every street span.
+          import math
+          region = city['region']
+          lon0, lat0 = region['origin']
+          w, s, e, n = region['bbox']
+          radius = 6371008.8
+          factor = radius * math.pi / 180
+          xmin, xmax = [(v-lon0)*factor*math.cos(math.radians(lat0)) for v in (w, e)]
+          zmin, zmax = [(v-lat0)*factor for v in (s, n)]
+          for street in city['streets']:
+              assert street['path'], street['source_id']
+              for point in street['path']:
+                  assert xmin-0.001 <= point['x'] <= xmax+0.001, street['source_id']
+                  assert zmin-0.001 <= point['z'] <= zmax+0.001, street['source_id']
+          print('REAL_STREET_BOUNDS_VERIFIED= true')
           print('REAL_DOWNTOWN_LA_STREETS=', len(city['streets']))
           print('REAL_DOWNTOWN_LA_BUILDINGS=', len(city['buildings']))
           PY

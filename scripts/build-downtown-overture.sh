@@ -43,6 +43,7 @@ manifest = {
     "streets": len(data["streets"]),
     "buildings": len(data["buildings"]),
     "recorded_building_heights": sum(b["height_m"] is not None for b in data["buildings"]),
+    "street_classes": dict(__import__("collections").Counter(s["kind"] for s in data["streets"]).most_common()),
     "provenance": data["provenance"],
 }
 Path("data/processed/downtown-la-overture-report.json").write_text(

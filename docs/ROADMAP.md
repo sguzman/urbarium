@@ -16,7 +16,7 @@
 - [ ] Capture provenance, source snapshots, and coverage metrics as a reproducible manifest.
 - [x] Assemble OSM building multipolygon relations with multi-way rings and interior courtyards.
 - [x] Clip OSM and Overture transportation centerlines at region bounds, including long external rail segments.
-- [ ] Add robust road topology, relation QA diagnostics, and polygon bounds clipping.
+- [ ] Add robust road topology and relation QA diagnostics; canonical tile ownership for whole buildings.
 
 ## P1 — Geographic fidelity
 

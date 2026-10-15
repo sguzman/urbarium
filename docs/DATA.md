@@ -39,3 +39,13 @@ buildings** without calling Overpass. Use `--streets-geojson` and
 `--buildings-geojson` together and omit `--osm`. Road segments are
 renderer-neutral metric polylines; the Overture connector graph and access
 rules are not yet reconstructed. See `scripts/build-downtown-overture.sh`.
+
+## Building footprints at tile boundaries
+
+Building geometry is **not** cut at the pilot bbox. Real Overture data
+currently includes dozens of polygons crossing it. Cutting a courtyard or
+irregular roof can damage geometric fidelity and introduce seams; our future
+regional chunker should assign each whole building a canonical owner tile,
+reference it from overlapping neighbor tiles, and avoid duplicates. Road
+centerlines are clipped, because their source segments sometimes traverse
+tens of kilometers outside the requested tile.
