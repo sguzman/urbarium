@@ -381,7 +381,10 @@ with sync_playwright() as p:
         assert legal.get_attribute("aria-pressed")=="false"
         assert legend.get_attribute("data-visible-mask")=="253"
         assert page.locator('.world-landmark[data-kind="legal"]').is_hidden()
-        assert page.locator("#minimap-canvas").get_attribute("data-painted-landmark-count")=="8"
+        page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.dataset.paintedLandmarkCount === '8'",
+            timeout=8000,
+        )
         assert page.evaluate(
             "() => localStorage.getItem('urbarium-landmark-filter-v3')"
         ) == "253"
