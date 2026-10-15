@@ -92,18 +92,21 @@ impl Camera {
     }
     fn view_projection(&self, width: u32, height: u32) -> Mat4 {
         let aspect = width as f32 / height.max(1) as f32;
-        let view = Mat4::look_to_rh(self.position, self.forward(), Vec3::Y);
-        let projection = Mat4::perspective_rh(68.0_f32.to_radians(), aspect, 0.06, 4500.0);
+        // Geographic axes are X=east, Y=up, Z=north: a left-handed frame.
+        // Use LH camera matrices so east is screen-right when facing north.
+        let view = Mat4::look_to_lh(self.position, self.forward(), Vec3::Y);
+        let projection = Mat4::perspective_lh(68.0_f32.to_radians(), aspect, 0.06, 4500.0);
         projection * view
     }
     fn mouse_look(&mut self, dx: f32, dy: f32) {
-        self.yaw -= dx * 0.0025;
+        // Clockwise from geographic north is positive: right mouse = eastward turn.
+        self.yaw += dx * 0.0025;
         self.pitch = (self.pitch - dy * 0.0025).clamp(-1.52, 1.52);
     }
     fn move_by(&mut self, pressed:&HashSet<KeyCode>, elapsed:f32,
         world:Option<&CollisionWorld>, terrain:Option<(&TerrainGrid,&Region)>) {
         let ground_forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
-        let right = Vec3::new(-ground_forward.z, 0.0, ground_forward.x);
+        let right = Vec3::new(ground_forward.z, 0.0, -ground_forward.x);
         let mut delta = Vec3::ZERO;
         if pressed.contains(&KeyCode::KeyW) { delta += ground_forward; }
         if pressed.contains(&KeyCode::KeyS) { delta -= ground_forward; }
@@ -927,12 +930,44 @@ fn main() {
 mod tests {
     use super::*;
     #[test]
-    fn fps_look_is_not_inverted_and_camera_is_human_scaled() {
+    fn right_mouse_turns_clockwise_from_geographic_north() {
         let mut camera=Camera::default();
+        camera.yaw=0.0; // North: +Z, east: +X.
         camera.mouse_look(100.0,0.0);
-        assert!(camera.forward().x > 0.0, "rightward mouse motion looks right");
+        assert!(camera.yaw > 0.0);
+        assert!(camera.forward().x > 0.0,
+            "right mouse must turn toward geographic east");
+        camera.mouse_look(-200.0,0.0);
+        assert!(camera.forward().x < 0.0,
+            "left mouse must turn toward geographic west");
         assert!((camera.position.y-1.7).abs()<f32::EPSILON);
         assert!(camera.speed < 5.0);
+    }
+    #[test]
+    fn east_is_to_screen_right_when_facing_north() {
+        let mut camera=Camera::default();
+        camera.yaw=0.0;
+        let vp=camera.view_projection(1600,900);
+        let east=vp.project_point3(camera.position+Vec3::new(10.0,0.0,30.0));
+        let west=vp.project_point3(camera.position+Vec3::new(-10.0,0.0,30.0));
+        assert!(east.x>0.0 && west.x<0.0,
+            "camera and map must agree that east is right of north");
+        assert!((east.x+west.x).abs()<0.001);
+    }
+    #[test]
+    fn wasd_strafing_uses_geographic_right() {
+        let mut cam=Camera::default();
+        cam.position=Vec3::new(0.0,1.7,0.0);
+        cam.yaw=0.0;
+        let mut keys=HashSet::new();
+        keys.insert(KeyCode::KeyD);
+        cam.move_by(&keys,0.04,None,None);
+        assert!(cam.position.x>0.0,"D while facing north must move east");
+        assert!(cam.position.z.abs()<1e-4);
+        keys.clear();keys.insert(KeyCode::KeyA);
+        let prior=cam.position.x;
+        cam.move_by(&keys,0.04,None,None);
+        assert!(cam.position.x<prior,"A while facing north must move west");
     }
 
     #[test]
