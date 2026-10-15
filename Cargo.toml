@@ -24,6 +24,7 @@ viewer = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck",
 
 [dependencies.wgpu]
 version = "30.0.0"
+features = ["webgl"]
 optional = true
 
 [dependencies.winit]

@@ -179,6 +179,17 @@ async fn fetch_city() -> Result<City, String> {
 }
 
 #[cfg(target_arch="wasm32")]
+fn set_browser_backend(backend: &str) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-gpu-backend",backend);
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_browser_backend(_: &str) {}
+
+#[cfg(target_arch="wasm32")]
 fn set_browser_stage(stage: &str) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
@@ -300,7 +311,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     info("Loading Downtown LA streets and buildings...");
     let city=fetch_city().await?;
     let (vertices,indices)=combined_city(&city)?;
-    info("Connecting to WebGPU...");
+    info("Connecting to WebGPU or WebGL2...");
     let instance=wgpu::util::new_instance_with_webgpu_detection(
         wgpu::InstanceDescriptor::new_without_display_handle()).await;
     let surface=instance.create_surface(window.clone())
@@ -310,7 +321,9 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         force_fallback_adapter:false,
         compatible_surface:Some(&surface),
         apply_limit_buckets:false,
-    }).await.map_err(|e|format!("WebGPU adapter: {e}"))?;
+    }).await.map_err(|e|format!("Neither WebGPU nor WebGL2 could initialize: {e}. Check browser WebGL2 support and hardware acceleration."))?;
+    let backend = format!("{:?}",adapter.get_info().backend);
+    set_browser_backend(&backend);
     let (device,queue)=adapter.request_device(&wgpu::DeviceDescriptor {
         label:Some("Urbarium device"),
         required_features:wgpu::Features::empty(),
@@ -318,7 +331,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         memory_hints:wgpu::MemoryHints::Performance,
         trace:Default::default(),
         experimental_features:Default::default(),
-    }).await.map_err(|e|format!("WebGPU device: {e}"))?;
+    }).await.map_err(|e|format!("Graphics device ({backend}): {e}"))?;
     let size=window.inner_size();
     let mut config=surface.get_default_config(&adapter,size.width.max(1),size.height.max(1))
         .ok_or("No compatible GPU surface configuration")?;
@@ -401,7 +414,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,
     };
-    info("Downtown LA ready — WASD move, Shift sprint, E/Q up/down, drag to look");
+    info(&format!("Downtown LA ready ({backend}) — WASD move, Shift sprint, E/Q up/down, drag to look"));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }
