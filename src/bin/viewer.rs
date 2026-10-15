@@ -178,6 +178,28 @@ async fn fetch_city() -> Result<City, String> {
     }
 }
 
+#[cfg(target_arch="wasm32")]
+fn set_browser_stage(stage: &str) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-render-stage",stage);
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_browser_stage(_: &str) {}
+
+#[cfg(target_arch="wasm32")]
+fn set_browser_frame_count(count: u64) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-frame-count",&count.to_string());
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_browser_frame_count(_: u64) {}
+
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -192,6 +214,7 @@ struct Graphics {
     vertices: wgpu::Buffer,
     indices: wgpu::Buffer,
     index_count: u32,
+    rendered_frames: u64,
 }
 impl Graphics {
     fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -218,16 +241,16 @@ impl Graphics {
         self.queue.write_buffer(&self.camera_buffer,0,
             bytemuck::bytes_of(&CameraUniform{view_proj:vp.to_cols_array_2d()}));
     }
-    fn draw(&mut self) {
+    fn draw(&mut self) -> bool {
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) |
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.resize(self.window.inner_size()); return;
+                self.resize(self.window.inner_size()); return false;
             }
             wgpu::CurrentSurfaceTexture::Timeout |
             wgpu::CurrentSurfaceTexture::Occluded |
-            wgpu::CurrentSurfaceTexture::Validation => return,
+            wgpu::CurrentSurfaceTexture::Validation => return false,
         };
         let view=frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
@@ -260,6 +283,8 @@ impl Graphics {
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
+        self.rendered_frames += 1;
+        true
     }
 }
 
@@ -374,6 +399,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let graphics=Graphics {
         window,surface,device,queue,config,pipeline,depth,camera,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
+        rendered_frames:0,
     };
     info("Downtown LA ready — WASD move, Shift sprint, E/Q up/down, drag to look");
     proxy.send_event(AppEvent::Ready(graphics))
@@ -424,7 +450,11 @@ impl ApplicationHandler<AppEvent> for App {
     }
     fn user_event(&mut self,_event_loop:&ActiveEventLoop,event:AppEvent) {
         match event {
-            AppEvent::Ready(gfx)=>{gfx.window.request_redraw();self.state=Stage::Ready(gfx);}
+            AppEvent::Ready(gfx)=>{
+                set_browser_stage("graphics-received");
+                gfx.window.request_redraw();
+                self.state=Stage::Ready(gfx);
+            }
             AppEvent::Error(msg)=>{self.state=Stage::Error(msg);}
         }
     }
@@ -465,7 +495,10 @@ impl ApplicationHandler<AppEvent> for App {
                 self.last_frame=Instant::now();
                 if let Stage::Ready(gfx)=&mut self.state {
                     gfx.update(&self.keys,dt);
-                    gfx.draw();
+                    if gfx.draw() && gfx.rendered_frames == 1 {
+                        set_browser_stage("first-present");
+                    }
+                    set_browser_frame_count(gfx.rendered_frames);
                 }
             },
             _=>{}

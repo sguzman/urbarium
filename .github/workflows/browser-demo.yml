@@ -74,7 +74,7 @@ jobs:
           PY
       - name: Install headless Chromium QA
         run: |
-          python3 -m pip install playwright
+          python3 -m pip install playwright pillow
           python3 -m playwright install --with-deps chromium
       - name: QA viewer in browser with WebGPU
         run: |
@@ -135,7 +135,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking published Urbarium: $PAGE_URL"
-          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+          curl --fail --retry 12 --retry-all-errors --retry-delay 5 --location --silent --show-error \
             "${PAGE_URL%/}/" -o /tmp/urbarium-live.html
           grep -q 'URBARIUM' /tmp/urbarium-live.html
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \

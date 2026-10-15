@@ -41,10 +41,32 @@ with sync_playwright() as p:
         page.keyboard.up("w")
         page.wait_for_timeout(450)
         assert page.locator("#status").inner_text().startswith("Downtown LA ready")
-        print("Browser viewer canvas + WASM load + camera keys: passed")
+        page.wait_for_function(
+            "() => Number(document.querySelector('#status')?.getAttribute('data-frame-count') || '0') >= 3",
+            timeout=15000,
+        )
+        print("Render stage:", page.locator("#status").get_attribute("data-render-stage"))
+        print("Presented frames:", page.locator("#status").get_attribute("data-frame-count"))
+        # Test what the browser compositor actually displays, not merely that
+        # the WASM application reported successful initialization.
+        page.wait_for_timeout(350)
+        pixels=canvas.screenshot()
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(pixels)) as image:
+            image=image.convert("RGB")
+            w,h=image.size
+            values=[image.getpixel((int(w*x),int(h*y))) for x,y in (
+                (0.2,0.25),(0.5,0.5),(0.8,0.75),(0.1,0.9),(0.9,0.1)
+            )]
+        print("Rendered canvas sample:",values)
+        assert any(p != (255,255,255) for p in values), "Canvas remains blank white"
+        print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
         print("PAGE ERRORS:", errors)
         print("CURRENT STATUS:", page.locator("#status").inner_text())
+        print("RENDER STAGE:", page.locator("#status").get_attribute("data-render-stage"))
+        print("RENDER FRAMES:", page.locator("#status").get_attribute("data-frame-count"))
         print("DOCUMENT SCRIPTS:", page.locator("script").count())
         raise
     finally:
