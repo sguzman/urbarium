@@ -12,6 +12,8 @@ on:
       - src/geometry.rs
       - src/roads.rs
       - src/collision.rs
+      - src/terrain.rs
+      - scripts/fetch-terrain.py
       - src/gltf.rs
       - src/main.rs
       - regions/downtown-la.json
@@ -42,10 +44,12 @@ jobs:
           python-version: '3.12'
       - name: Acquire actual Downtown LA street and building data
         run: |
-          python -m pip install overturemaps
+          python -m pip install overturemaps Pillow
           bash scripts/build-downtown-overture.sh
+          python3 scripts/fetch-terrain.py --region regions/downtown-la.json --out data/processed/downtown-la-terrain.json
           mkdir -p web/assets
           cp data/processed/downtown-la.json web/assets/downtown-la.json
+          cp data/processed/downtown-la-terrain.json web/assets/downtown-la-terrain.json
       - name: Install pinned Trunk WebAssembly bundler
         run: |
           curl -fLS --retry 2 \
@@ -66,6 +70,10 @@ jobs:
           city=json.loads((dist/"assets"/"downtown-la.json").read_text())
           assert len(city["streets"]) > 500
           assert len(city["buildings"]) > 300
+          terrain=json.loads((dist/"assets"/"downtown-la-terrain.json").read_text())
+          assert terrain["region_id"] == city["region"]["id"]
+          assert terrain["width"]*terrain["height"] == len(terrain["heights_m"])
+          assert max(terrain["heights_m"])-min(terrain["heights_m"]) > 2
           wasm=list(dist.glob("*.wasm"))
           js=list(dist.glob("*.js"))
           assert wasm and js,(wasm,js)
@@ -150,11 +158,14 @@ jobs:
           grep -q 'URBARIUM' /tmp/urbarium-live.html
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/assets/downtown-la.json" -o /tmp/urbarium-live.json
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/assets/downtown-la-terrain.json" -o /tmp/urbarium-terrain-live.json
           python3 - <<'PY'
           import json
           city=json.load(open('/tmp/urbarium-live.json',encoding='utf-8'))
           assert len(city['buildings']) > 300
           assert len(city['streets']) > 500
+          terrain=json.load(open('/tmp/urbarium-terrain-live.json',encoding='utf-8'))
+          assert len(terrain['heights_m']) == 4225
           print('Published LA scene:',len(city['buildings']),'buildings;',
                 len(city['streets']),'streets')
           PY
