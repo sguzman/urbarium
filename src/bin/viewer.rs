@@ -344,6 +344,9 @@ struct Graphics {
     index_count: u32,
     batches:Vec<DrawBatch>,
     rendered_frames: u64,
+    gpu_mesh_bytes: usize,
+    active_draw_calls:u32,
+    active_triangles:u32,
 }
 impl Graphics {
     fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
@@ -366,7 +369,6 @@ impl Graphics {
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
-        expose_camera_pose(&self.camera);
         let vp=self.camera.view_projection(self.config.width,self.config.height);
         self.queue.write_buffer(&self.camera_buffer,0,
             bytemuck::bytes_of(&CameraUniform{view_proj:vp.to_cols_array_2d()}));
@@ -386,6 +388,8 @@ impl Graphics {
         let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
             label:Some("Urbarium encoder")
         });
+        let mut drawn_calls=0u32;
+        let mut drawn_triangles=0u32;
         {
             let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label:Some("Urbarium city"),
@@ -412,10 +416,14 @@ impl Graphics {
             for batch in &self.batches {
                 if !scene_layer_visible(batch.layer) {continue;}
                 pass.draw_indexed(batch.first_index..batch.first_index+batch.count,0,0..1);
+                drawn_calls+=1;
+                drawn_triangles+=batch.count/3;
             }
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
+        self.active_draw_calls=drawn_calls;
+        self.active_triangles=drawn_triangles;
         self.rendered_frames += 1;
         true
     }
@@ -536,10 +544,13 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         usage:wgpu::BufferUsages::INDEX,
     });
     let index_count=u32::try_from(indices.len()).map_err(|_|"scene has too many indices")?;
+    let gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
+        indices.len()*size_of::<u32>();
     let graphics=Graphics {
         window,surface,device,queue,config,pipeline,depth,camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
-        rendered_frames:0,batches,
+        rendered_frames:0,batches,gpu_mesh_bytes,
+        active_draw_calls:0,active_triangles:0,
     };
     info(&format!("Downtown LA ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release"));
     proxy.send_event(AppEvent::Ready(graphics))
@@ -666,14 +677,27 @@ impl ApplicationHandler<AppEvent> for App {
                 }
             },
             WindowEvent::RedrawRequested=>{
-                let dt=self.last_frame.elapsed().as_secs_f32().min(0.08);
-                self.last_frame=Instant::now();
+                let now=Instant::now();
+                let interval=self.last_frame.elapsed().as_secs_f32();
+                self.last_frame=now;
                 if let Stage::Ready(gfx)=&mut self.state {
-                    gfx.update(&self.keys,dt);
-                    if gfx.draw() && gfx.rendered_frames == 1 {
+                    gfx.update(&self.keys,interval.min(0.08));
+                    let rendered=gfx.draw();
+                    if rendered && gfx.rendered_frames == 1 {
                         set_browser_stage("first-present");
                     }
-                    set_browser_frame_count(gfx.rendered_frames);
+                    // DOM telemetry is intentionally throttled so reading
+                    // values for the minimap/stats does not create a GC
+                    // storm at 60+ frames/second.
+                    if gfx.rendered_frames % 8 == 0 {
+                        set_browser_frame_count(gfx.rendered_frames);
+                        expose_camera_pose(&gfx.camera);
+                        expose_gpu_metrics(
+                            gfx.gpu_mesh_bytes,gfx.active_draw_calls,
+                            gfx.active_triangles,interval*1000.0,
+                            now.elapsed().as_secs_f32()*1000.0,
+                        );
+                    }
                 }
             },
             _=>{}
@@ -721,6 +745,27 @@ fn set_speed_label(fast:bool) {
     }
     #[cfg(not(target_arch="wasm32"))]
     let _=fast;
+}
+fn expose_gpu_metrics(bytes:usize,draws:u32,triangles:u32,
+    frame_ms:f32,cpu_ms:f32) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            for (name,value) in [
+                ("data-gpu-mesh-bytes",bytes.to_string()),
+                ("data-draw-calls",draws.to_string()),
+                ("data-triangles-drawn",triangles.to_string()),
+                ("data-frame-ms",format!("{frame_ms:.2}")),
+                // This measures CPU-side update, encoding, and submit
+                // calls only. GPU work is asynchronous and not included.
+                ("data-cpu-frame-ms",format!("{cpu_ms:.2}")),
+            ] {
+                let _=el.set_attribute(name,&value);
+            }
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(bytes,draws,triangles,frame_ms,cpu_ms);
 }
 fn expose_camera_pose(camera:&Camera) {
     #[cfg(target_arch="wasm32")]
