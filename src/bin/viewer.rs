@@ -1,5 +1,5 @@
 //! First WASM/WebGPU city viewer: actual procedural Urbarium meshes, no JS geometry.
-//! Left-drag / arrow keys look, WASD move, E/Q rise/descend, Shift accelerates.
+//! FPS pointer lock, WASD walk, E/Q fly, Shift accelerates.
 
 use std::collections::HashSet;
 use std::mem::size_of;
@@ -13,10 +13,10 @@ use urbarium::City;
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 #[cfg(target_arch = "wasm32")]
 type SharedWindow = std::rc::Rc<Window>;
@@ -46,11 +46,40 @@ struct Camera {
 }
 impl Default for Camera {
     fn default() -> Self {
-        Self { position: Vec3::new(0.0, 95.0, 205.0),
-            yaw: std::f32::consts::PI, pitch: -0.32, speed: 42.0 }
+        Self { position: Vec3::new(0.0, 1.7, 0.0),
+            yaw: std::f32::consts::PI, pitch: 0.0, speed: 3.4 }
     }
 }
 impl Camera {
+    /// Select a real roadway centerline nearest Downtown LA's reference point.
+    /// Do not start the viewer 95 meters over the city or inside an arbitrary
+    /// building mass. This is a flat-ground, non-collision-aware preview.
+    fn spawn_at_street(city:&City) -> Self {
+        let mut camera=Self::default();
+        let mut closest=f64::INFINITY;
+        for street in &city.streets {
+            if !matches!(street.kind.as_str(),
+                "residential"|"living_street"|"service"|"tertiary"|
+                "secondary"|"primary"|"unclassified"|"pedestrian"
+            ) {continue;}
+            for pair in street.path.windows(2) {
+                let dx=pair[1].x-pair[0].x;
+                let dz=pair[1].z-pair[0].z;
+                let distance=dx.hypot(dz);
+                if !(6.0..1000.0).contains(&distance) {continue;}
+                let x=(pair[0].x+pair[1].x)*0.5;
+                let z=(pair[0].z+pair[1].z)*0.5;
+                let score=x*x+z*z;
+                if score<closest {
+                    closest=score;
+                    camera.position=Vec3::new(x as f32,1.7,z as f32);
+                    camera.yaw=(dx as f32).atan2(dz as f32);
+                }
+            }
+        }
+        camera
+    }
+
     fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin() * self.pitch.cos(), self.pitch.sin(),
             self.yaw.cos() * self.pitch.cos())
@@ -58,12 +87,12 @@ impl Camera {
     fn view_projection(&self, width: u32, height: u32) -> Mat4 {
         let aspect = width as f32 / height.max(1) as f32;
         let view = Mat4::look_to_rh(self.position, self.forward(), Vec3::Y);
-        let projection = Mat4::perspective_rh(65.0_f32.to_radians(), aspect, 0.1, 6000.0);
+        let projection = Mat4::perspective_rh(68.0_f32.to_radians(), aspect, 0.06, 4500.0);
         projection * view
     }
     fn mouse_look(&mut self, dx: f32, dy: f32) {
-        self.yaw += dx * 0.003;
-        self.pitch = (self.pitch - dy * 0.003).clamp(-1.52, 1.52);
+        self.yaw -= dx * 0.0025;
+        self.pitch = (self.pitch - dy * 0.0025).clamp(-1.52, 1.52);
     }
     fn move_by(&mut self, pressed: &HashSet<KeyCode>, elapsed: f32) {
         let ground_forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
@@ -337,7 +366,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         .ok_or("No compatible GPU surface configuration")?;
     config.present_mode=wgpu::PresentMode::Fifo;
     surface.configure(&device,&config);
-    let camera=Camera::default();
+    let camera=Camera::spawn_at_street(&city);
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label:Some("Camera uniform"),
         contents:bytemuck::bytes_of(&CameraUniform {
@@ -414,25 +443,33 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,
     };
-    info(&format!("Downtown LA ready ({backend}) — WASD move, Shift sprint, E/Q up/down, drag to look"));
+    info(&format!("Downtown LA ready ({backend}) — click to capture mouse, WASD walk, Shift run, E/Q fly, Esc release"));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }
 
-enum AppEvent { Ready(Graphics), Error(String) }
+enum AppEvent { Ready(Graphics), Error(String), PointerLock(bool) }
 enum Stage { Boot, Ready(Graphics), Error(String) }
 struct App {
     state:Stage,
     window:Option<SharedWindow>,
     keys:HashSet<KeyCode>,
-    dragging:bool,
-    last_cursor:Option<(f64,f64)>,
+    pointer_locked:bool,
     last_frame:Instant,
 }
 impl App {
     fn new() -> Self {
         Self{state:Stage::Boot,window:None,keys:HashSet::new(),
-            dragging:false,last_cursor:None,last_frame:Instant::now()}
+            pointer_locked:false,last_frame:Instant::now()}
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    fn release_mouse(&mut self) {
+        if let Some(w)=&self.window {
+            let _=w.set_cursor_grab(CursorGrabMode::None);
+            w.set_cursor_visible(true);
+        }
+        self.pointer_locked=false;
+        show_mouse_state(false);
     }
 }
 impl ApplicationHandler<AppEvent> for App {
@@ -452,6 +489,7 @@ impl ApplicationHandler<AppEvent> for App {
         {
             use winit::platform::web::WindowExtWebSys;
             if let Some(canvas)=window.canvas() {canvas.set_tab_index(0);}
+            install_pointerlockchange(self_proxy(event_loop));
         }
         self.window=Some(window.clone());
         // Initialization is asynchronous on WebGPU browsers.
@@ -469,6 +507,10 @@ impl ApplicationHandler<AppEvent> for App {
                 self.state=Stage::Ready(gfx);
             }
             AppEvent::Error(msg)=>{self.state=Stage::Error(msg);}
+            AppEvent::PointerLock(locked)=>{
+                self.pointer_locked=locked;
+                show_mouse_state(locked);
+            }
         }
     }
     fn window_event(&mut self,event_loop:&ActiveEventLoop,_id:WindowId,event:WindowEvent) {
@@ -478,30 +520,38 @@ impl ApplicationHandler<AppEvent> for App {
                 if let Stage::Ready(gfx)=&mut self.state {gfx.resize(size);}
             },
             WindowEvent::Focused(false)=>{
-                self.keys.clear();self.dragging=false;self.last_cursor=None;
+                self.keys.clear();
+                #[cfg(not(target_arch="wasm32"))]
+                self.release_mouse();
             },
             WindowEvent::KeyboardInput{event,..}=>{
                 if let PhysicalKey::Code(key)=event.physical_key {
                     if event.state==ElementState::Pressed {
                         self.keys.insert(key);
                     } else {self.keys.remove(&key);}
-                    if key==KeyCode::Escape {self.dragging=false;}
-                }
-            },
-            WindowEvent::MouseInput{button:MouseButton::Left,state,..}=>{
-                self.dragging=state==ElementState::Pressed;
-                self.last_cursor=None;
-            },
-            WindowEvent::CursorMoved{position,..}=>{
-                let now=(position.x,position.y);
-                if self.dragging {
-                    if let Some((x,y))=self.last_cursor {
-                        if let Stage::Ready(gfx)=&mut self.state {
-                            gfx.camera.mouse_look((now.0-x) as f32,(now.1-y) as f32);
-                        }
+                    if key==KeyCode::Escape {
+                        #[cfg(not(target_arch="wasm32"))]
+                        self.release_mouse();
+                        // Browser Esc releases pointer lock via pointerlockchange.
                     }
                 }
-                self.last_cursor=Some(now);
+            },
+            WindowEvent::MouseInput{
+                button:MouseButton::Left,state:ElementState::Pressed,..
+            }=>{
+                if let Some(w)=&self.window {
+                    // Browser calls here happen inside the required user gesture.
+                    if w.set_cursor_grab(CursorGrabMode::Locked).is_ok() {
+                        w.set_cursor_visible(false);
+                        #[cfg(not(target_arch="wasm32"))]
+                        {
+                            self.pointer_locked=true;
+                            show_mouse_state(true);
+                        }
+                    } else {
+                        info("Pointer lock unavailable. Click inside the city to retry.");
+                    }
+                }
             },
             WindowEvent::RedrawRequested=>{
                 let dt=self.last_frame.elapsed().as_secs_f32().min(0.08);
@@ -517,9 +567,49 @@ impl ApplicationHandler<AppEvent> for App {
             _=>{}
         }
     }
+    fn device_event(&mut self,_event_loop:&ActiveEventLoop,_id:DeviceId,event:DeviceEvent) {
+        if let DeviceEvent::MouseMotion{delta:(dx,dy)}=event {
+            if self.pointer_locked {
+                if let Stage::Ready(gfx)=&mut self.state {
+                    gfx.camera.mouse_look(dx as f32,dy as f32);
+                }
+            }
+        }
+    }
     fn about_to_wait(&mut self,_event_loop:&ActiveEventLoop) {
         if let Stage::Ready(gfx)=&self.state {gfx.window.request_redraw();}
     }
+}
+
+#[cfg(target_arch="wasm32")]
+fn install_pointerlockchange(proxy:EventLoopProxy<AppEvent>) {
+    use wasm_bindgen::{closure::Closure,JsCast};
+    let Some(doc)=web_sys::window().and_then(|w|w.document()) else {return};
+    let observed=doc.clone();
+    let callback=Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+        let _=proxy.send_event(AppEvent::PointerLock(
+            observed.pointer_lock_element().is_some()
+        ));
+    });
+    let _=doc.add_event_listener_with_callback(
+        "pointerlockchange",callback.as_ref().unchecked_ref()
+    );
+    callback.forget();
+}
+fn show_mouse_state(locked:bool) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("input-state") {
+            el.set_text_content(Some(if locked {
+                "Mouse captured — Esc releases"
+            } else {
+                "Click anywhere on the city to capture mouse"
+            }));
+            let _=el.set_attribute("data-pointer-locked",if locked {"true"} else {"false"});
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=locked;
 }
 
 // Store the event loop proxy in a thread-local once at startup; ApplicationHandler
@@ -551,6 +641,15 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fps_look_is_not_inverted_and_camera_is_human_scaled() {
+        let mut camera=Camera::default();
+        camera.mouse_look(100.0,0.0);
+        assert!(camera.forward().x > 0.0, "rightward mouse motion looks right");
+        assert!((camera.position.y-1.7).abs()<f32::EPSILON);
+        assert!(camera.speed < 5.0);
+    }
+
     #[test]
     fn camera_moves_and_pitch_stays_bounded() {
         let mut camera=Camera::default();
