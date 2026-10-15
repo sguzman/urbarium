@@ -266,7 +266,7 @@ with sync_playwright() as p:
         assert page.locator("#world-landmarks .world-landmark").count() == 9
         assert page.locator("#minimap-canvas").get_attribute("data-legal-count") == "1"
         categorized=page.locator("#world-landmarks .world-landmark").evaluate_all(
-            "(els) => Object.fromEntries(els.map(el => [el.textContent,el.dataset.kind]))")
+            "(els) => Object.fromEntries(els.map(el => [el.textContent.split(' · ')[0],el.dataset.kind]))")
         assert categorized.get("Mosk Courthouse")=="legal",categorized
         assert categorized.get("City Hall")=="civic",categorized
         assert categorized.get("Central Library")=="library",categorized

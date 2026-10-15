@@ -38,8 +38,8 @@ fn fs_main(input: VOut) -> @location(0) vec4<f32> {
     let id=u32(input.category_id+0.5);
     // Category mask is an exact 8-bit integer in the float uniform.
     // Untagged buildings retain their normal material.
-    let active=id>0u && (u32(camera.sky.y)&(1u<<(id-1u)))!=0u;
-    let color=select(input.color,input.category_color,active);
+    let category_visible=id>0u && (u32(camera.sky.y)&(1u<<(id-1u)))!=0u;
+    let color=select(input.color,input.category_color,category_visible);
     let gamma = pow(color * shade, vec3<f32>(0.87));
     return vec4<f32>(gamma, 1.0);
 }
