@@ -115,17 +115,6 @@ with sync_playwright() as p:
         elevated=int(elevated_attr)
         assert 0<elevated<=1600,(
             "Downtown LA pilot must visibly contain real source-tagged elevated bridges",elevated)
-        assert page.locator("#inspect-overpass").is_enabled()
-        assert f"({elevated})" in page.locator("#inspect-overpass").inner_text()
-        before_inspection=page.locator("#status").get_attribute("data-camera-pose")
-        page.locator("#inspect-overpass").click()
-        page.wait_for_function(
-            """(old) => document.querySelector('#status')?.dataset.cameraPose !== old""",
-            arg=before_inspection, timeout=10000)
-        after_inspection=page.locator("#status").get_attribute("data-camera-pose")
-        assert after_inspection != before_inspection
-        assert page.locator("#status").get_attribute("data-inspect-overpass-request")=="1"
-        print("Visible elevated road inspection jump and source-qualified spans:",elevated)
         eye_height=float(page.locator("#status").get_attribute("data-eye-clearance"))
         assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
         canvas.click(position={"x": 500, "y": 420})
@@ -133,7 +122,10 @@ with sync_playwright() as p:
             "() => document.pointerLockElement === document.querySelector('canvas:not(#minimap-canvas)')",
             timeout=12000,
         )
-        assert page.locator("#input-state").get_attribute("data-pointer-locked") == "true"
+        page.wait_for_function(
+            "() => document.querySelector('#input-state')?.dataset.pointerLocked === 'true'",
+            timeout=10000,
+        )
         before_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
         page.mouse.move(590,420,steps=5)
         page.wait_for_timeout(300)
@@ -570,6 +562,19 @@ with sync_playwright() as p:
             f"Renderer stopped during soak: {before_frames} -> {after_frames}"
         )
         assert not errors, errors
+        # Inspect a real bridge AFTER camera-motion and pointer-lock
+        # baseline checks; teleportation must not change their assumptions.
+        assert page.locator("#inspect-overpass").is_enabled()
+        assert f"({elevated})" in page.locator("#inspect-overpass").inner_text()
+        before_inspection=page.locator("#status").get_attribute("data-camera-pose")
+        page.locator("#inspect-overpass").click()
+        page.wait_for_function(
+            """(old) => document.querySelector('#status')?.dataset.cameraPose !== old""",
+            arg=before_inspection, timeout=10000)
+        after_inspection=page.locator("#status").get_attribute("data-camera-pose")
+        assert after_inspection != before_inspection
+        assert page.locator("#status").get_attribute("data-inspect-overpass-request")=="1"
+        print("Overpass inspector relocated the 3D camera to mapped elevated deck")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
