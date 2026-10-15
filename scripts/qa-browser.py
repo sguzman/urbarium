@@ -39,7 +39,7 @@ with sync_playwright() as p:
             if r.status >= 400 else None)
     page.goto("http://127.0.0.1:8010/", wait_until="domcontentloaded")
     try:
-        page.wait_for_selector("canvas", timeout=30000)
+        page.wait_for_selector("canvas:not(#minimap-canvas)", timeout=30000)
         page.wait_for_function(
             "() => { const e=document.querySelector('#status');"
             " return e && (e.textContent.includes('Downtown LA ready')"
@@ -57,7 +57,7 @@ with sync_playwright() as p:
         if "Viewer error" in state:
             raise AssertionError(state)
         assert not errors, errors
-        canvas = page.locator("canvas")
+        canvas = page.locator("canvas:not(#minimap-canvas)")
         page.wait_for_function(
             "() => Number(document.querySelector('#status')?.getAttribute('data-eye-clearance')) >= 1.7",
             timeout=15000,
@@ -72,7 +72,7 @@ with sync_playwright() as p:
         assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
         canvas.click(position={"x": 500, "y": 420})
         page.wait_for_function(
-            "() => document.pointerLockElement === document.querySelector('canvas')",
+            "() => document.pointerLockElement === document.querySelector('canvas:not(#minimap-canvas)')",
             timeout=12000,
         )
         assert page.locator("#input-state").get_attribute("data-pointer-locked") == "true"
@@ -84,6 +84,19 @@ with sync_playwright() as p:
             f"FPS mouse look did not rotate right: {before_yaw} -> {after_yaw}"
         )
         print("Pointer lock + correct non-drag FPS mouse look passed:",before_yaw,"->",after_yaw)
+        page.keyboard.press("Shift")
+        page.wait_for_function(
+            "() => document.querySelector('#status')?.getAttribute('data-speed-mode') === 'fast'",
+            timeout=6000,
+        )
+        assert float(page.locator("#status").get_attribute("data-speed-mps")) > 50
+        assert "FAST" in page.locator("#speed-state").inner_text()
+        page.keyboard.press("Shift")
+        page.wait_for_function(
+            "() => document.querySelector('#status')?.getAttribute('data-speed-mode') === 'walk'",
+            timeout=6000,
+        )
+        print("Shift toggles 18x fast movement and back to walk")
         page.keyboard.down("w")
         page.wait_for_timeout(450)
         page.keyboard.up("w")
@@ -151,6 +164,25 @@ with sync_playwright() as p:
             timeout=8000,
         )
         print("Pointer released on Escape")
+        minimap=page.locator("#minimap-canvas")
+        page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.getAttribute('data-map-ready') === 'true'",
+            timeout=15000,
+        )
+        old_zoom=float(minimap.get_attribute("data-map-width-m"))
+        assert old_zoom > 100
+        page.locator("#map-zoom-in").click()
+        page.wait_for_function(
+            "(before) => Number(document.querySelector('#minimap-canvas')?.dataset.mapWidthM) < before",
+            arg=old_zoom, timeout=6000,
+        )
+        zoomed=float(minimap.get_attribute("data-map-width-m"))
+        page.locator("#map-zoom-out").click()
+        assert float(minimap.get_attribute("data-map-width-m")) > zoomed
+        player_x=float(minimap.get_attribute("data-player-x"))
+        camera_x=float(page.locator("#status").get_attribute("data-camera-x"))
+        assert abs(player_x-camera_x) < 2.0, (player_x,camera_x)
+        print("Minimap scene, camera marker and zoom controls passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
         print("PAGE ERRORS:", errors)

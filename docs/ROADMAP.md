@@ -41,7 +41,10 @@
 - [x] Add first-person capsule-like planar building-footprint collision with swept horizontal movement, courtyards and wall sliding.
 - [ ] Add broad-phase collision spatial indexing, tile streaming, culling and LOD, and terrain slope traversal constraints.
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
-- [ ] Start at a recognizable Downtown LA site; navigation, FPS and error overlay.
+- [x] First-person street-level navigation, mouse capture, error overlay and toggleable 18× fast travel.
+- [x] Interactive north-up Downtown LA minimap with zoom, mapped buildings and camera location/heading.
+- [x] Subdivide road ribbons for terrain draping; align elevations with the exact rendered DEM triangles.
+- [ ] Add surveyed-grade street surfaces, map coverage beyond the pilot, and optional location jumping.
 - [x] Reproducible browser QA in Chromium with real Downtown LA scene.
 - [ ] Public GitHub Pages URL serving the verified playable browser bundle (deployment workflow configured, live deployment pending).
 

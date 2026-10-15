@@ -241,6 +241,22 @@ actual curb edges need distinct treatment and better source data.
 See [Mapzen's Terrarium encoding](https://github.com/tilezen/joerd/blob/master/docs/formats.md)
 for the height decoder.
 
+## First-person fast travel and geographic minimap
+
+- Press **Shift once** to toggle **fast travel** (~61.2 m/s, 18× walking);
+  press Shift again to return to a 3.4 m/s walk. You do not need to hold Shift.
+- The top-right, north-up **Downtown LA minimap** uses the same 563 source
+  footprints and 1,587 transportation centerlines as the viewer. Your
+  live position and facing arrow track Rust's camera, and **+/−** or the
+  map's mouse wheel change zoom. Its coverage is currently the bounded
+  Downtown LA pilot, not the entire county.
+- Roads are subdivided along their length and width before DEM draping,
+  preventing broad asphalt quads from cutting through hills. The height
+  sampler is now consistent with the terrain's actual GPU triangle split,
+  unlike the prior bilinear-vs-triangulated discrepancy. This improves
+  terrain intersections but does **not** turn roads into surveyed surfaces
+  or resolve bridge elevations.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.

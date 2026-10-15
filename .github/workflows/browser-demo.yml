@@ -8,6 +8,7 @@ on:
       - .github/workflows/browser-demo.yml
       - src/bin/viewer.rs
       - src/bin/viewer.wgsl
+      - web/minimap.js
       - src/lib.rs
       - src/geometry.rs
       - src/roads.rs
@@ -77,6 +78,10 @@ jobs:
           wasm=list(dist.glob("*.wasm"))
           js=list(dist.glob("*.js"))
           assert wasm and js,(wasm,js)
+          assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
+          page=(dist/"index.html").read_text()
+          assert 'minimap-canvas' in page
+          assert 'map-zoom-in' in page
           print("Browser package:",len(city["streets"]),"streets;",
                 len(city["buildings"]),"buildings;",
                 wasm[0].stat().st_size,"WASM bytes")
@@ -156,6 +161,9 @@ jobs:
           curl --fail --retry 12 --retry-all-errors --retry-delay 5 --location --silent --show-error \
             "${PAGE_URL%/}/" -o /tmp/urbarium-live.html
           grep -q 'URBARIUM' /tmp/urbarium-live.html
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+            "${PAGE_URL%/}/minimap.js" -o /tmp/urbarium-minimap-live.js
+          grep -q 'data-map-ready' /tmp/urbarium-minimap-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/assets/downtown-la.json" -o /tmp/urbarium-live.json
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/assets/downtown-la-terrain.json" -o /tmp/urbarium-terrain-live.json
