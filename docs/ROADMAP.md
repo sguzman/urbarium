@@ -15,7 +15,8 @@
 - [ ] Run and validate Overture-only acquisition against a real Downtown LA sample.
 - [ ] Capture provenance, source snapshots, and coverage metrics as a reproducible manifest.
 - [x] Assemble OSM building multipolygon relations with multi-way rings and interior courtyards.
-- [ ] Add robust road topology, relation QA diagnostics, and bounds clipping.
+- [x] Clip OSM and Overture transportation centerlines at region bounds, including long external rail segments.
+- [ ] Add robust road topology, relation QA diagnostics, and polygon bounds clipping.
 
 ## P1 — Geographic fidelity
 

@@ -154,14 +154,24 @@ pub fn from_overpass(json: &str, region: Region) -> Result<City, String> {
                 .filter_map(|key| tags.get(*key).and_then(Value::as_str)
                     .map(|value| ((*key).to_owned(), value.to_owned())))
                 .collect::<BTreeMap<String, String>>();
-            streets.push(Street {
-                source_id: format!("osm:way:{id}"),
-                name: name.clone(),
-                kind: kind.to_owned(),
-                path: coordinates.iter().map(|(lon, lat)| region.project(*lon, *lat)).collect(),
-                osm_node_ids,
-                tags: street_tags,
-            });
+            let original_path: Vec<Point> = coordinates.iter()
+                .map(|(lon, lat)| region.project(*lon, *lat)).collect();
+            let clipped = clip_street_path(&original_path, &region);
+            for (part, path) in clipped.iter().enumerate() {
+                let is_unchanged = clipped.len() == 1 && *path == original_path;
+                streets.push(Street {
+                    source_id: if clipped.len() == 1 {
+                        format!("osm:way:{id}")
+                    } else {
+                        format!("osm:way:{id}:part:{part}")
+                    },
+                    name: name.clone(),
+                    kind: kind.to_owned(),
+                    path: path.clone(),
+                    osm_node_ids: if is_unchanged { osm_node_ids.clone() } else { Vec::new() },
+                    tags: street_tags.clone(),
+                });
+            }
         }
         if !member_way_ids.contains(&id)
             && tags.get("building").and_then(Value::as_str).is_some_and(|v| v != "no")
@@ -334,6 +344,65 @@ fn osm_multipolygon_building(element: &Value, region: &Region) -> Option<(Buildi
     }, used))
 }
 
+/// Clip a transportation centerline to the *actual* region boundary.
+/// Long Overture railway or transit segments may run many kilometers outside
+/// a queried bbox. This algorithm keeps independent in-region spans separate.
+fn clip_segment(a: Point, b: Point, bounds: [f64; 4]) -> Option<(Point, Point)> {
+    let dx = b.x - a.x;
+    let dz = b.z - a.z;
+    let [xmin, zmin, xmax, zmax] = bounds;
+    let mut low: f64 = 0.0;
+    let mut high: f64 = 1.0;
+    for (p, q) in [
+        (-dx, a.x - xmin),
+        (dx, xmax - a.x),
+        (-dz, a.z - zmin),
+        (dz, zmax - a.z),
+    ] {
+        if p == 0.0 {
+            if q < 0.0 { return None; }
+        } else {
+            let ratio = q / p;
+            if p < 0.0 {
+                low = low.max(ratio);
+            } else {
+                high = high.min(ratio);
+            }
+            if low > high { return None; }
+        }
+    }
+    if high - low <= 1e-12 { return None; } // tangent/corner touch is not a road
+    Some((
+        Point { x: a.x + low * dx, z: a.z + low * dz },
+        Point { x: a.x + high * dx, z: a.z + high * dz },
+    ))
+}
+
+fn clip_street_path(points: &[Point], region: &Region) -> Vec<Vec<Point>> {
+    let southwest = region.project(region.bbox[0], region.bbox[1]);
+    let northeast = region.project(region.bbox[2], region.bbox[3]);
+    let bounds = [southwest.x, southwest.z, northeast.x, northeast.z];
+    let mut paths = Vec::new();
+    let mut current: Vec<Point> = Vec::new();
+    for vertices in points.windows(2) {
+        if let Some((a, b)) = clip_segment(vertices[0], vertices[1], bounds) {
+            if let Some(&tail) = current.last() {
+                if (tail.x - a.x).abs() > 1e-7 || (tail.z - a.z).abs() > 1e-7 {
+                    if current.len() >= 2 { paths.push(std::mem::take(&mut current)); }
+                    else { current.clear(); }
+                }
+            }
+            if current.is_empty() { current.push(a); }
+            if current.last() != Some(&b) { current.push(b); }
+        } else if !current.is_empty() {
+            if current.len() >= 2 { paths.push(std::mem::take(&mut current)); }
+            else { current.clear(); }
+        }
+    }
+    if current.len() >= 2 { paths.push(current); }
+    paths
+}
+
 fn intersects_coordinates(region: &Region, coords: &[(f64, f64)]) -> bool {
     let mut bbox = [f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY];
     for &(lon, lat) in coords {
@@ -469,15 +538,23 @@ pub fn streets_from_geojson(json: &str, region: &Region) -> Result<Vec<Street>, 
             if coordinates.len() < 2 || !intersects_coordinates(region, &coordinates) {
                 continue;
             }
-            streets.push(Street {
-                source_id: format!("geojson:segment:{id}:{part}"),
-                name: name.clone(),
-                kind: class.clone(),
-                path: coordinates.into_iter()
-                    .map(|(lon, lat)| region.project(lon, lat)).collect(),
-                osm_node_ids: Vec::new(),
-                tags: tags.clone(),
-            });
+            let path: Vec<Point> = coordinates.into_iter()
+                .map(|(lon, lat)| region.project(lon, lat)).collect();
+            let spans = clip_street_path(&path, region);
+            for (piece, clipped) in spans.into_iter().enumerate() {
+                streets.push(Street {
+                    source_id: if piece == 0 {
+                        format!("geojson:segment:{id}:{part}")
+                    } else {
+                        format!("geojson:segment:{id}:{part}:clip:{piece}")
+                    },
+                    name: name.clone(),
+                    kind: class.clone(),
+                    path: clipped,
+                    osm_node_ids: Vec::new(),
+                    tags: tags.clone(),
+                });
+            }
         }
     }
     streets.sort_by(|a, b| a.source_id.cmp(&b.source_id));
@@ -648,6 +725,37 @@ mod tests {
         assert_eq!(streets[1].source_id, "geojson:segment:seg-1:1");
         assert!(streets.iter().all(|s| s.osm_node_ids.is_empty()));
         assert_eq!(streets[0].tags.get("class").map(String::as_str), Some("residential"));
+    }
+
+    #[test]
+    fn clip_long_transport_segments_to_pilot_extent() {
+        let input = r#"{"type":"FeatureCollection","features":[{
+          "type":"Feature","id":"long-rail","properties":{"class":"rail"},
+          "geometry":{"type":"LineString","coordinates":[
+            [-118.8,34.05],[-118.25,34.05],[-117.8,34.05]
+          ]}
+        }]}"#;
+        let region = downtown();
+        let streets = streets_from_geojson(input, &region).unwrap();
+        assert_eq!(streets.len(), 1);
+        assert_eq!(streets[0].path.len(), 3);
+        let left = region.project(region.bbox[0], region.bbox[1]).x;
+        let right = region.project(region.bbox[2], region.bbox[3]).x;
+        let p = &streets[0].path;
+        assert!((p[0].x - left).abs() < 1e-6);
+        assert!((p[2].x - right).abs() < 1e-6);
+        assert!(p.iter().all(|v| v.x >= left-1e-6 && v.x <= right+1e-6));
+    }
+
+    #[test]
+    fn clipped_osm_ways_do_not_claim_unmodified_node_topology() {
+        let sample = r#"{"elements":[{"type":"way","id":901,
+          "tags":{"highway":"primary"},"nodes":[10,11],
+          "geometry":[{"lon":-118.8,"lat":34.05},{"lon":-118.25,"lat":34.05}]
+        }]}"#;
+        let city = from_overpass(sample, downtown()).unwrap();
+        assert_eq!(city.streets.len(), 1);
+        assert!(city.streets[0].osm_node_ids.is_empty());
     }
 
     #[test]
