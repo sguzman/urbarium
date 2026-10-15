@@ -260,19 +260,22 @@ with sync_playwright() as p:
         print("Rust-to-minimap shared data works with exactly one city and DEM request")
         print("Minimap scene, camera marker and zoom controls passed")
         assert page.locator("#named-buildings-panel").count()==1
-        page.locator("#named-buildings-panel summary").click()
         named_count=int(page.locator("#named-building-count").inner_text())
         assert 0<=named_count<=obstacles,named_count
-        assert page.locator("#named-building-search").is_visible()
         if named_count:
+            assert page.locator("#named-buildings-panel").is_visible()
+            page.locator("#named-buildings-panel summary").click()
+            assert page.locator("#named-building-search").is_visible()
             assert page.locator(".named-building-item").count()>=1
             sample=page.locator(".named-building-item strong").first.inner_text()
             page.locator("#named-building-search").fill(sample)
             assert page.locator(".named-building-item").count()>=1
             assert sample in page.locator(".named-building-item").first.inner_text()
             page.locator("#named-building-search").fill("")
-        print("Named building catalog uses already loaded city metadata: ",named_count)
-        page.locator("#named-buildings-panel summary").click()
+            page.locator("#named-buildings-panel summary").click()
+        else:
+            assert page.locator("#named-buildings-panel").is_hidden()
+        print("Named building directory is conditional on real source names: ",named_count)
         page.wait_for_function(
             "() => document.querySelector('#minimap-canvas')?.getAttribute('data-landmark-count') === '9'",
             timeout=15000,

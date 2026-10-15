@@ -278,11 +278,15 @@ of permanent offline storage.
 ## Named buildings and real 3D transport grades
 
 The acquired Overture building features already store optional **names**,
-recorded heights and floor counts. An expandable **More named buildings**
-panel beneath the minimap now searches those names in memory and shows
+recorded heights and floor counts. An optional **More named buildings**
+panel beneath the minimap searches source-provided names in memory and shows
 the available source height, number of floors, and original feature ID.
 It does not download new metadata and does not pretend every footprint has a
-name. Only nine places have manually sourced landmark annotations; named
+name. **In the October 15 live Overture Downtown LA pilot, zero of the
+acquired building polygons have a source-provided name.** The panel is
+therefore hidden in this snapshot instead of showing an empty directory.
+Extending named-building coverage requires verified additional source data,
+not made-up labels. Only nine places have manually sourced landmark annotations; named
 buildings not among them are not architectural recreations.
 External heritage descriptions and Wikipedia/Wikidata identifiers require
 independent source matching and provenance, not guesses.

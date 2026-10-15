@@ -404,6 +404,8 @@
       .filter(b=>typeof b.name==="string" && b.name.trim())
       .sort((a,b)=>a.name.localeCompare(b.name));
     if(namedCount)namedCount.textContent=String(namedBuildings.length);
+    const panel=document.getElementById("named-buildings-panel");
+    if(panel)panel.hidden=namedBuildings.length===0;
     renderNamedBuildings();
   }
 
