@@ -56,3 +56,26 @@ jobs:
           assert len(city['provenance']) == 2
           print('GeoJSON replacement test: validated footprint, hole, feet and provenance')
           PY
+      - name: Overture-only GeoJSON ingestion smoke test (no network)
+        run: |
+          cargo run -- ingest \
+            --region regions/downtown-la.json \
+            --streets-geojson tests/fixtures/synthetic-streets.geojson \
+            --buildings-geojson tests/fixtures/synthetic-buildings.geojson \
+            --height-unit feet \
+            --source-name "Synthetic Overture-style fixtures" \
+            --source-url "https://example.invalid/" \
+            --source-license "synthetic test data" \
+            --out /tmp/urbarium-overture-only-smoke.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/urbarium-overture-only-smoke.json', encoding='utf-8') as handle:
+              city = json.load(handle)
+          assert len(city["streets"]) == 1
+          assert len(city["buildings"]) == 1
+          assert city["streets"][0]["source_id"] == "geojson:segment:seg-11:0"
+          assert city["streets"][0]["name"] == "Fixture Road"
+          assert city["provenance"][0]["name"] == "Synthetic Overture-style fixtures"
+          assert len(city["provenance"]) == 1
+          print('Overture-only ingest test passed')
+          PY

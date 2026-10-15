@@ -1,0 +1,42 @@
+name: Downtown LA Overture live-data verification
+
+# One time on addition; manually dispatchable for future data refresh.
+on:
+  push:
+    paths:
+      - .github/workflows/real-overture-snapshot.yml
+  workflow_dispatch:
+
+jobs:
+  verify-live-overture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install official Overture CLI
+        run: python -m pip install overturemaps
+      - name: Download Downtown LA transportation and buildings
+        run: bash scripts/build-downtown-overture.sh
+      - name: Verify real data volume
+        run: |
+          python3 - <<'PY'
+          import json
+          city = json.load(open('data/processed/downtown-la.json', encoding='utf-8'))
+          assert len(city['streets']) > 10, 'No substantial transportation dataset'
+          assert len(city['buildings']) > 10, 'No substantial building dataset'
+          print('REAL_DOWNTOWN_LA_STREETS=', len(city['streets']))
+          print('REAL_DOWNTOWN_LA_BUILDINGS=', len(city['buildings']))
+          PY
+      - name: Retain bounded geographic sample
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: downtown-la-overture-city-slice
+          path: |
+            data/processed/downtown-la.json
+            data/processed/downtown-la-overture-report.json
+          retention-days: 7

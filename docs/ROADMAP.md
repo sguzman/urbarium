@@ -10,7 +10,9 @@
 - [x] Unit tests and CI definition.
 - [x] Optional Overture GeoParquet-to-GeoJSON data acquisition script with release provenance.
 - [x] Synthetic end-to-end smoke tests for OSM and GeoJSON ingestion (CI configured).
-- [ ] Execute and validate a real Downtown LA Overpass download (not yet possible in this environment).
+- [ ] Execute and validate a real Downtown LA Overpass download (public instance currently rejects cloud client).
+- [x] Add Overture-only bounded street and building download pipeline.
+- [ ] Run and validate Overture-only acquisition against a real Downtown LA sample.
 - [ ] Capture provenance, source snapshots, and coverage metrics as a reproducible manifest.
 - [x] Assemble OSM building multipolygon relations with multi-way rings and interior courtyards.
 - [ ] Add robust road topology, relation QA diagnostics, and bounds clipping.

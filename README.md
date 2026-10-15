@@ -51,6 +51,20 @@ The second path requires DuckDB and Python 3 and uses a pinned, updatable
 Overture release. See [Overture pipeline](docs/OVERTURE.md). Neither download
 nor build has been confirmed against live services in this environment.
 
+## Overture-only city build
+
+For a bounded real-world LA sample without Overpass, install the official
+Overture Maps Python CLI and execute:
+
+```sh
+bash scripts/build-downtown-overture.sh
+```
+
+This downloads Overture street segments and building polygons and writes the
+same `data/processed/downtown-la.json` city schema. It resolves the current
+Overture release automatically and records download time and source in a local
+report. This route is the best candidate for the first reproducible data demo.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.
