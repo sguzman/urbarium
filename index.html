@@ -7,10 +7,35 @@
   <title>Urbarium · Downtown Los Angeles</title>
   <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="0">
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
+  <link data-trunk rel="copy-file" href="web/minimap.js">
+  <script src="./minimap.js" defer></script>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; }
     html, body {margin:0;width:100%;height:100%;overflow:hidden;background:#101921;color:#e7eef3;}
-    canvas {display:block;width:100vw;height:100vh;outline:none;touch-action:none;}
+    canvas:not(#minimap-canvas) {display:block;width:100vw;height:100vh;outline:none;touch-action:none;}
+    .minimap {position:fixed;z-index:4;right:16px;top:16px;width:260px;
+      border:1px solid #506b7e;border-radius:10px;overflow:hidden;
+      background:rgba(9,20,28,.94);box-shadow:0 6px 28px #0008;
+      color:#e6eef5;font:12px system-ui,sans-serif;}
+    .map-title {padding:9px 12px;display:flex;justify-content:space-between;
+      align-items:center;font-weight:700;letter-spacing:.06em;}
+    .map-title small {font-weight:500;color:#a7c0ca;letter-spacing:0;}
+    #minimap-canvas {display:block;width:260px;height:260px;cursor:crosshair;
+      background:#17232b;touch-action:none;}
+    .map-controls {display:flex;align-items:center;justify-content:space-between;
+      gap:8px;padding:7px 9px;}
+    .map-buttons {display:flex;gap:6px;}
+    .map-buttons button {background:#203847;color:#f0f7fc;border:1px solid #547081;
+      border-radius:5px;font-size:17px;width:32px;height:28px;cursor:pointer;}
+    .map-buttons button:hover {background:#36586b;}
+    #map-scale {color:#c2d8e0;font-variant-numeric:tabular-nums;}
+    #map-coordinates {padding:0 10px 8px;color:#aec4cb;font-size:10px;
+      font-variant-numeric:tabular-nums;}
+    #speed-state {color:#f5d98f;font-weight:700;letter-spacing:.025em;}
+    @media(max-width:650px) {
+      .minimap {top:auto;bottom:50px;right:8px;transform:scale(.77);transform-origin:bottom right;}
+      .hud {max-width:calc(100vw - 54px);}
+    }
     .hud {position:fixed;top:16px;left:18px;z-index:2;padding:12px 16px;
       background:rgba(8,17,24,.82);border:1px solid #394b55;border-radius:10px;
       max-width:min(600px, calc(100vw - 68px));pointer-events:none;backdrop-filter:blur(7px);}
@@ -28,8 +53,22 @@
     <h1>URBARIUM <span style="color:#b6bbc5">/ Downtown LA</span></h1>
     <p id="status">Starting Rust / WebGPU viewer...</p>
     <p id="input-state" data-pointer-locked="false">Click the city to capture mouse</p>
-    <p>Mouse looks · WASD walk · Shift run · E/Q fly · Esc releases</p>
+    <p>Mouse looks · WASD move · Shift toggles fast travel · E/Q fly · Esc releases</p>
+    <p id="speed-state">WALK · 3.4 m/s</p>
   </div>
+  <aside class="minimap" aria-label="Downtown Los Angeles minimap">
+    <div class="map-title"><span>DOWNTOWN LA</span><small>N ↑ · Pilot area</small></div>
+    <canvas id="minimap-canvas" width="260" height="260" role="img"
+      aria-label="Local street map with player position and heading"></canvas>
+    <div class="map-controls">
+      <span id="map-scale">Loading streets...</span>
+      <div class="map-buttons">
+        <button id="map-zoom-out" type="button" aria-label="Zoom minimap out">−</button>
+        <button id="map-zoom-in" type="button" aria-label="Zoom minimap in">+</button>
+      </div>
+    </div>
+    <div id="map-coordinates">Position loading...</div>
+  </aside>
   <div class="footer">Geometry: <a href="https://overturemaps.org/">Overture Maps</a> · Terrain: <a href="https://github.com/tilezen/joerd">Mapzen Terrain Tiles</a>
     · data subject to source licenses · procedural massing, not surveyed facades</div>
 </body>
