@@ -25,7 +25,9 @@
 - [ ] Merge/conflict resolution keyed by source feature IDs, with geometry overlays and QA reports.
 - [x] Add first-pass at-grade T/cross junction patches using shared centerline endpoints and local widths.
 - [ ] Acquire surveyed sidewalk geometries, improve road width/curb edges, and handle footpath crossings.
-- [ ] Integrate a documented elevation DEM (3DEP preferred); drape roads while keeping building roofs/foundations coherent and bridge/underpass levels separate.
+- [x] Acquire and validate a bounded real Mapzen elevation DEM (50.25 m Downtown LA pilot relief) with georeferenced provenance.
+- [x] Integrate DEM-based Rust terrain mesh, road draping, building base offsets and first-person camera ground height.
+- [ ] Upgrade elevation source to high-resolution 3DEP where available; fix bridge/underpass decks and retaining walls.
 - [ ] Hand-authored corrections for standout landmarks only when primary data cannot represent them.
 
 ## P2 — First playable walk
@@ -37,7 +39,7 @@
 - [x] Validate actual Downtown LA GLB: 34,660 triangles, 6 scene meshes, 1,719,448 bytes, independently loaded via trimesh.
 - [ ] Add physically correct intersections, crossings, grade separation and additional roof primitives.
 - [x] Add first-person capsule-like planar building-footprint collision with swept horizontal movement, courtyards and wall sliding.
-- [ ] Add broad-phase collision spatial indexing, terrain-aware feet, tile streaming, culling and LOD.
+- [ ] Add broad-phase collision spatial indexing, tile streaming, culling and LOD, and terrain slope traversal constraints.
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [ ] Start at a recognizable Downtown LA site; navigation, FPS and error overlay.
 - [x] Reproducible browser QA in Chromium with real Downtown LA scene.

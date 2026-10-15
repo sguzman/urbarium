@@ -33,7 +33,7 @@ The sample covers approximately 1.5 × 1.2 km around Bunker Hill / Civic
 Center, not the whole city. The outputs include real indexed 3D geometry and a first
 **Rust/WASM/WebGPU flythrough viewer**. Chromium automated QA successfully
 loaded the Downtown LA scene and exercised camera movement on October 15, 2026.
-This is a flythrough/prototype, **not a collision-aware walking simulator**. Terrain remains flat, roads
+The viewer now has footprint-aware walking and a sampled terrain surface; roads
 remain centerlines, and fidelity of individual facades is not established.
 
 [Validated real-data build, OBJ and combined GLB artifacts](https://github.com/sguzman/urbarium/actions/runs/38680594189)
@@ -110,7 +110,7 @@ cargo run --release -- mesh \
 
 The OBJ can be inspected in a conventional 3D tool. This is a **real geometric
 output**, not a rendered illustration or the eventual WebGPU application.
-Ground is currently a flat plane; the roads are not yet meshed. Known building
+The legacy OBJ-building-only export remains flat; a separate road-mesh exporter is available. Known building
 heights are used without changes. Missing heights are *visualization-only*
 approximations (3.1 m per mapped level, otherwise 9 m); this does not alter
 the source city JSON or claim the estimate is real.
@@ -135,8 +135,7 @@ The ribbons have limited joins to prevent huge spikes at bends. Widths are
 only measured when explicitly tagged; all other widths are **visual
 defaults**, not surveyed right-of-way or sidewalk edges. Underground subway
 and unknown segments are deliberately excluded from the surface mesh.
-Crossings, junction patches, level changes, navigability and terrain are
-**not** yet solved. Keep road and building OBJ files together when inspecting
+Connected junction patches and first-pass bare-earth terrain are implemented in the viewer; accurate crossings, retaining walls, curb outlines and complete navigation are **not** yet solved. Keep road and building OBJ files together when inspecting
 the combined pilot model.
 
 ## Compact combined 3D scene (.glb)
@@ -151,8 +150,8 @@ This creates a **single glTF 2.0 binary** containing a flat reference ground
 plane, building massing and categorized road/walk/rail/step meshes, retaining
 source attribution in scene metadata. Geometry and normals are stored as 32-bit
 binary values rather than verbose OBJ text. Colors are simple neutral PBR
-materials; the scene has no textures, accurate terrain, road junction patches,
-bridges, or collision yet. Geometry remains generated in Rust; a future
+materials; this standalone GLB export still has flat terrain and no textures or
+collision, unlike the browser's separate DEM-aware geometry pipeline. Geometry remains generated in Rust; a future
 WebGPU/WASM runtime will use the same geometry pipeline.
 
 ## Experimental WebGPU browser viewer
@@ -166,8 +165,8 @@ render visible pixels through both paths before publishing to GitHub Pages.
 
 The browser loads `assets/downtown-la.json` and supports WASD, Shift, E/Q,
 pointer-locked FPS mouse look, with a 1.7 m eye-height spawn on a mapped Downtown LA roadway. Click the viewer once to capture the mouse; Esc releases it. Automated Chromium QA has passed canvas startup, WebGPU rendering
-initialization and WASD input. Terrain, grade separation, true intersection
-surfaces and player collision are pending.
+initialization and WASD input. DEM relief, footprint collision and first-pass
+connected-junction patches now exist; full physics, curb surveys and grade separation remain pending.
 
 For a local browser bundle, install the `wasm32-unknown-unknown` Rust
 target and Trunk v0.21.14, generate `data/processed/downtown-la.json`
@@ -213,9 +212,34 @@ bridge, tunnel and grade separation remain unresolved without better data.
 `footway` segments, but none identifies a surveyed sidewalk-edge polygon;
 these are pedestrian centerlines, not actual curb boundaries. Generating
 parallel sidewalks around every street would invent geography, so sidewalks
-remain a separate source acquisition and geometry task. The ground is still
-flat until we have a validated terrain DEM with vertical alignment for
-buildings and roads.
+remain a separate source acquisition and geometry task. The new terrain
+layer is sampled from georeferenced bare-earth DEM tiles, without claiming
+3DEP lidar precision or surveyed sidewalk/bridge elevations.
+
+## Downtown LA terrain relief from real elevation tiles
+
+The first DEM-enabled browser scene uses a **65 × 65 georeferenced elevation
+grid** from [Mapzen Terrain Tiles](https://registry.opendata.aws/terrain-tiles/),
+decoded from Terrarium RGB values. The verified Downtown LA source has about
+**50.25 meters of relief**, with an origin elevation near 85.17 meters.
+
+```sh
+python3 -m pip install Pillow
+python3 scripts/fetch-terrain.py --region regions/downtown-la.json --out data/processed/downtown-la-terrain.json
+```
+
+The same local-meter reference drives terrain mesh vertices, road/path
+ribbons, flat-roofed building massing foundations, and the walking camera's
+1.7-meter eye clearance. Aerial movement remains available above rooftops.
+The separately exported OBJ/GLB scenes still use their original flat ground
+until terrain support is extended to those formats.
+
+The DEM is genuine geographic data, not artificial terrain noise, but it has
+heterogeneous upstream resolution and is **not yet high-resolution 3DEP lidar**.
+Bridge and tunnel decks, stair elevation transitions, retaining walls, and
+actual curb edges need distinct treatment and better source data.
+See [Mapzen's Terrarium encoding](https://github.com/tilezen/joerd/blob/master/docs/formats.md)
+for the height decoder.
 
 ## Geometry contract
 

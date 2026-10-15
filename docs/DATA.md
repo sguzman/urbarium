@@ -89,7 +89,25 @@ Crossing 2D geometry alone never grants a connected junction, and explicit
 OSM bridge/tunnel/layer tags suppress patch generation. Dataset consumers
 should not infer traffic rules or physical grade from these visual patches.
 
-Collision is a temporary **2D circular footprint constraint** with flat
-terrain, height-aware overhead flying and intact courtyard holes. It is not
-full 3D collision or an accessible-navigation graph. The 3DEP DEM and
-surveyed sidewalk-source integration are separate future work.
+Collision remains a temporary **2D circular footprint constraint** now
+referenced to the local DEM building foundation heights; overhead flight
+and courtyard holes remain intact. It is not full 3D collision or an
+accessible-navigation graph. High-resolution 3DEP and surveyed sidewalk
+source integration are still future work.
+
+## Downtown LA terrain source and geometry (2026-10-15)
+
+Mapzen's Terrarium georeferenced tiles, zoom 14, provide a 65×65 bare-earth
+sample grid for the 1.5×1.2 km pilot. Four real source tiles were downloaded
+by the verified acquisition workflow; the WGS84 region origin sample is
+about 85.17 m above sea level, with approximately 50.25 m of local relief.
+Grid heights are stored relative to this origin, with row zero at the **south**
+edge. Sampling is bilinear in region-local X east/Z north coordinates.
+The browser moves the walking camera 1.7 m above that sampled ground and
+uses the same datum for draped roads, planar building foundations and the
+terrain mesh. Terrain tiles and processed JSON are excluded from Git, but
+source metadata are carried in the derived asset. The underlying Mapzen DEM
+is not a high-resolution urban curb and bridge survey.
+
+Source and attribution: https://registry.opendata.aws/terrain-tiles/
+Format: https://github.com/tilezen/joerd/blob/master/docs/formats.md
