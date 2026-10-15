@@ -11,12 +11,14 @@ struct VIn {
     @location(1) normal: vec3<f32>,
     @location(2) color: vec3<f32>,
     @location(3) category_color: vec3<f32>,
+    @location(4) category_id: f32,
 };
 struct VOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) normal: vec3<f32>,
     @location(1) color: vec3<f32>,
     @location(2) category_color: vec3<f32>,
+    @location(3) category_id: f32,
 };
 @vertex
 fn vs_main(input: VIn) -> VOut {
@@ -25,6 +27,7 @@ fn vs_main(input: VIn) -> VOut {
     out.normal = input.normal;
     out.color = input.color;
     out.category_color = input.category_color;
+    out.category_id = input.category_id;
     return out;
 }
 @fragment
@@ -32,10 +35,11 @@ fn fs_main(input: VOut) -> @location(0) vec4<f32> {
     let light = normalize(vec3<f32>(0.6, 1.0, 0.35));
     let diffuse = max(dot(normalize(input.normal), light), 0.0);
     let shade = 0.38 + 0.62 * diffuse;
-    let has_kind = select(0.0, 1.0,
-        dot(input.category_color, vec3<f32>(1.0)) > 0.01);
-    let color = mix(input.color, input.category_color,
-        has_kind * step(0.5, camera.options.x));
+    let id=u32(input.category_id+0.5);
+    // Category mask is an exact 8-bit integer in the float uniform.
+    // Untagged buildings retain their normal material.
+    let active=id>0u && (u32(camera.sky.y)&(1u<<(id-1u)))!=0u;
+    let color=select(input.color,input.category_color,active);
     let gamma = pow(color * shade, vec3<f32>(0.87));
     return vec4<f32>(gamma, 1.0);
 }

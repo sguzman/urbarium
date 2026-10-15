@@ -39,7 +39,7 @@
       market:"#f28d87", historic:"#c2b2a5"
     });
   </script>
-  <script src="./minimap.js?v=categories-clock-2" defer></script>
+  <script src="./minimap.js?v=category-filter-v3" defer></script>
   <link data-trunk rel="copy-file" href="web/stats.js">
   <script src="./stats.js" defer></script>
   <style>
@@ -110,7 +110,8 @@
       border:4px solid transparent;border-top-color:#ffd77d;
       transform:translateX(-50%);}
     .world-landmark[hidden]{display:none;}
-    .world-landmark {border-color:var(--lm-color,#cda85d);}
+    .world-landmark {border:2px solid var(--lm-color,#cda85d);
+      box-shadow:0 0 0 1px #000d,0 2px 10px #000b,0 0 9px color-mix(in srgb,var(--lm-color,#cda85d) 36%,transparent);}
     .world-landmark::after {border-top-color:var(--lm-color,#ffd77d);}
     .scene-controls {pointer-events:auto;display:flex;flex-wrap:wrap;
       gap:8px 16px;align-items:center;margin:7px 0 2px;font-size:12px;}
@@ -123,12 +124,26 @@
     #time-la-now,#refresh-geography {background:#203847;border:1px solid #547081;
       border-radius:5px;color:#eaf3f8;padding:4px 7px;cursor:pointer;}
     #geodata-cache-state {color:#accbc5;font-size:11px;}
-    .landmark-legend {display:flex;flex-wrap:wrap;gap:5px 9px;
-      font-size:10px;color:#d9e9ed;max-width:440px;}
-    .landmark-legend[hidden]{display:none;}
-    .legend-entry {display:inline-flex;gap:4px;align-items:center;}
-    .legend-dot {display:inline-block;width:9px;height:9px;border-radius:3px;
-      background:var(--legend-color);}
+    .map-filter-head {border-top:1px solid #354d58;padding:8px 10px 5px;
+      display:flex;align-items:center;justify-content:space-between;gap:6px;
+      font-size:10px;font-weight:700;letter-spacing:.05em;}
+    .filter-actions {display:flex;gap:5px;}
+    .filter-actions button {color:#c4dce5;background:#1b323e;border:1px solid #516a77;
+      font-size:10px;border-radius:4px;padding:3px 7px;cursor:pointer;}
+    .filter-actions button:hover {background:#304e5d;}
+    .landmark-legend {display:grid;grid-template-columns:1fr 1fr;gap:5px;
+      padding:4px 9px 10px;color:#dcebf0;font-size:11px;}
+    .legend-entry {display:flex;gap:6px;align-items:center;min-height:28px;
+      text-align:left;cursor:pointer;border:1px solid #4a6774;border-radius:5px;
+      padding:4px 5px;color:#e3eef1;background:#17313d;}
+    .legend-entry:hover {background:#294856;}
+    .legend-entry[aria-pressed="false"] {opacity:.4;background:#15242c;border-color:#344a51;}
+    .legend-entry[aria-pressed="false"] .legend-label {text-decoration:line-through;}
+    .legend-entry:focus-visible,.filter-actions button:focus-visible {
+      outline:2px solid #fff;outline-offset:2px;}
+    .legend-entry[hidden] {display:none;}
+    .legend-dot {display:inline-block;flex:0 0 auto;width:11px;height:11px;
+      border-radius:50%;background:var(--legend-color);border:1px solid #000b;}
     #stats-panel {position:fixed;z-index:5;left:18px;bottom:48px;
       width:280px;max-width:calc(100vw - 50px);max-height:42vh;overflow:auto;
       background:rgba(7,16,22,.94);border:1px solid #45606b;
@@ -178,10 +193,6 @@
       </label>
     </div>
     <div class="scene-controls">
-      <label title="Color real matched building footprints and landmark map pins by type">
-        <input id="layer-landmarks" type="checkbox" data-visible="false">
-        Landmark colors
-      </label>
       <label for="time-of-day">Sky
         <input id="time-of-day" type="range" min="0" max="24" step=".25" value="12"
           data-clock-mode="live" aria-label="Los Angeles time of day; changing the slider pauses live clock">
@@ -190,7 +201,6 @@
       <button id="time-la-now" type="button" aria-pressed="true"
         title="Resume live Los Angeles time, updated continuously">Live · LA</button>
     </div>
-    <div id="landmark-legend" class="landmark-legend" hidden aria-label="Landmark type colors"></div>
     <div class="scene-controls">
       <span id="geodata-cache-state" role="status">Geography: cache starting</span>
       <button id="refresh-geography" type="button" title="Delete saved Downtown LA geography and reload from source">Refresh geography</button>
@@ -229,6 +239,15 @@
       </div>
     </div>
     <div id="map-coordinates">Position loading...</div>
+    <div class="map-filter-head">
+      <span>LANDMARKS · FILTER BY TYPE</span>
+      <div class="filter-actions">
+        <button id="landmarks-show-all" type="button" title="Show every landmark">All</button>
+        <button id="landmarks-hide-all" type="button" title="Hide every landmark">None</button>
+      </div>
+    </div>
+    <div id="landmark-legend" class="landmark-legend"
+      role="group" aria-label="Choose visible landmark categories"></div>
   </aside>
   <div class="footer">Geometry: <a href="https://overturemaps.org/">Overture Maps</a> · Terrain: <a href="https://github.com/tilezen/joerd">Mapzen Terrain Tiles</a>
     · data subject to source licenses · procedural massing, not surveyed facades</div>
@@ -238,43 +257,69 @@
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");
-      const landmarkToggle = document.getElementById("layer-landmarks");
       const legend = document.getElementById("landmark-legend");
       const colors = window.urbariumLandmarkPalette;
-      for(const [kind,color] of Object.entries(colors)){
-        const item=document.createElement("span");
+      const categories = Object.keys(colors);
+      const allMask=(1<<categories.length)-1;
+      const storageKey="urbarium-landmark-filter-v3";
+      // Landmark color is always on. Individual categories can be hidden.
+      let mask=allMask;
+      try{
+        const saved=localStorage.getItem(storageKey);
+        if(saved!==null){
+          const parsed=Number(saved);
+          if(Number.isInteger(parsed)&&parsed>=0&&parsed<=allMask)mask=parsed;
+        }
+      }catch(_){}
+      const categoryTitle=kind=>kind==="railway"?"Transit":
+        kind[0].toUpperCase()+kind.slice(1);
+      function applyFilter(){
+        legend.dataset.visibleMask=String(mask);
+        for(const entry of legend.querySelectorAll(".legend-entry")){
+          const bit=1<<categories.indexOf(entry.dataset.kind);
+          entry.setAttribute("aria-pressed",String((mask&bit)!==0));
+        }
+        try{localStorage.setItem(storageKey,String(mask));}catch(_){}
+        window.dispatchEvent(new Event("urbarium-landmark-filter-changed"));
+      }
+      categories.forEach((kind,index)=>{
+        const item=document.createElement("button");
+        item.type="button";
         item.className="legend-entry";
         item.dataset.kind=kind;
+        item.setAttribute("aria-label","Toggle "+categoryTitle(kind)+" landmarks");
         const dot=document.createElement("span");
         dot.className="legend-dot";
-        dot.style.setProperty("--legend-color",color);
+        dot.style.setProperty("--legend-color",colors[kind]);
         const label=document.createElement("span");
         label.className="legend-label";
-        label.textContent=kind==="railway"?"Transit":kind[0].toUpperCase()+kind.slice(1);
+        label.textContent=categoryTitle(kind);
         item.append(dot,label);
+        item.addEventListener("click",()=>{
+          mask ^= 1<<index;
+          applyFilter();
+        });
         legend.append(item);
-      }
+      });
+      document.getElementById("landmarks-show-all").addEventListener("click",()=>{
+        mask=allMask;applyFilter();
+      });
+      document.getElementById("landmarks-hide-all").addEventListener("click",()=>{
+        mask=0;applyFilter();
+      });
       window.addEventListener("urbarium-landmarks-ready",event=>{
         const counts=event.detail?.counts||{};
         for(const entry of legend.querySelectorAll(".legend-entry")){
           const kind=entry.dataset.kind;
           const count=Number(counts[kind]||0);
           entry.hidden=count===0;
-          const label=entry.querySelector(".legend-label");
-          const title=kind==="railway"?"Transit":kind[0].toUpperCase()+kind.slice(1);
-          label.textContent=title+" ("+count+")";
-          entry.title=title+": "+count+" mapped "+(count===1?"landmark":"landmarks");
+          const title=categoryTitle(kind);
+          entry.querySelector(".legend-label").textContent=title+" ("+count+")";
+          entry.title=title+": "+count+" mapped "+
+            (count===1?"landmark":"landmarks")+"; click to toggle";
         }
       });
-      function setLandmarkColors(){
-        const visible=landmarkToggle.checked;
-        landmarkToggle.setAttribute("data-visible",String(visible));
-        legend.hidden=!visible;
-        try{localStorage.setItem("urbarium-landmark-colors",String(visible));}catch(_){}
-      }
-      try{landmarkToggle.checked=localStorage.getItem("urbarium-landmark-colors")==="true";}catch(_){}
-      landmarkToggle.addEventListener("change",setLandmarkColors);
-      setLandmarkColors();
+      applyFilter();
       const sky=document.getElementById("time-of-day");
       const skyLabel=document.getElementById("time-label");
       const liveButton=document.getElementById("time-la-now");

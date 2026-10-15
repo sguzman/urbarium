@@ -33,10 +33,11 @@ struct GpuVertex {
     normal: [f32; 3],
     color: [f32; 3],
     category_color: [f32; 3],
+    category_id: f32,
 }
-const VERTEX_ATTRS: [wgpu::VertexAttribute; 4] =
+const VERTEX_ATTRS: [wgpu::VertexAttribute; 5] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3,
-                             2 => Float32x3, 3 => Float32x3];
+                             2 => Float32x3, 3 => Float32x3, 4 => Float32];
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -159,14 +160,15 @@ fn append_part(
         return Err("invalid source geometry index".into());
     }
     verts.extend(mesh.vertices.iter().map(|v| GpuVertex {
-        position: v.position, normal: v.normal, color, category_color:[0.0;3],
+        position: v.position, normal: v.normal, color,
+        category_color:[0.0;3], category_id:0.0,
     }));
     indices.extend(mesh.indices.iter().map(|idx| idx+base));
     Ok(())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum SceneLayer { Ground, Buildings, Road, Walk, Steps, Rail, Markers }
+enum SceneLayer { Ground, Buildings, Road, Walk, Steps, Rail, Marker(u32) }
 #[derive(Clone, Copy)]
 struct DrawBatch {
     layer: SceneLayer,
@@ -182,6 +184,14 @@ struct LandmarkCatalog {
 struct LandmarkAnchor {
     kind:String,
     coordinates:[f64;2],
+}
+// IDs deliberately match the category palette insertion order in index.html.
+fn category_index(kind:&str)->Option<u32> {
+    match kind {
+        "civic"=>Some(0),"legal"=>Some(1),"library"=>Some(2),
+        "culture"=>Some(3),"park"=>Some(4),"railway"=>Some(5),
+        "market"=>Some(6),"historic"=>Some(7),_=>None,
+    }
 }
 fn category_rgb(kind:&str)->Option<[f32;3]> {
     match kind {
@@ -210,7 +220,7 @@ fn inside_ring(p:Point,ring:&[Point])->bool {
     inside
 }
 fn building_landmark_color(building:&Building,region:&Region, marks:&[LandmarkAnchor])
-    -> Option<[f32;3]>
+    -> Option<([f32;3],u32)>
 {
     for mark in marks {
         let anchor=region.project(mark.coordinates[0],mark.coordinates[1]);
@@ -218,7 +228,8 @@ fn building_landmark_color(building:&Building,region:&Region, marks:&[LandmarkAn
             if let Some(outer)=polygon.rings.first() {
                 if inside_ring(anchor,outer) &&
                     !polygon.rings.iter().skip(1).any(|hole|inside_ring(anchor,hole)) {
-                    return category_rgb(&mark.kind);
+                    return category_rgb(&mark.kind)
+                        .zip(category_index(&mark.kind));
                 }
             }
         }
@@ -291,7 +302,9 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
             let p=city.region.project(lon,lat);
             let disc=landmark_disc(terrain,&city.region,p,
                 if mark.kind=="park" {15.0} else {6.0});
-            add(&disc,rgb,SceneLayer::Markers)?;
+            if let Some(category)=category_index(&mark.kind) {
+                add(&disc,rgb,SceneLayer::Marker(category))?;
+            }
         }
     }
     // Category tints are assigned to real matched building geometry, using
@@ -303,8 +316,11 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
         let Ok(mesh)=mesh_building(building,HeightPolicy::default()) else {continue;};
         let end=cursor+mesh.vertices.len();
         if end>building_end {return Err("landmark vertex ranges exceed building layer".into());}
-        if let Some(rgb)=building_landmark_color(building,&city.region,&catalog.landmarks) {
-            for vertex in &mut verts[cursor..end] {vertex.category_color=rgb;}
+        if let Some((rgb,id))=building_landmark_color(building,&city.region,&catalog.landmarks) {
+            for vertex in &mut verts[cursor..end] {
+                vertex.category_color=rgb;
+                vertex.category_id=(id+1) as f32;
+            }
         }
         cursor=end;
     }
@@ -447,12 +463,25 @@ fn set_terrain_size(_:usize) {}
 fn scene_layer_visible(layer:SceneLayer)->bool {
     match layer {
         SceneLayer::Ground | SceneLayer::Buildings | SceneLayer::Road => true,
-        SceneLayer::Markers => layer_enabled("layer-landmarks",false),
+        SceneLayer::Marker(category)=>browser_category_mask() & (1<<category)!=0,
         // These independent centerlines are not surveyed sidewalk boundaries
         // or grade-correct rail beds; isolate layers for debugging.
         SceneLayer::Walk | SceneLayer::Steps => layer_enabled("layer-walk",true),
         SceneLayer::Rail => layer_enabled("layer-rail",false),
     }
+}
+fn browser_category_mask()->u32 {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("landmark-legend") {
+            if let Some(mask)=el.get_attribute("data-visible-mask") {
+                if let Ok(mask)=mask.parse::<u32>() {
+                    return mask&255;
+                }
+            }
+        }
+    }
+    255
 }
 fn browser_sky_hour()->f32 {
     #[cfg(target_arch="wasm32")]
@@ -531,10 +560,9 @@ impl Graphics {
             bytemuck::bytes_of(&CameraUniform{
                 view_proj:vp.to_cols_array_2d(),
                 options:[
-                    if layer_enabled("layer-landmarks",false) {1.0} else {0.0},
-                    browser_sky_hour(),self.camera.yaw,self.camera.pitch],
+                    1.0,browser_sky_hour(),self.camera.yaw,self.camera.pitch],
                 sky:[self.config.width as f32/self.config.height.max(1) as f32,
-                     0.0,0.0,0.0],
+                     browser_category_mask() as f32,0.0,0.0],
             }));
     }
     fn draw(&mut self) -> bool {

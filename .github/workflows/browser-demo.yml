@@ -100,7 +100,9 @@ jobs:
           page=(dist/"index.html").read_text()
           assert 'minimap-canvas' in page
           assert 'map-zoom-in' in page
-          assert 'layer-landmarks' in page and 'time-of-day' in page
+          assert 'landmark-legend' in page and 'landmarks-show-all' in page
+          assert 'landmarks-hide-all' in page and 'time-of-day' in page
+          assert 'id="layer-landmarks"' not in page
           assert 'refresh-geography' in page
           print("Browser package:",len(city["streets"]),"streets;",
                 len(city["buildings"]),"buildings;",

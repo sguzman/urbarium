@@ -299,26 +299,109 @@ with sync_playwright() as p:
 
         palette=page.evaluate("() => window.urbariumLandmarkPalette")
         assert palette.get("park") and palette.get("library") and palette.get("legal")
-        assert page.locator("#landmark-legend").is_hidden()
-        page.locator("#layer-landmarks").check()
-        page.wait_for_function(
-            "() => document.querySelector('#minimap-canvas')?.dataset.categoryColors === 'true'",
-            timeout=8000,
-        )
-        assert page.locator("#landmark-legend").is_visible()
-        assert page.locator("#landmark-legend").inner_text().count("Legal (1)") == 1
-        assert "Culture (2)" in page.locator("#landmark-legend").inner_text()
+        assert page.locator("#layer-landmarks").count()==0, (
+            "Do not gate category colors behind a separate hidden checkbox")
+        legend=page.locator("#landmark-legend")
+        assert legend.is_visible(), "Interactive legend must be visible inside minimap"
+        assert page.locator(".minimap #landmark-legend").count()==1
+        assert legend.get_attribute("data-visible-mask")=="255"
+        assert "Legal (1)" in legend.inner_text()
+        assert "Culture (2)" in legend.inner_text()
+        assert page.locator("#minimap-canvas").get_attribute("data-category-colors")=="true"
         labels=page.locator("#world-landmarks .world-landmark").evaluate_all(
             "(els) => els.map(el => el.textContent)")
         assert "Mosk Courthouse · Legal" in labels,labels
         assert "City Hall · Civic" in labels,labels
         assert page.locator("#world-landmarks .world-landmark").count()==9
-        page.locator("#layer-landmarks").uncheck()
+
+        # CSS outline must actually use the landmark-specific color.
+        outlines=page.evaluate("""() => {
+            const els=[...document.querySelectorAll('.world-landmark')];
+            const palette=window.urbariumLandmarkPalette;
+            const rgb=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)).join(', ');
+            return els.map(e=>({
+                kind:e.dataset.kind,
+                expected:'rgb('+rgb(palette[e.dataset.kind])+')',
+                actual:getComputedStyle(e).borderTopColor
+            }));
+        }""")
+        assert all(x["expected"]==x["actual"] for x in outlines),outlines
+        assert len(set(x["actual"] for x in outlines)) >= 7,outlines
+
+        # Test actual minimap PIXELS, not just canvas metadata. Zoom out
+        # until all nine pins are inside the viewport, then inspect their
+        # center pixels; the old regression rendered every pin yellow.
+        minimap.evaluate("""e=>{
+            for(let i=0;i<5;i++)document.getElementById('map-zoom-out').click();
+        }""")
         page.wait_for_function(
-            "() => document.querySelector('#minimap-canvas')?.dataset.categoryColors === 'false'",
+            "() => Number(document.querySelector('#minimap-canvas')?.dataset.mapWidthM)>=2400",
             timeout=8000,
         )
-        print("Landmark category toggle, minmap category flag and legend passed")
+        page.wait_for_function(
+            "() => Number(document.querySelector('#minimap-canvas')?.dataset.paintedLandmarkCount)>=9",
+            timeout=8000,
+        )
+        pin_pixels=page.evaluate("""async () => {
+            const canvas=document.querySelector('#minimap-canvas');
+            const data=await (await fetch('./assets/landmarks.json')).json();
+            const city=JSON.parse(await (await fetch('./assets/downtown-la.json')).text());
+            const radius=Math.PI/180*6371008.8;
+            const centerX=Number(canvas.dataset.playerX),centerZ=Number(canvas.dataset.playerZ);
+            const zoom=Number(canvas.dataset.mapWidthM),ppm=260/zoom;
+            const dpr=canvas.width/260;
+            const ctx=canvas.getContext('2d'),pixels={};
+            for(const lm of data.landmarks){
+                const x=(lm.coordinates[0]-city.region.origin[0])*radius*
+                    Math.cos(city.region.origin[1]*Math.PI/180);
+                const z=(lm.coordinates[1]-city.region.origin[1])*radius;
+                const sx=Math.round((130+(x-centerX)*ppm)*dpr);
+                const sy=Math.round((130-(z-centerZ)*ppm)*dpr);
+                if(sx<5||sy<5||sx>=canvas.width-5||sy>=canvas.height-5)continue;
+                const px=ctx.getImageData(sx,sy,1,1).data;
+                pixels[lm.id]={
+                    kind:lm.kind, actual:Array.from(px).slice(0,3),
+                    expected:[1,3,5].map(i=>parseInt(
+                        window.urbariumLandmarkPalette[lm.kind].slice(i,i+2),16))
+                };
+            }
+            return pixels;
+        }""")
+        assert len(pin_pixels)>=7,pin_pixels
+        assert all(p["actual"]==p["expected"] for p in pin_pixels.values()),pin_pixels
+        print("World billboard outline and actual minimap pin pixels match category palette")
+
+        legal=page.locator('.legend-entry[data-kind="legal"]')
+        assert legal.get_attribute("aria-pressed")=="true"
+        legal.click()
+        page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.dataset.filterVisibleCount === '8'",
+            timeout=8000,
+        )
+        assert legal.get_attribute("aria-pressed")=="false"
+        assert legend.get_attribute("data-visible-mask")=="253"
+        assert page.locator('.world-landmark[data-kind="legal"]').is_hidden()
+        assert page.locator("#minimap-canvas").get_attribute("data-painted-landmark-count")=="8"
+        assert page.evaluate(
+            "() => localStorage.getItem('urbarium-landmark-filter-v3')"
+        ) == "253"
+        assert page.locator('.world-landmark[data-kind="civic"]').count()==1
+        page.locator("#landmarks-hide-all").click()
+        page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.dataset.paintedLandmarkCount === '0'",
+            timeout=8000,
+        )
+        assert legend.get_attribute("data-visible-mask")=="0"
+        assert page.locator('.world-landmark:not([hidden])').count()==0
+        page.locator("#landmarks-show-all").click()
+        page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.dataset.paintedLandmarkCount === '9'",
+            timeout=8000,
+        )
+        assert legend.get_attribute("data-visible-mask")=="255"
+        assert legal.get_attribute("aria-pressed")=="true"
+        print("Interactive per-category filtering, All/None and pin/billboard visibility passed")
+
         sky=page.locator("#time-of-day")
         assert sky.get_attribute("data-clock-mode")=="live"
         assert page.locator("#time-la-now").get_attribute("aria-pressed")=="true"

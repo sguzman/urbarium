@@ -32,7 +32,9 @@
   const kindNames={civic:"Civic",legal:"Legal",library:"Library",
     culture:"Culture",park:"Park",railway:"Transit",market:"Market",
     historic:"Historic"};
-  const state={city:null,terrain:null,landmarks:[],categoryVisible:false,width:650,cache:false,
+  const allMask=(1<<Object.keys(palette).length)-1;
+  const legend=document.getElementById("landmark-legend");
+  const state={city:null,terrain:null,landmarks:[],filterMask:allMask,width:650,cache:false,
     cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0};
   function project(lon,lat,region) {
     return {x:(lon-region.origin[0])*radius*Math.cos(region.origin[1]*Math.PI/180),
@@ -60,11 +62,16 @@
   ["click","mousedown","mouseup"].forEach(event=>
     canvas.addEventListener(event,e=>e.stopPropagation()));
 
+  function selected(kind) {
+    const bit=Object.keys(palette).indexOf(kind);
+    return bit<0||(state.filterMask&(1<<bit))!==0;
+  }
   function buildingKind(building) {
     // Color the actual Overture footprint only when its landmark anchor is
     // INSIDE the polygon (and outside courtyard holes). No fake matching to
     // an unrelated nearest building.
     for (const lm of state.landmarks) {
+      if(!selected(lm.kind))continue;
       for(const polygon of building.polygons||[]) {
         const rings=polygon.rings||[];
         if(rings.length && withinRing(lm.x,lm.z,rings[0]) &&
@@ -85,7 +92,7 @@
     bc.fillStyle=colors.ground;
     bc.fillRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
     for(const building of city.buildings) {
-      const kind=state.categoryVisible?buildingKind(building):null;
+      const kind=buildingKind(building);
       bc.fillStyle=palette[kind]||colors.buildings;
       for(const polygon of building.polygons||[]) {
         bc.beginPath();
@@ -196,50 +203,57 @@
     window.dispatchEvent(new CustomEvent("urbarium-landmarks-ready",
       {detail:{counts}}));
     state.cache=false;
-    setCategoryVisibility();
+    applyCategoryFilter();
   }
-  function setCategoryVisibility() {
-    state.categoryVisible=document.getElementById("layer-landmarks")
-      ?.getAttribute("data-visible")==="true";
+  function applyCategoryFilter() {
+    const value=Number(legend?.dataset.visibleMask);
+    state.filterMask=Number.isInteger(value)?value&allMask:allMask;
     state.cache=false;
     for(const mark of state.landmarks) {
-      if(mark.el) {
-        mark.el.textContent=(mark.short||mark.name)+
-          (state.categoryVisible?" · "+(kindNames[mark.kind]||mark.kind):"");
-        if(state.categoryVisible)
-          mark.el.style.setProperty("--lm-color",palette[mark.kind]||"#ffd77d");
-        else mark.el.style.removeProperty("--lm-color");
-      }
+      if(!mark.el)continue;
+      mark.el.style.setProperty("--lm-color",palette[mark.kind]||"#ffd77d");
+      mark.el.textContent=(mark.short||mark.name)+
+        " · "+(kindNames[mark.kind]||mark.kind);
+      mark.el.dataset.filterVisible=String(selected(mark.kind));
+      if(!selected(mark.kind))mark.el.hidden=true;
     }
-    canvas.setAttribute("data-category-colors",String(state.categoryVisible));
+    canvas.dataset.categoryColors="true";
+    canvas.dataset.categoryMask=String(state.filterMask);
+    canvas.dataset.filterVisibleCount=String(state.landmarks.filter(
+      mark=>selected(mark.kind)).length);
   }
-  document.getElementById("layer-landmarks")?.addEventListener("change",
-    setCategoryVisibility);
-  setCategoryVisibility();
+  window.addEventListener("urbarium-landmark-filter-changed",applyCategoryFilter);
+  applyCategoryFilter();
 
   function drawLandmarks(p,ppm) {
     ctx.save();
     ctx.font="11px system-ui, sans-serif";
+    let drawn=0;
     for(const lm of state.landmarks) {
+      if(!selected(lm.kind))continue;
       const sx=size/2+(lm.x-p.x)*ppm;
       const sy=size/2-(lm.z-p.z)*ppm;
       if(sx < -25||sx>size+25||sy< -15||sy>size+15)continue;
-      ctx.fillStyle=state.categoryVisible?
-        (palette[lm.kind]||"#f4cc7b"):"#f4cc7b";
-      ctx.strokeStyle="#0b1c25";
-      ctx.lineWidth=2;
+      const tint=palette[lm.kind]||"#f4cc7b";
+      // Larger, high-contrast category-colored pins; the camera arrow
+      // remains gold and is never confused with a place category.
+      ctx.fillStyle=tint;
+      ctx.strokeStyle="#061923";
+      ctx.lineWidth=2.1;
       ctx.beginPath();
-      ctx.arc(sx,sy,3.4,0,2*Math.PI);
+      ctx.arc(sx,sy,4.5,0,2*Math.PI);
       ctx.stroke();ctx.fill();
+      drawn++;
       // Text appears only at closer zoom to reduce label crowding.
       if(state.width<=750) {
         ctx.lineWidth=3;
         ctx.strokeText(lm.short||lm.name,sx+6,sy-4);
-        ctx.fillStyle="#faf7df";
+        ctx.fillStyle=tint;
         ctx.fillText(lm.short||lm.name,sx+6,sy-4);
       }
     }
     ctx.restore();
+    canvas.dataset.paintedLandmarkCount=String(drawn);
   }
   function updateWorldLabels(p) {
     if(!layer||!state.landmarks.length)return;
@@ -263,6 +277,7 @@
     let visible=0;
     for(const mark of state.landmarks) {
       const el=mark.el;if(!el)continue;
+      if(!selected(mark.kind)){el.hidden=true;continue;}
       const dx=mark.x-p.x,dy=mark.y-p.y,dz=mark.z-p.z;
       const distance=Math.hypot(dx,dy,dz);
       const depth=dx*fx+dy*fy+dz*fz;

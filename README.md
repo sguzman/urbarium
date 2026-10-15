@@ -262,14 +262,23 @@ of permanent offline storage.
 
 ## Landmark categories and time-of-day sky
 
-**Landmark colors** in the HUD toggles category tinting in the actual Rust
-building mesh for a landmark whose verified geographic anchor lies inside the
-source building polygon. The north-up minimap uses the same containment
-rule and palette, as do the world labels. Parks and other sites without a
-matching building receive small, explicitly **representative** ground discs;
-these are not surveyed park outlines or custom landmark architecture.
-The legend shows the actual number of mapped landmarks of each type,
-and category mode includes the category name directly in each landmark label.
+Landmarks are **color coded by category by default**, with large high-contrast
+colored minimap pins and matching category-colored outlines on world-space
+name billboards. The name labels also show the category explicitly. There is
+no separate global colors checkbox to enable this. An **interactive legend
+directly below the minimap** shows each category with its distinctive
+color and actual location count. Click a category to toggle visibility of
+all its map pins and world-space labels. **All / None** buttons restore or
+hide all landmark categories at once. Selection persists in localStorage
+under `urbarium-landmark-filter-v3`. The player arrow is always visible.
+
+Rust 3D landmark markers are filtered using the same category bitmask, and
+any source building containing a matching geographic landmark anchor is
+tinted only while that category is enabled. Untagged buildings are unaffected.
+The minimap follows the same footprint containment rule. Parks and other
+sites without a matching building have small, explicitly **representative**
+ground discs; these are not surveyed park outlines or custom architecture.
+The filtered legend shows the actual count per landmark category.
 There are nine locations total: Stanley Mosk Courthouse is the **only Legal**
 landmark; Los Angeles City Hall is Civic, Central Library is Library,
 Walt Disney Concert Hall and The Broad are Culture, Grand Park is Park,
