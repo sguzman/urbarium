@@ -686,9 +686,12 @@ impl ApplicationHandler<AppEvent> for App {
                     if rendered && gfx.rendered_frames == 1 {
                         set_browser_stage("first-present");
                     }
-                    // DOM telemetry is intentionally throttled so reading
-                    // values for the minimap/stats does not create a GC
-                    // storm at 60+ frames/second.
+                    // One compact pose attribute every frame gives the
+                    // 2D minimap and world-space landmark labels 60Hz
+                    // camera tracking without redrawing a GIS scene or
+                    // setting five separate attributes per frame.
+                    expose_camera_pose_fast(&gfx.camera);
+                    // Heavier stats/compatibility attributes remain throttled.
                     if gfx.rendered_frames % 8 == 0 {
                         set_browser_frame_count(gfx.rendered_frames);
                         expose_camera_pose(&gfx.camera);
@@ -766,6 +769,19 @@ fn expose_gpu_metrics(bytes:usize,draws:u32,triangles:u32,
     }
     #[cfg(not(target_arch="wasm32"))]
     let _=(bytes,draws,triangles,frame_ms,cpu_ms);
+}
+fn expose_camera_pose_fast(camera:&Camera) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let p=&camera.position;
+            let _=el.set_attribute("data-camera-pose",
+                &format!("{:.3},{:.3},{:.3},{:.5},{:.5}",
+                    p.x,p.y,p.z,camera.yaw,camera.pitch));
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=camera;
 }
 fn expose_camera_pose(camera:&Camera) {
     #[cfg(target_arch="wasm32")]
