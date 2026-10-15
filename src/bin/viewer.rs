@@ -219,9 +219,14 @@ export function publish_city_for_minimap(data) {
     window.__urbariumCityJson = data;
     window.dispatchEvent(new Event('urbarium-city-ready'));
 }
+export function publish_terrain_for_minimap(data) {
+    window.__urbariumTerrainJson = data;
+    window.dispatchEvent(new Event('urbarium-terrain-ready'));
+}
 ")]
 extern "C" {
     fn publish_city_for_minimap(data:&str);
+    fn publish_terrain_for_minimap(data:&str);
 }
 
 async fn fetch_city() -> Result<City, String> {
@@ -300,7 +305,11 @@ async fn fetch_terrain() -> Result<TerrainGrid,String> {
             .send().await.map_err(|e|format!("DEM fetch: {e}"))?;
         if !response.ok(){return Err(format!("DEM returned HTTP {}",response.status()));}
         let data=response.text().await.map_err(|e|format!("DEM body: {e}"))?;
-        serde_json::from_str(&data).map_err(|e|format!("DEM JSON: {e}"))
+        let terrain:TerrainGrid=serde_json::from_str(&data)
+            .map_err(|e|format!("DEM JSON: {e}"))?;
+        // Share the exact DEM grid as well; labels and scene use one datum.
+        publish_terrain_for_minimap(&data);
+        Ok(terrain)
     }
     #[cfg(not(target_arch="wasm32"))]
     {
