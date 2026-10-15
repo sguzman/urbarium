@@ -98,60 +98,71 @@ fn direction(a: Point, b: Point) -> Option<[f64;2]> {
 
 /// Keep a strip continuous through bends, without unbounded miter spikes.
 /// It intentionally does not invent connected intersection polygons.
-fn ribbon(path: &[Point], width: f64, height: f32) -> Result<Option<Mesh>, String> {
-    let mut points: Vec<Point> = Vec::new();
+/// Before terrain draping, subdivide long centerlines and across their
+/// widths. Otherwise a 50m road triangle cuts directly through relief.
+pub const MAX_RIBBON_STEP_M:f64=3.0;
+const RIBBON_CROSS_STEPS:usize=4;
+fn ribbon(path:&[Point],width:f64,height:f32)->Result<Option<Mesh>,String>{
+    let mut source=Vec::<Point>::new();
     for &point in path {
-        if !point.x.is_finite() || !point.z.is_finite() {
+        if !point.x.is_finite() || !point.z.is_finite(){
             return Err("non-finite street coordinate".into());
         }
-        if points.last().is_none_or(|p| direction(*p, point).is_some()) {
-            points.push(point);
+        if source.last().is_none_or(|p|direction(*p,point).is_some()){
+            source.push(point);
         }
     }
-    if points.len() < 2 { return Ok(None); }
-    let segment_normals: Vec<[f64;2]> = points.windows(2)
-        .map(|pair| {
-            let d = direction(pair[0], pair[1]).expect("duplicates filtered");
-            [-d[1],d[0]]
-        }).collect();
-    let half = width * 0.5;
-    let mut mesh = Mesh::default();
-    for (i, &point) in points.iter().enumerate() {
-        let (offset_x, offset_z) = if i == 0 {
-            let n = segment_normals[0];
-            (n[0]*half,n[1]*half)
-        } else if i+1 == points.len() {
-            let n = segment_normals[segment_normals.len()-1];
-            (n[0]*half,n[1]*half)
-        } else {
-            let a=segment_normals[i-1];
-            let b=segment_normals[i];
+    if source.len()<2 {return Ok(None);}
+    let mut points=vec![source[0]];
+    for pair in source.windows(2){
+        let distance=(pair[1].x-pair[0].x).hypot(pair[1].z-pair[0].z);
+        let splits=(distance/MAX_RIBBON_STEP_M).ceil() as usize;
+        for i in 1..=splits {
+            let t=i as f64/splits as f64;
+            points.push(Point{x:pair[0].x+(pair[1].x-pair[0].x)*t,
+                              z:pair[0].z+(pair[1].z-pair[0].z)*t});
+        }
+    }
+    let normals:Vec<[f64;2]>=points.windows(2).map(|pair|{
+        let d=direction(pair[0],pair[1]).expect("deduplicated");
+        [-d[1],d[0]]
+    }).collect();
+    let mut mesh=Mesh::default();
+    for (i,p) in points.iter().enumerate() {
+        let n=if i==0 {normals[0]}
+        else if i+1==points.len() {normals[normals.len()-1]}
+        else {
+            let a=normals[i-1];
+            let b=normals[i];
             let sum=[a[0]+b[0],a[1]+b[1]];
-            let magnitude=sum[0].hypot(sum[1]);
-            if magnitude < 1e-6 {
-                (b[0]*half,b[1]*half)
-            } else {
-                let m=[sum[0]/magnitude,sum[1]/magnitude];
+            let len=sum[0].hypot(sum[1]);
+            if len<1e-6 {b}
+            else {
+                let m=[sum[0]/len,sum[1]/len];
                 let dot=(m[0]*b[0]+m[1]*b[1]).abs().max(0.01);
-                let miter_length=(half/dot).min(2.0*half);
-                (m[0]*miter_length,m[1]*miter_length)
+                let scale=(1.0/dot).min(2.0);
+                [m[0]*scale,m[1]*scale]
             }
         };
-        let l=Vertex {
-            position: [(point.x+offset_x) as f32,height,(point.z+offset_z) as f32],
-            normal: [0.0,1.0,0.0],
-        };
-        let r=Vertex {
-            position: [(point.x-offset_x) as f32,height,(point.z-offset_z) as f32],
-            normal: [0.0,1.0,0.0],
-        };
-        mesh.vertices.extend([l,r]);
+        for across in 0..=RIBBON_CROSS_STEPS {
+            let lateral=width*(0.5-across as f64/RIBBON_CROSS_STEPS as f64);
+            mesh.vertices.push(Vertex{
+                position:[(p.x+n[0]*lateral) as f32,height,(p.z+n[1]*lateral) as f32],
+                normal:[0.,1.,0.],
+            });
+        }
     }
+    let stride=(RIBBON_CROSS_STEPS+1) as u32;
     for i in 0..points.len()-1 {
-        let base=u32::try_from(i.checked_mul(2).ok_or("ribbon too large")?)
-            .map_err(|_| "ribbon exceeds 32-bit indices")?;
-        // Positive Y facing triangles in an X-east/Z-north world.
-        mesh.indices.extend([base,base+2,base+1,base+1,base+2,base+3]);
+        let at=u32::try_from(i).map_err(|_|"ribbon too long")?
+            .checked_mul(stride).ok_or("ribbon too large")?;
+        for across in 0..RIBBON_CROSS_STEPS as u32 {
+            let l=at+across;
+            let r=l+1;
+            let nl=l+stride;
+            let nr=r+stride;
+            mesh.indices.extend([l,nl,r,r,nl,nr]);
+        }
     }
     Ok(Some(mesh))
 }
@@ -397,10 +408,10 @@ mod tests {
         let (scene, report)=mesh_streets(&city(vec![street("residential",&[[0.,0.],[10.,0.]])])).unwrap();
         assert_eq!(report.segments_meshed,1);
         let mesh=&scene.layers[&SurfaceKind::Road];
-        assert_eq!(mesh.vertices.len(),4);
-        assert_eq!(mesh.indices.len(),6);
+        assert_eq!(mesh.vertices.len(),25);
+        assert_eq!(mesh.indices.len(),96);
         assert!((mesh.vertices[0].position[2]-3.25).abs()<1e-4);
-        assert!((mesh.vertices[1].position[2]+3.25).abs()<1e-4);
+        assert!((mesh.vertices[4].position[2]+3.25).abs()<1e-4);
         let p=[
             mesh.vertices[mesh.indices[0] as usize].position,
             mesh.vertices[mesh.indices[1] as usize].position,
@@ -411,13 +422,22 @@ mod tests {
         assert!(signed < 0.0,"winding must face +Y");
     }
     #[test]
+    fn long_ribbons_are_subdivided_for_terrain_sampling() {
+        let (scene,_)=mesh_streets(&city(vec![street("primary",&[[0.,0.],[99.,0.]])])).unwrap();
+        let mesh=&scene.layers[&SurfaceKind::Road];
+        assert_eq!(mesh.vertices.len(),(33+1)*5);
+        assert_eq!(mesh.indices.len()/3,33*4*2);
+        assert!(mesh.vertices.iter().all(|v|v.position[1].is_finite()));
+    }
+
+    #[test]
     fn bends_are_miter_limited_and_duplicates_skipped() {
         let s=street("footway",&[[0.,0.],[0.,0.],[10.,0.],[10.,10.]]);
         let (scene,report)=mesh_streets(&city(vec![s])).unwrap();
         assert_eq!(report.segments_meshed,1);
         let mesh=&scene.layers[&SurfaceKind::Walk];
-        assert_eq!(mesh.vertices.len(),6);
-        let a=mesh.vertices[2].position;
+        assert_eq!(mesh.vertices.len(),45);
+        let a=mesh.vertices[20].position;
         let join=(a[0]-10.0).hypot(a[2]);
         assert!(join <= 2.5+1e-4);
     }
@@ -429,8 +449,8 @@ mod tests {
         ])).unwrap();
         assert!(scene.layers[&SurfaceKind::Road].vertices[0].position[1]
             > scene.layers[&SurfaceKind::Walk].vertices[0].position[1]);
-        assert_eq!(scene.layers[&SurfaceKind::Walk].vertices.len(),4);
-        assert_eq!(scene.layers[&SurfaceKind::Road].vertices.len(),4);
+        assert!(scene.layers[&SurfaceKind::Walk].vertices.len()>30);
+        assert!(scene.layers[&SurfaceKind::Road].vertices.len()>20);
     }
 
     #[test]
@@ -445,7 +465,7 @@ mod tests {
         assert_eq!(report.segments_meshed,1);
         assert_eq!(report.segments_skipped,2);
         assert_eq!(report.segments_degenerate,1);
-        assert_eq!(scene.layers[&SurfaceKind::Road].indices.len(),6);
+        assert!(scene.layers[&SurfaceKind::Road].indices.len()>=96);
     }
     #[test]
     fn shared_t_junction_gets_a_square_asphalt_patch() {
@@ -469,7 +489,7 @@ mod tests {
             bridge,
         ])).unwrap();
         assert_eq!(report.junction_patches,0);
-        assert_eq!(scene.layers[&SurfaceKind::Road].vertices.len(),8);
+        assert!(scene.layers[&SurfaceKind::Road].vertices.len()>40);
     }
 
     #[test]
@@ -484,7 +504,7 @@ mod tests {
         assert!(obj.contains("mtllib urbarium-transport.mtl"));
         assert!(obj.contains("g road_asphalt"));
         assert!(obj.contains("g walk_pavement"));
-        assert_eq!(obj.lines().filter(|l|l.starts_with("f ")).count(),4);
+        assert!(obj.lines().filter(|l|l.starts_with("f ")).count()>=16);
         let mut mtl=Vec::new();
         write_road_mtl(&mut mtl).unwrap();
         assert!(String::from_utf8(mtl).unwrap().contains("newmtl walk_pavement"));

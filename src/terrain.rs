@@ -34,6 +34,31 @@ impl TerrainGrid {
         Ok(())
     }
 
+    /// Sample the *rendered* ground triangles, not a bilinear quad.
+    /// Roads using bilinear heights may appear below ground between corners.
+    pub fn sample_surface(&self, region:&Region, x:f64, z:f64) -> f32 {
+        let a=region.project(region.bbox[0],region.bbox[1]);
+        let b=region.project(region.bbox[2],region.bbox[3]);
+        let fx=((x-a.x)/(b.x-a.x)*(self.width-1) as f64)
+            .clamp(0.0,(self.width-1) as f64);
+        let fz=((z-a.z)/(b.z-a.z)*(self.height-1) as f64)
+            .clamp(0.0,(self.height-1) as f64);
+        let col=(fx.floor() as usize).min(self.width-2);
+        let row=(fz.floor() as usize).min(self.height-2);
+        let tx=(fx-col as f64) as f32;
+        let tz=(fz-row as f64) as f32;
+        let at=|cx:usize,rz:usize| self.heights_m[rz*self.width+cx];
+        let sw=at(col,row);
+        let se=at(col+1,row);
+        let nw=at(col,row+1);
+        let ne=at(col+1,row+1);
+        if tx+tz<=1.0 {
+            sw+(se-sw)*tx+(nw-sw)*tz
+        }else{
+            ne+(nw-ne)*(1.0-tx)+(se-ne)*(1.0-tz)
+        }
+    }
+
     /// Bilinearly interpolated local height at region-local X/Z meters.
     pub fn sample(&self, region:&Region, x:f64, z:f64) -> f32 {
         let a=region.project(region.bbox[0],region.bbox[1]);
@@ -97,7 +122,7 @@ impl TerrainGrid {
     pub fn drape_roads(&self, region:&Region, roads:&mut RoadScene) {
         for mesh in roads.layers.values_mut() {
             for vertex in &mut mesh.vertices {
-                vertex.position[1]+=self.sample(
+                vertex.position[1]+=self.sample_surface(
                     region,vertex.position[0] as f64,vertex.position[2] as f64);
             }
         }
@@ -124,7 +149,7 @@ impl TerrainGrid {
             if exterior.is_empty(){report.buildings_skipped+=1;continue;}
             let x=exterior.iter().map(|p|p.x).sum::<f64>()/exterior.len() as f64;
             let z=exterior.iter().map(|p|p.z).sum::<f64>()/exterior.len() as f64;
-            let ground=self.sample(&city.region,x,z);
+            let ground=self.sample_surface(&city.region,x,z);
             for vertex in &mut mesh.vertices {vertex.position[1]+=ground;}
             let offset=u32::try_from(combined.vertices.len())
                 .map_err(|_|"too many building vertices")?;
@@ -166,6 +191,43 @@ mod tests {
         assert_eq!(g.sample(&r,west.x,west.z),0.0);
         assert_eq!(g.sample(&r,east.x,east.z),30.0);
     }
+    #[test]
+    fn sample_surface_matches_gpu_terrain_triangles() {
+        let r=region();
+        let mut g=grid();
+        g.heights_m=vec![0.,0.,0.,60.];
+        let p=r.project(0.5,0.5);
+        assert!((g.sample(&r,p.x,p.z)-15.0).abs()<0.001);
+        assert!(g.sample_surface(&r,p.x,p.z).abs()<0.001);
+        let ne=r.project(0.75,0.75);
+        assert!((g.sample_surface(&r,ne.x,ne.z)-30.0).abs()<0.001);
+    }
+    #[test]
+    fn draped_dense_ribbon_stays_above_a_nonplanar_dem_cell() {
+        use crate::roads::{mesh_streets,SurfaceKind};
+        use crate::Street;
+        use std::collections::BTreeMap;
+        let r=region();
+        let mut g=grid();
+        g.heights_m=vec![0.,0.,0.,60.];
+        let a=r.project(0.1,0.1);let b=r.project(0.9,0.9);
+        let city=City {
+            schema_version:1,region:r.clone(),provenance:vec![],
+            buildings:vec![],streets:vec![Street{
+                source_id:"test".into(),name:None,kind:"primary".into(),
+                path:vec![a,b],tags:BTreeMap::new(),osm_node_ids:vec![]
+            }]
+        };
+        let (mut roads,_)=mesh_streets(&city).unwrap();
+        g.drape_roads(&r,&mut roads);
+        let surface=&roads.layers[&SurfaceKind::Road];
+        assert!(surface.vertices.len()>100);
+        for vertex in &surface.vertices {
+            let actual=g.sample_surface(&r,vertex.position[0] as f64,vertex.position[2] as f64);
+            assert!(vertex.position[1]>actual+0.05);
+        }
+    }
+
     #[test]
     fn terrain_triangle_counts_and_finite_normals() {
         let mesh=grid().mesh(&region()).unwrap();
