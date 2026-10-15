@@ -65,6 +65,25 @@ same `data/processed/downtown-la.json` city schema. It resolves the current
 Overture release automatically and records download time and source in a local
 report. This route is the best candidate for the first reproducible data demo.
 
+## Generate actual 3D massing geometry
+
+After acquiring a Downtown LA city slice, Urbarium can now build a portable,
+indexed 3D triangle mesh using Rust and `earcutr` (with courtyard-aware roof
+triangulation and extruded polygon walls):
+
+```sh
+cargo run --release -- mesh \
+  --city data/processed/downtown-la.json \
+  --out data/processed/downtown-la-buildings.obj
+```
+
+The OBJ can be inspected in a conventional 3D tool. This is a **real geometric
+output**, not a rendered illustration or the eventual WebGPU application.
+Ground is currently a flat plane; the roads are not yet meshed. Known building
+heights are used without changes. Missing heights are *visualization-only*
+approximations (3.1 m per mapped level, otherwise 9 m); this does not alter
+the source city JSON or claim the estimate is real.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.

@@ -2,6 +2,8 @@
 //! Positions are meters relative to each region's WGS84 origin:
 //! X increases east; Z increases north.
 
+pub mod geometry;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};

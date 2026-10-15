@@ -81,3 +81,17 @@ jobs:
           assert len(city["provenance"]) == 1
           print('Overture-only ingest test passed')
           PY
+      - name: Generate procedural 3D OBJ from synthetic city
+        run: |
+          cargo run -- mesh \
+            --city /tmp/urbarium-overture-only-smoke.json \
+            --out /tmp/urbarium-smoke.obj
+          python3 - <<'PY'
+          p = '/tmp/urbarium-smoke.obj'
+          with open(p, encoding='utf-8') as fh:
+              lines = list(fh)
+          assert sum(x.startswith('v ') for x in lines) >= 3
+          assert sum(x.startswith('vn ') for x in lines) >= 3
+          assert sum(x.startswith('f ') for x in lines) >= 1
+          print('Procedural OBJ geometry smoke test passed')
+          PY

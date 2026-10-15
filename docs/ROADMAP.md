@@ -29,7 +29,8 @@
 
 ## P2 — First playable walk
 
-- [ ] Construct meshes from polygons, roof primitives and roads, without costly runtime Boolean CSG.
+- [x] Construct indexed building massing meshes from polygons, with concave/courtyard roofs, wall normals, and OBJ export.
+- [ ] Add road mesh generation and additional roof primitives without costly runtime Boolean CSG.
 - [ ] Tile spatial indexing, culling, LOD, material batching and simple collision.
 - [ ] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer walk controls.
 - [ ] Start at a recognizable Downtown LA site; navigation, FPS and error overlay.
