@@ -26,6 +26,7 @@
   <title>Urbarium · Downtown Los Angeles</title>
   <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="0">
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
+  <link data-trunk rel="copy-file" href="web/landmarks.json" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/minimap.js">
   <script src="./minimap.js" defer></script>
   <link data-trunk rel="copy-file" href="web/stats.js">
@@ -77,6 +78,17 @@
     #stats-toggle {background:#1d3642;color:#e9f5f7;cursor:pointer;
       border:1px solid #516c79;border-radius:5px;padding:4px 9px;}
     #stats-toggle[aria-pressed="true"] {border-color:#b6d7d9;background:#284951;}
+    #world-landmarks {position:fixed;inset:0;z-index:1;
+      overflow:hidden;pointer-events:none;}
+    .world-landmark {position:fixed;transform:translate(-50%,-120%);
+      color:#fff9e6;font:600 11px system-ui,sans-serif;white-space:nowrap;
+      border:1px solid #cda85d;background:rgba(20,33,41,.86);
+      padding:5px 8px;border-radius:6px;letter-spacing:.01em;
+      text-shadow:0 1px 2px #000;box-shadow:0 2px 9px #0009;}
+    .world-landmark::after {content:"";position:absolute;left:50%;bottom:-7px;
+      border:4px solid transparent;border-top-color:#ffd77d;
+      transform:translateX(-50%);}
+    .world-landmark[hidden]{display:none;}
     #stats-panel {position:fixed;z-index:5;left:18px;bottom:48px;
       width:280px;max-width:calc(100vw - 50px);max-height:42vh;overflow:auto;
       background:rgba(7,16,22,.94);border:1px solid #45606b;
@@ -98,6 +110,7 @@
   </style>
 </head>
 <body>
+  <div id="world-landmarks" aria-label="World-anchored Downtown Los Angeles landmark labels"></div>
   <div class="hud">
     <h1>URBARIUM <span style="color:#b6bbc5">/ Downtown LA</span></h1>
     <p id="status">Starting Rust / WebGPU viewer...</p>
