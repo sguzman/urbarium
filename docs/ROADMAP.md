@@ -33,6 +33,7 @@
 - [x] Validate actual Downtown LA OBJ generation: 563 meshed, zero skipped, 38,210 vertices, 21,888 triangles.
 - [x] Generate classified, indexed roadway / footpath / stairway / rail surface meshes with bounded joins and material groups.
 - [x] Export self-contained combined glTF 2.0 binary with materials, indexed buildings and transportation meshes.
+- [x] Validate actual Downtown LA GLB: 34,660 triangles, 6 scene meshes, 1,719,448 bytes, independently loaded via trimesh.
 - [ ] Add physically correct intersections, crossings, grade separation and additional roof primitives.
 - [ ] Tile spatial indexing, culling, LOD, material batching and simple collision.
 - [ ] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer walk controls.

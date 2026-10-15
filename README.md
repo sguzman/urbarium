@@ -16,12 +16,16 @@ produced a geographic city JSON and a low-poly 3D building OBJ:
 - **38,210** mesh vertices and **21,888** triangles.
 - **26** render-only estimated heights for buildings without recorded heights.
 
+- **1,540** transportation spans meshed (472 road, 943 pedestrian, 114 steps, 11 rail); **47** unknown/underground spans intentionally excluded.
+- A single combined glTF 2.0 binary (.glb) contains **34,660 triangles** in six layers (reference ground, buildings, roads, pedestrian paths, steps, rail).
+- **1,719,448 bytes** total for the uncompressed GLB, independently loaded through a separate glTF-capable 3D library.
+
 The sample covers approximately 1.5 × 1.2 km around Bunker Hill / Civic
-Center, not the whole city. The first output is real indexed 3D geometry,
+Center, not the whole city. The outputs are real indexed 3D geometry,
 **not yet a navigable Rust/WASM/WebGPU demo**. Terrain remains flat, roads
 remain centerlines, and fidelity of individual facades is not established.
 
-[Real-data build and downloadable 3D OBJ artifact](https://github.com/sguzman/urbarium/actions/runs/38678603792)
+[Validated real-data build, OBJ and combined GLB artifacts](https://github.com/sguzman/urbarium/actions/runs/38680594189)
 (artifact expires after seven days). No source data is committed to Git.
 
 ## Quick start
