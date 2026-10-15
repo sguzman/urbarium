@@ -12,7 +12,7 @@
 - [x] Synthetic end-to-end smoke tests for OSM and GeoJSON ingestion (CI configured).
 - [ ] Execute and validate a real Downtown LA Overpass download (public instance currently rejects cloud client).
 - [x] Add Overture-only bounded street and building download pipeline.
-- [ ] Run and validate Overture-only acquisition against a real Downtown LA sample.
+- [x] Run and validate Overture-only acquisition against real Downtown LA (2026-10-15: 1,587 clipped transportation segments; 563 buildings; 537 height values).
 - [ ] Capture provenance, source snapshots, and coverage metrics as a reproducible manifest.
 - [x] Assemble OSM building multipolygon relations with multi-way rings and interior courtyards.
 - [x] Clip OSM and Overture transportation centerlines at region bounds, including long external rail segments.
@@ -30,6 +30,7 @@
 ## P2 — First playable walk
 
 - [x] Construct indexed building massing meshes from polygons, with concave/courtyard roofs, wall normals, and OBJ export.
+- [x] Validate actual Downtown LA OBJ generation: 563 meshed, zero skipped, 38,210 vertices, 21,888 triangles.
 - [ ] Add road mesh generation and additional roof primitives without costly runtime Boolean CSG.
 - [ ] Tile spatial indexing, culling, LOD, material batching and simple collision.
 - [ ] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer walk controls.

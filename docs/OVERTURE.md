@@ -46,6 +46,14 @@ restricted LA County imagery-derived outlines without checking permission.
 
 ## Current validation status
 
-CI exercises small **synthetic** Overpass/GeoJSON features, not a live
-Overture or Overpass download. A successful local data build is a remaining
-acceptance criterion. No 3D renderer has yet been implemented.
+CI exercises synthetic Overpass/GeoJSON features as regression fixtures.
+A separate live Overture workflow **successfully** acquired Downtown LA
+streets and building footprints on October 15, 2026 and generated the first
+real low-poly 3D OBJ. Download and validation:
+https://github.com/sguzman/urbarium/actions/runs/38678603792
+
+The live OSM Overpass workflow returned HTTP 406 from the public server;
+Overture is the confirmed real-data path. The Overture CLI currently selects
+its latest release automatically, so the retrieval timestamp alone does not
+pin an immutable source version; exact release capture is pending. The 3D
+geometry generator works, but no WebGPU browser renderer exists yet.

@@ -49,3 +49,18 @@ regional chunker should assign each whole building a canonical owner tile,
 reference it from overlapping neighbor tiles, and avoid duplicates. Road
 centerlines are clipped, because their source segments sometimes traverse
 tens of kilometers outside the requested tile.
+
+## Verified Downtown LA pilot (2026-10-15)
+
+The Overture-only acquisition produced 1,587 clipped transportation spans
+and 563 building footprints. 537 buildings have source height measurements;
+the remaining 26 get a separate *visualization* assumption during mesh
+compilation only. A 3D Wavefront OBJ from these footprints contains 38,210
+vertices and 21,888 triangles, with zero buildings skipped. Run details:
+https://github.com/sguzman/urbarium/actions/runs/38678603792
+
+Overture segments are not all automotive streets: the sample is dominated by
+pedestrian footways, steps, and service routes. Source line types must be
+honored when constructing navigation and traversal rules. Road lines are
+clipped to the pilot bbox. Building polygon vertices can extend beyond the
+bbox and need canonical tile ownership when the world is partitioned.

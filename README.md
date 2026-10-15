@@ -6,7 +6,23 @@ Urbarium is a Rust-first pipeline for geographically faithful, low-poly, walkabl
 
 ## Status
 
-**Phase 1: data foundation.** This repository currently contains a working Rust ingestion *implementation*, not yet a deployed WebGPU demo. The CLI converts OSM/Overture street networks and building footprints into renderer-independent, region-local geometry. It also accepts optional GeoJSON street segments and a GeoJSON building layer (e.g. Overture or a lawfully obtained county source) with explicit height units. Live data acquisition and WASM/WebGPU rendering are not yet validated.
+**Data ingestion and first 3D massing build validated on real Downtown LA data.**
+Rust CI passes, and a successful live Overture build on October 15, 2026
+produced a geographic city JSON and a low-poly 3D building OBJ:
+
+- **1,587** clipped transportation segments (including pedestrian/rail/path features).
+- **563** building footprints, of which **537** have recorded height values.
+- **563 / 563** imported buildings meshed successfully (zero skipped).
+- **38,210** mesh vertices and **21,888** triangles.
+- **26** render-only estimated heights for buildings without recorded heights.
+
+The sample covers approximately 1.5 × 1.2 km around Bunker Hill / Civic
+Center, not the whole city. The first output is real indexed 3D geometry,
+**not yet a navigable Rust/WASM/WebGPU demo**. Terrain remains flat, roads
+remain centerlines, and fidelity of individual facades is not established.
+
+[Real-data build and downloadable 3D OBJ artifact](https://github.com/sguzman/urbarium/actions/runs/38678603792)
+(artifact expires after seven days). No source data is committed to Git.
 
 ## Quick start
 
