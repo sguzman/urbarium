@@ -60,6 +60,42 @@ with sync_playwright() as p:
                 (0.2,0.25),(0.5,0.5),(0.8,0.75),(0.1,0.9),(0.9,0.1)
             )]
         print("Rendered canvas sample:",values)
+        if all(p == (255,255,255) for p in values):
+            # Control experiment in exactly the same Chromium instance:
+            # can a tiny stand-alone WebGPU command paint a canvas?
+            control = page.evaluate("""async () => {
+                try {
+                    const adapter = await navigator.gpu?.requestAdapter();
+                    if (!adapter) return {error: "No WebGPU adapter"};
+                    const device = await adapter.requestDevice();
+                    const canvas = document.createElement("canvas");
+                    canvas.id = "webgpu-control";
+                    canvas.width = canvas.height = 128;
+                    canvas.style.cssText =
+                        "position:fixed;top:200px;left:650px;width:128px;height:128px;z-index:99999";
+                    document.body.appendChild(canvas);
+                    const ctx = canvas.getContext("webgpu");
+                    const format = navigator.gpu.getPreferredCanvasFormat();
+                    ctx.configure({device,format,alphaMode:"opaque"});
+                    const command = device.createCommandEncoder();
+                    const view = ctx.getCurrentTexture().createView();
+                    const pass = command.beginRenderPass({
+                        colorAttachments:[{view,
+                            clearValue:{r:1,g:0,b:0,a:1},
+                            loadOp:"clear",storeOp:"store"}]
+                    });
+                    pass.end();
+                    device.queue.submit([command.finish()]);
+                    await device.queue.onSubmittedWorkDone();
+                    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                    return {format,adapter:adapter.info?.device ?? "unknown"};
+                } catch (e) { return {error:String(e)}; }
+            }""")
+            print("WebGPU control result:", control)
+            if page.locator("#webgpu-control").count():
+                with Image.open(BytesIO(page.locator("#webgpu-control").screenshot())) as image:
+                    print("WebGPU red-clear control pixel:", image.convert("RGB").getpixel((64,64)))
+            print("Canvas count:", page.locator("canvas").count())
         assert any(p != (255,255,255) for p in values), "Canvas remains blank white"
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
