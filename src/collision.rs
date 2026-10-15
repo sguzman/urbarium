@@ -176,14 +176,14 @@ mod tests {
     fn swept_movement_does_not_tunnel_through_walls() {
         let w=world();
         let end=w.move_sliding([-5.0,5.0],[15.0,5.0],1.7,0.35);
-        assert!(end[0]<-0.1,"must not jump through the building: {end:?}");
+        assert!(end[0] < -0.1,"must not jump through the building: {end:?}");
         assert!(!w.blocked(end[0],end[1],1.7,0.35));
     }
     #[test]
     fn movement_slides_along_footprint_edges() {
         let w=world();
         let end=w.move_sliding([-2.0,1.0],[2.0,-3.0],1.7,0.35);
-        assert!(end[1]<-1.0,"sliding should permit tangential travel: {end:?}");
+        assert!(end[1] < -1.0,"sliding should permit tangential travel: {end:?}");
         assert!(!w.blocked(end[0],end[1],1.7,0.35));
     }
     #[test]
