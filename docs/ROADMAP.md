@@ -11,7 +11,8 @@
 - [x] Synthetic end-to-end smoke tests for OSM and GeoJSON ingestion (CI configured).
 - [ ] Execute and validate a real Downtown LA Overpass download (not yet possible in this environment).
 - [ ] Capture provenance, source snapshots, and coverage metrics as a reproducible manifest.
-- [ ] Add robust multipolygon/road topology ingestion and bounds clipping.
+- [x] Assemble OSM building multipolygon relations with multi-way rings and interior courtyards.
+- [ ] Add robust road topology, relation QA diagnostics, and bounds clipping.
 
 ## P1 — Geographic fidelity
 

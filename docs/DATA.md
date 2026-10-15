@@ -10,7 +10,7 @@
 
 ## Known MVP limitations
 
-- The Overpass path consumes **ways only**. OSM building multipolygon relations (holes/complex parts), intersections and turn restrictions need a dedicated OSM topology pass. GeoJSON already supports Polygon, MultiPolygon and interior rings.
+- The Overpass importer supports OSM building multipolygon relations with stitched outer/inner way rings, dropping unclosed geometry, but does not yet support every ambiguous/invalid OSM relation topology. Road intersection graphs and turn restrictions need a dedicated topology pass. GeoJSON supports Polygon, MultiPolygon and interior rings.
 - Roads are polylines, not clipped road surfaces, lane widths or guaranteed pedestrian connectivity.
 - Building footprints and heights are not the same as accurate architectural models. Height tags can be absent or stale.
 - GeoJSON building import replaces OSM building footprints to avoid duplicate overlapping buildings. There is not yet a conflation/deduplication system for multiple sources.

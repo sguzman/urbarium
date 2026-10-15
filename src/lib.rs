@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const EARTH_RADIUS_M: f64 = 6_371_008.8;
 
@@ -110,6 +110,14 @@ pub fn from_overpass(json: &str, region: Region) -> Result<City, String> {
         .ok_or("Overpass JSON is missing elements array")?;
     let mut streets = Vec::new();
     let mut buildings = Vec::new();
+    let mut member_way_ids = BTreeSet::new();
+    // Assemble relations first so tagged member ways cannot create duplicate buildings.
+    for element in elements {
+        if let Some((building, refs)) = osm_multipolygon_building(element, &region) {
+            buildings.push(building);
+            member_way_ids.extend(refs);
+        }
+    }
     for element in elements {
         if element.get("type").and_then(Value::as_str) != Some("way") {
             continue; // relation multipolygons are handled by a future importer
@@ -155,7 +163,8 @@ pub fn from_overpass(json: &str, region: Region) -> Result<City, String> {
                 tags: street_tags,
             });
         }
-        if tags.get("building").and_then(Value::as_str).is_some_and(|v| v != "no")
+        if !member_way_ids.contains(&id)
+            && tags.get("building").and_then(Value::as_str).is_some_and(|v| v != "no")
             && coordinates.len() >= 4 && coordinates.first() == coordinates.last()
         {
             let mut ring: Vec<Point> = coordinates.iter()
@@ -186,6 +195,143 @@ pub fn from_overpass(json: &str, region: Region) -> Result<City, String> {
         streets,
         buildings,
     })
+}
+
+/// Assemble a closed relation from ordered/unordered, potentially reversed OSM way segments.
+/// Reject incomplete rings rather than silently inventing geometry or sealing gaps.
+fn stitch_rings(segments: Vec<Vec<(f64, f64)>>) -> Vec<Vec<(f64, f64)>> {
+    let mut pending = segments;
+    let mut rings = Vec::new();
+    while !pending.is_empty() {
+        let mut path = pending.remove(0);
+        if path.len() < 2 { continue; }
+        loop {
+            if path.len() >= 4 && path.first() == path.last() {
+                path.pop();
+                if path.len() >= 3 { rings.push(path); }
+                break;
+            }
+            let start = *path.first().unwrap();
+            let end = *path.last().unwrap();
+            let mut match_index = None;
+            let mut append = true;
+            let mut reverse = false;
+            for (index, segment) in pending.iter().enumerate() {
+                if segment.len() < 2 { continue; }
+                if segment.first() == Some(&end) {
+                    match_index = Some(index);
+                } else if segment.last() == Some(&end) {
+                    match_index = Some(index);
+                    reverse = true;
+                } else if segment.last() == Some(&start) {
+                    match_index = Some(index);
+                    append = false;
+                } else if segment.first() == Some(&start) {
+                    match_index = Some(index);
+                    append = false;
+                    reverse = true;
+                }
+                if match_index.is_some() { break; }
+            }
+            let Some(index) = match_index else { break; };
+            let mut next = pending.remove(index);
+            if reverse { next.reverse(); }
+            if append {
+                path.extend(next.into_iter().skip(1));
+            } else {
+                next.pop();
+                next.extend(path);
+                path = next;
+            }
+        }
+    }
+    rings
+}
+
+fn osm_member_coordinates(element: &Value) -> Option<Vec<(f64, f64)>> {
+    let nodes = element.get("geometry")?.as_array()?;
+    let coords: Option<Vec<_>> = nodes.iter().map(|node| {
+        let lon = node.get("lon")?.as_f64()?;
+        let lat = node.get("lat")?.as_f64()?;
+        (lon.is_finite() && lat.is_finite()).then_some((lon, lat))
+    }).collect();
+    coords.filter(|v| v.len() >= 2)
+}
+
+fn point_in_ring(point: Point, ring: &[Point]) -> bool {
+    if ring.len() < 3 { return false; }
+    let mut inside = false;
+    let mut previous = *ring.last().unwrap();
+    for &current in ring {
+        let crosses = (current.z > point.z) != (previous.z > point.z);
+        if crosses {
+            let x_crossing = (previous.x - current.x) * (point.z - current.z)
+                / (previous.z - current.z) + current.x;
+            if point.x < x_crossing { inside = !inside; }
+        }
+        previous = current;
+    }
+    inside
+}
+
+fn osm_multipolygon_building(element: &Value, region: &Region) -> Option<(Building, BTreeSet<i64>)> {
+    if element.get("type")?.as_str()? != "relation" { return None; }
+    let tags = element.get("tags")?.as_object()?;
+    if tags.get("type")?.as_str()? != "multipolygon"
+        || !tags.get("building").and_then(Value::as_str).is_some_and(|v| v != "no")
+    {
+        return None;
+    }
+    let id = element.get("id")?.as_i64()?;
+    let members = element.get("members")?.as_array()?;
+    let mut outer = Vec::new();
+    let mut inner = Vec::new();
+    let mut used = BTreeSet::new();
+    for member in members {
+        if member.get("type").and_then(Value::as_str) != Some("way") { continue; }
+        let Some(coords) = osm_member_coordinates(member) else { continue; };
+        match member.get("role").and_then(Value::as_str) {
+            Some("outer") | Some("") => {
+                if let Some(member_id) = member.get("ref").and_then(Value::as_i64) {
+                    used.insert(member_id);
+                }
+                outer.push(coords);
+            },
+            Some("inner") => {
+                if let Some(member_id) = member.get("ref").and_then(Value::as_i64) {
+                    used.insert(member_id);
+                }
+                inner.push(coords);
+            },
+            _ => {}
+        }
+    }
+    let exteriors = stitch_rings(outer);
+    if exteriors.is_empty() { return None; }
+    let mut polygons: Vec<Polygon> = exteriors.into_iter()
+        .filter(|points| intersects_coordinates(region, points))
+        .map(|points| Polygon { rings: vec![points.into_iter()
+            .map(|(lon, lat)| region.project(lon, lat)).collect()] })
+        .collect();
+    if polygons.is_empty() { return None; }
+    // Assign each courtyard to the containing outer footprint. Drop unmatched holes.
+    for points in stitch_rings(inner) {
+        let ring: Vec<Point> = points.into_iter()
+            .map(|(lon, lat)| region.project(lon, lat)).collect();
+        let Some(first) = ring.first().copied() else { continue; };
+        if let Some(polygon) = polygons.iter_mut()
+            .find(|polygon| point_in_ring(first, &polygon.rings[0]))
+        {
+            polygon.rings.push(ring);
+        }
+    }
+    Some((Building {
+        source_id: format!("osm:relation:{id}"),
+        name: string_prop(tags.get("name")),
+        height_m: tags.get("height").and_then(Value::as_str).and_then(parse_osm_height),
+        levels: tags.get("building:levels").and_then(Value::as_str).and_then(parse_positive),
+        polygons,
+    }, used))
 }
 
 fn intersects_coordinates(region: &Region, coords: &[(f64, f64)]) -> bool {
@@ -389,6 +535,45 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].polygons[0].rings.len(), 2);
         assert!((result[0].height_m.unwrap() - 30.48).abs() < 1e-8);
+    }
+
+    #[test]
+    fn assembles_multipolygon_building_with_reversed_segments_and_courtyard() {
+        let input = r#"{"elements":[
+          {"type":"relation","id":500,"tags":{"type":"multipolygon","building":"yes","height":"60 ft"},
+            "members":[
+              {"type":"way","ref":200,"role":"outer","geometry":[
+                {"lon":-118.251,"lat":34.05},{"lon":-118.250,"lat":34.05},
+                {"lon":-118.250,"lat":34.051}]},
+              {"type":"way","ref":201,"role":"outer","geometry":[
+                {"lon":-118.251,"lat":34.05},{"lon":-118.251,"lat":34.051},
+                {"lon":-118.250,"lat":34.051}]},
+              {"type":"way","ref":202,"role":"inner","geometry":[
+                {"lon":-118.2508,"lat":34.0502},{"lon":-118.2504,"lat":34.0502},
+                {"lon":-118.2504,"lat":34.0505},{"lon":-118.2508,"lat":34.0505},
+                {"lon":-118.2508,"lat":34.0502}]}
+            ]},
+          {"type":"way","id":200,"tags":{"building":"yes"},"geometry":[
+            {"lon":-118.251,"lat":34.05},{"lon":-118.250,"lat":34.05},
+            {"lon":-118.250,"lat":34.051},{"lon":-118.251,"lat":34.05}]}
+        ]}"#;
+        let city = from_overpass(input, downtown()).unwrap();
+        assert_eq!(city.buildings.len(), 1, "member way must not be duplicated");
+        assert_eq!(city.buildings[0].source_id, "osm:relation:500");
+        assert_eq!(city.buildings[0].polygons.len(), 1);
+        assert_eq!(city.buildings[0].polygons[0].rings.len(), 2);
+        assert_eq!(city.buildings[0].polygons[0].rings[0].len(), 4);
+        assert!((city.buildings[0].height_m.unwrap() - 18.288).abs() < 0.001);
+    }
+
+    #[test]
+    fn incomplete_relation_ring_is_rejected() {
+        let input = r#"{"elements":[
+          {"type":"relation","id":501,"tags":{"type":"multipolygon","building":"yes"},
+           "members":[{"type":"way","role":"outer","ref":1,"geometry":[
+             {"lon":-118.251,"lat":34.05},{"lon":-118.25,"lat":34.05}]}]}
+        ]}"#;
+        assert!(from_overpass(input, downtown()).unwrap().buildings.is_empty());
     }
 
     #[test]
