@@ -38,6 +38,19 @@ cargo run --release -- ingest \
 
 For LA County data, use `--height-unit feet` **only after verifying the HEIGHT field units** on the chosen source. Source permissions must be checked separately. See [data sources and limitations](docs/DATA.md).
 
+## Repeatable Downtown LA data build
+
+To acquire source datasets and generate the local city JSON in one step:
+
+```sh
+bash scripts/build-downtown-la.sh osm       # OSM streets + OSM building ways
+bash scripts/build-downtown-la.sh overture  # OSM streets + Overture building polygons
+```
+
+The second path requires DuckDB and Python 3 and uses a pinned, updatable
+Overture release. See [Overture pipeline](docs/OVERTURE.md). Neither download
+nor build has been confirmed against live services in this environment.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.

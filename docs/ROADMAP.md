@@ -7,6 +7,8 @@
 - [x] Import OSM road and building ways, preserving missing survey heights.
 - [x] Import optional GeoJSON footprints with multipolygons/holes and explicit height units.
 - [x] Unit tests and CI definition.
+- [x] Optional Overture GeoParquet-to-GeoJSON data acquisition script with release provenance.
+- [x] Synthetic end-to-end smoke tests for OSM and GeoJSON ingestion (CI configured).
 - [ ] Execute and validate a real Downtown LA Overpass download (not yet possible in this environment).
 - [ ] Capture provenance, source snapshots, and coverage metrics as a reproducible manifest.
 - [ ] Add robust multipolygon/road topology ingestion and bounds clipping.

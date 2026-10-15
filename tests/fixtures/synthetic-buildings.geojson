@@ -1,0 +1,59 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "synthetic-b1",
+      "properties": {
+        "name": "Synthetic testing building",
+        "HEIGHT": 100,
+        "building:levels": 4
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              -118.251,
+              34.05
+            ],
+            [
+              -118.2505,
+              34.05
+            ],
+            [
+              -118.2505,
+              34.0505
+            ],
+            [
+              -118.251,
+              34.0505
+            ],
+            [
+              -118.251,
+              34.05
+            ]
+          ],
+          [
+            [
+              -118.2509,
+              34.0501
+            ],
+            [
+              -118.2508,
+              34.0501
+            ],
+            [
+              -118.2508,
+              34.0502
+            ],
+            [
+              -118.2509,
+              34.0501
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

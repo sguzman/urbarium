@@ -31,3 +31,28 @@ jobs:
           assert city['provenance'][0]['license'] == 'ODbL-1.0'
           print('Smoke test: validated 1 street and 1 building')
           PY
+      - name: GeoJSON replacement smoke test (no network)
+        run: |
+          cargo run -- ingest \
+            --region regions/downtown-la.json \
+            --osm tests/fixtures/synthetic-overpass.json \
+            --buildings-geojson tests/fixtures/synthetic-buildings.geojson \
+            --height-unit feet \
+            --source-name "Synthetic fixture" \
+            --source-url "https://example.invalid/test-data" \
+            --source-license "synthetic test data" \
+            --out /tmp/urbarium-geojson-smoke.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/urbarium-geojson-smoke.json', encoding='utf-8') as handle:
+              city = json.load(handle)
+          assert len(city['streets']) == 1
+          assert len(city['buildings']) == 1
+          building = city['buildings'][0]
+          assert building['source_id'] == 'geojson:synthetic-b1'
+          assert abs(building['height_m'] - 30.48) < 0.001
+          assert len(building['polygons'][0]['rings']) == 2
+          assert building['levels'] == 4
+          assert len(city['provenance']) == 2
+          print('GeoJSON replacement test: validated footprint, hole, feet and provenance')
+          PY
