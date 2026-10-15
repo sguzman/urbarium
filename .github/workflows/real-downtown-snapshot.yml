@@ -1,6 +1,6 @@
 name: Downtown LA live-data verification
 
-# First addition triggers one bounded live fetch. Repeat only on manual dispatch,
+# Addition or revision triggers one bounded live fetch (retry: explicit User-Agent + fallback). Repeat only on manual dispatch,
 # not for every normal code push; public Overpass servers are rate-limited.
 on:
   push:
