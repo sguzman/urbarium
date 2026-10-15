@@ -4,12 +4,14 @@
 //! This is *not* yet full 3D physics or elevation-aware pavement collision.
 
 use crate::{City, Point};
+use crate::terrain::TerrainGrid;
 
 #[derive(Debug)]
 struct Obstacle {
     rings: Vec<Vec<Point>>,
     bounds: [f64; 4],
     height_m: f64,
+    base_m: f64,
 }
 
 /// Precomputed footprint obstacles, built once after loading a city slice.
@@ -21,6 +23,9 @@ pub struct CollisionWorld {
 
 impl CollisionWorld {
     pub fn from_city(city: &City) -> Self {
+        Self::from_city_with_terrain(city,None)
+    }
+    pub fn from_city_with_terrain(city:&City,terrain:Option<&TerrainGrid>) -> Self {
         let lower = city.region.project(city.region.bbox[0], city.region.bbox[1]);
         let upper = city.region.project(city.region.bbox[2], city.region.bbox[3]);
         let mut world = Self {
@@ -44,8 +49,12 @@ impl CollisionWorld {
                     bbox[2]=bbox[2].max(p.x);
                     bbox[3]=bbox[3].max(p.z);
                 }
+                let center_x=polygon.rings[0].iter().map(|p|p.x).sum::<f64>()/polygon.rings[0].len() as f64;
+                let center_z=polygon.rings[0].iter().map(|p|p.z).sum::<f64>()/polygon.rings[0].len() as f64;
+                let base_m=terrain.map(|grid|grid.sample(&city.region,center_x,center_z) as f64)
+                    .unwrap_or(0.0);
                 world.obstacles.push(Obstacle {
-                    rings:polygon.rings.clone(), bounds:bbox, height_m:height
+                    rings:polygon.rings.clone(), bounds:bbox, height_m:height, base_m
                 });
             }
         }
@@ -64,7 +73,7 @@ impl CollisionWorld {
             return true;
         }
         self.obstacles.iter().any(|building| {
-            if eye_y > building.height_m + 0.3 {return false;}
+            if eye_y > building.base_m + building.height_m + 0.3 {return false;}
             let [a,b,c,d]=building.bounds;
             if x+radius < a || x-radius > c || z+radius < b || z-radius > d {
                 return false;

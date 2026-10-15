@@ -7,10 +7,12 @@ use web_time::Instant;
 
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
-use urbarium::geometry::{mesh_city, HeightPolicy, Mesh, Vertex};
+use urbarium::geometry::{HeightPolicy, Mesh};
 use urbarium::roads::{mesh_streets, SurfaceKind};
 use urbarium::City;
 use urbarium::collision::CollisionWorld;
+use urbarium::terrain::TerrainGrid;
+use urbarium::Region;
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -44,18 +46,19 @@ struct Camera {
     yaw: f32,
     pitch: f32,
     speed: f32,
+    eye_clearance: f32,
 }
 impl Default for Camera {
     fn default() -> Self {
         Self { position: Vec3::new(0.0, 1.7, 0.0),
-            yaw: std::f32::consts::PI, pitch: 0.0, speed: 3.4 }
+            yaw: std::f32::consts::PI, pitch: 0.0, speed: 3.4, eye_clearance:1.7 }
     }
 }
 impl Camera {
     /// Select a real roadway centerline nearest Downtown LA's reference point.
     /// Do not start the viewer 95 meters over the city or inside an arbitrary
     /// building mass. This is a flat-ground, non-collision-aware preview.
-    fn spawn_at_street(city:&City, world:&CollisionWorld) -> Self {
+    fn spawn_at_street(city:&City, world:&CollisionWorld, terrain:&TerrainGrid) -> Self {
         let mut camera=Self::default();
         let mut closest=f64::INFINITY;
         for street in &city.streets {
@@ -71,9 +74,10 @@ impl Camera {
                 let x=(pair[0].x+pair[1].x)*0.5;
                 let z=(pair[0].z+pair[1].z)*0.5;
                 let score=x*x+z*z;
-                if score<closest && !world.blocked(x,z,1.7,0.35) {
+                let eye=terrain.sample(&city.region,x,z) as f64 + 1.7;
+                if score<closest && !world.blocked(x,z,eye,0.35) {
                     closest=score;
-                    camera.position=Vec3::new(x as f32,1.7,z as f32);
+                    camera.position=Vec3::new(x as f32,eye as f32,z as f32);
                     camera.yaw=(dx as f32).atan2(dz as f32);
                 }
             }
@@ -95,7 +99,8 @@ impl Camera {
         self.yaw -= dx * 0.0025;
         self.pitch = (self.pitch - dy * 0.0025).clamp(-1.52, 1.52);
     }
-    fn move_by(&mut self, pressed: &HashSet<KeyCode>, elapsed: f32, world:Option<&CollisionWorld>) {
+    fn move_by(&mut self, pressed:&HashSet<KeyCode>, elapsed:f32,
+        world:Option<&CollisionWorld>, terrain:Option<(&TerrainGrid,&Region)>) {
         let ground_forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
         let right = Vec3::new(-ground_forward.z, 0.0, ground_forward.x);
         let mut delta = Vec3::ZERO;
@@ -117,18 +122,19 @@ impl Camera {
             let boost = if pressed.contains(&KeyCode::ShiftLeft) ||
                 pressed.contains(&KeyCode::ShiftRight) { 4.0 } else { 1.0 };
             let movement=delta.normalize() * elapsed.min(0.08) * self.speed * boost;
-            let target_y=(self.position.y+movement.y).max(1.7);
-            if let Some(world)=world {
-                let start=[self.position.x as f64,self.position.z as f64];
-                let end=[start[0]+movement.x as f64,start[1]+movement.z as f64];
-                let resolved=world.move_sliding(start,end,target_y as f64,0.35);
-                self.position.x=resolved[0] as f32;
-                self.position.z=resolved[1] as f32;
-            } else {
-                self.position.x+=movement.x;
-                self.position.z+=movement.z;
-            }
-            self.position.y=target_y;
+            self.eye_clearance=(self.eye_clearance+movement.y).max(1.7);
+            let start=[self.position.x as f64,self.position.z as f64];
+            let end=[start[0]+movement.x as f64,start[1]+movement.z as f64];
+            let ground_at=|x:f64,z:f64| -> f32 {
+                terrain.map(|(grid,region)| grid.sample(region,x,z)).unwrap_or(0.0)
+            };
+            let eye=ground_at(end[0],end[1])+self.eye_clearance;
+            let resolved=if let Some(world)=world {
+                world.move_sliding(start,end,eye as f64,0.35)
+            }else{end};
+            self.position.x=resolved[0] as f32;
+            self.position.z=resolved[1] as f32;
+            self.position.y=ground_at(resolved[0],resolved[1])+self.eye_clearance;
         }
     }
 }
@@ -148,28 +154,17 @@ fn append_part(
     Ok(())
 }
 
-fn combined_city(city: &City) -> Result<(Vec<GpuVertex>, Vec<u32>), String> {
-    let (buildings, building_report) = mesh_city(city, HeightPolicy::default())?;
-    let (roads, road_report) = mesh_streets(city)?;
+fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec<u32>),String> {
+    let (buildings,building_report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
+    let (mut roads,road_report)=mesh_streets(city)?;
+    terrain.drape_roads(&city.region,&mut roads);
     if building_report.buildings_meshed == 0 || building_report.buildings_skipped > 0 {
         return Err(format!("city has {} buildings meshed, {} skipped",
             building_report.buildings_meshed, building_report.buildings_skipped));
     }
     let mut verts = Vec::new();
     let mut indices = Vec::new();
-    let lo = city.region.project(city.region.bbox[0], city.region.bbox[1]);
-    let hi = city.region.project(city.region.bbox[2], city.region.bbox[3]);
-    let ground = Mesh {
-        vertices: [
-            [lo.x as f32,-0.12,lo.z as f32],
-            [hi.x as f32,-0.12,lo.z as f32],
-            [lo.x as f32,-0.12,hi.z as f32],
-            [hi.x as f32,-0.12,hi.z as f32],
-        ].into_iter().map(|position| Vertex{
-            position,normal:[0.0,1.0,0.0]
-        }).collect(),
-        indices: vec![0,2,1,1,2,3],
-    };
+    let ground=terrain.mesh(&city.region)?;
     append_part(&ground,[0.39,0.44,0.42],&mut verts,&mut indices)?;
     append_part(&buildings,[0.71,0.76,0.81],&mut verts,&mut indices)?;
     for (kind,mesh) in roads.layers {
@@ -263,6 +258,33 @@ fn set_browser_frame_count(count: u64) {
 #[cfg(not(target_arch="wasm32"))]
 fn set_browser_frame_count(_: u64) {}
 
+async fn fetch_terrain() -> Result<TerrainGrid,String> {
+    #[cfg(target_arch="wasm32")]
+    {
+        let response=gloo_net::http::Request::get("./assets/downtown-la-terrain.json")
+            .send().await.map_err(|e|format!("DEM fetch: {e}"))?;
+        if !response.ok(){return Err(format!("DEM returned HTTP {}",response.status()));}
+        let data=response.text().await.map_err(|e|format!("DEM body: {e}"))?;
+        serde_json::from_str(&data).map_err(|e|format!("DEM JSON: {e}"))
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    {
+        let data=std::fs::read_to_string("data/processed/downtown-la-terrain.json")
+            .map_err(|e|format!("native viewer requires a terrain grid: {e}"))?;
+        serde_json::from_str(&data).map_err(|e|format!("DEM JSON: {e}"))
+    }
+}
+#[cfg(target_arch="wasm32")]
+fn set_terrain_size(points:usize) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-terrain-points",&points.to_string());
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_terrain_size(_:usize) {}
+
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -273,6 +295,8 @@ struct Graphics {
     depth: wgpu::TextureView,
     camera: Camera,
     collision: CollisionWorld,
+    terrain: TerrainGrid,
+    region: Region,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     vertices: wgpu::Buffer,
@@ -300,7 +324,7 @@ impl Graphics {
         self.depth=Self::depth_view(&self.device,self.config.width,self.config.height);
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
-        self.camera.move_by(pressed,dt,Some(&self.collision));
+        self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
         expose_camera_pose(&self.camera);
         let vp=self.camera.view_projection(self.config.width,self.config.height);
         self.queue.write_buffer(&self.camera_buffer,0,
@@ -364,7 +388,10 @@ async fn init_graphics(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) {
 async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<(), String> {
     info("Loading Downtown LA streets and buildings...");
     let city=fetch_city().await?;
-    let (vertices,indices)=combined_city(&city)?;
+    let terrain=fetch_terrain().await?;
+    terrain.validate(&city.region)?;
+    set_terrain_size(terrain.heights_m.len());
+    let (vertices,indices)=combined_city(&city,&terrain)?;
     info("Connecting to WebGPU or WebGL2...");
     let instance=wgpu::util::new_instance_with_webgpu_detection(
         wgpu::InstanceDescriptor::new_without_display_handle()).await;
@@ -391,9 +418,9 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         .ok_or("No compatible GPU surface configuration")?;
     config.present_mode=wgpu::PresentMode::Fifo;
     surface.configure(&device,&config);
-    let collision=CollisionWorld::from_city(&city);
+    let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
     set_collision_count(collision.obstacle_count());
-    let camera=Camera::spawn_at_street(&city,&collision);
+    let camera=Camera::spawn_at_street(&city,&collision,&terrain);
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label:Some("Camera uniform"),
         contents:bytemuck::bytes_of(&CameraUniform {
@@ -466,11 +493,11 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     });
     let index_count=u32::try_from(indices.len()).map_err(|_|"scene has too many indices")?;
     let graphics=Graphics {
-        window,surface,device,queue,config,pipeline,depth,camera,collision,
+        window,surface,device,queue,config,pipeline,depth,camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,
     };
-    info(&format!("Downtown LA ready ({backend}) — building walls enabled, WASD walk, Shift run, E/Q fly, Esc release"));
+    info(&format!("Downtown LA ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release"));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }
@@ -633,6 +660,7 @@ fn expose_camera_pose(camera:&Camera) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
             let _=el.set_attribute("data-camera-y",&camera.position.y.to_string());
+            let _=el.set_attribute("data-eye-clearance",&camera.eye_clearance.to_string());
             let _=el.set_attribute("data-camera-yaw",&camera.yaw.to_string());
             let _=el.set_attribute("data-camera-x",&camera.position.x.to_string());
             let _=el.set_attribute("data-camera-z",&camera.position.z.to_string());
@@ -696,12 +724,20 @@ mod tests {
     }
 
     #[test]
+    fn camera_cannot_descend_below_eye_height() {
+        let mut camera=Camera::default();
+        let mut keys=HashSet::new();
+        keys.insert(KeyCode::KeyQ);
+        camera.move_by(&keys,1.0,None,None);
+        assert!((camera.eye_clearance-1.7).abs()<0.001);
+    }
+    #[test]
     fn camera_moves_and_pitch_stays_bounded() {
         let mut camera=Camera::default();
         let before=camera.position;
         let mut keys=HashSet::new();
         keys.insert(KeyCode::KeyW);
-        camera.move_by(&keys,0.04,None);
+        camera.move_by(&keys,0.04,None,None);
         assert_ne!(camera.position,before);
         camera.mouse_look(0.0,1e6);
         assert!(camera.pitch >= -1.52);
