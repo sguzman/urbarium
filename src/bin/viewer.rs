@@ -213,6 +213,17 @@ fn info(message: &str) {
     eprintln!("Urbarium: {message}");
 }
 
+#[cfg(target_arch="wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
+export function publish_city_for_minimap(data) {
+    window.__urbariumCityJson = data;
+    window.dispatchEvent(new Event('urbarium-city-ready'));
+}
+")]
+extern "C" {
+    fn publish_city_for_minimap(data:&str);
+}
+
 async fn fetch_city() -> Result<City, String> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -222,7 +233,13 @@ async fn fetch_city() -> Result<City, String> {
             return Err(format!("city asset returned HTTP {}",response.status()));
         }
         let data=response.text().await.map_err(|e| format!("city body: {e}"))?;
-        serde_json::from_str(&data).map_err(|e| format!("city JSON: {e}"))
+        let city:City=serde_json::from_str(&data)
+            .map_err(|e|format!("city JSON: {e}"))?;
+        // The minimap previously repeated this request independently.
+        // Share this exact, already validated payload with the browser UI.
+        // This prevents a second large fetch from failing on poor networks.
+        publish_city_for_minimap(&data);
+        Ok(city)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
