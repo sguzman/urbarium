@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "region_id": "downtown-la",
+  "description": "Initial georeferenced landmark label anchors; no custom 3D building models.",
+  "coordinate_order": "longitude,latitude WGS84",
+  "landmarks": [
+    {
+      "id": "city-hall",
+      "name": "Los Angeles City Hall",
+      "short": "City Hall",
+      "kind": "civic",
+      "coordinates": [
+        -118.2429,
+        34.05378
+      ],
+      "source": "OpenStreetMap",
+      "source_url": "https://mapcarta.com/23082424"
+    },
+    {
+      "id": "disney-hall",
+      "name": "Walt Disney Concert Hall",
+      "short": "Disney Hall",
+      "kind": "culture",
+      "coordinates": [
+        -118.25,
+        34.05528
+      ],
+      "source": "Wikidata/Wikipedia",
+      "source_url": "https://en.wikipedia.org/wiki/Walt_Disney_Concert_Hall"
+    },
+    {
+      "id": "the-broad",
+      "name": "The Broad",
+      "short": "The Broad",
+      "kind": "culture",
+      "coordinates": [
+        -118.2506,
+        34.05446
+      ],
+      "source": "OpenStreetMap",
+      "source_url": "https://mapcarta.com/35964260"
+    },
+    {
+      "id": "grand-park",
+      "name": "Gloria Molina Grand Park",
+      "short": "Grand Park",
+      "kind": "park",
+      "coordinates": [
+        -118.24559,
+        34.05543
+      ],
+      "source": "OpenStreetMap",
+      "source_url": "https://mapcarta.com/W161929504"
+    },
+    {
+      "id": "angels-flight",
+      "name": "Angels Flight Railway",
+      "short": "Angels Flight",
+      "kind": "railway",
+      "coordinates": [
+        -118.25027,
+        34.05139
+      ],
+      "source": "OpenStreetMap",
+      "source_url": "https://mapcarta.com/22993702"
+    },
+    {
+      "id": "grand-central-market",
+      "name": "Grand Central Market",
+      "short": "Grand Central Market",
+      "kind": "market",
+      "coordinates": [
+        -118.249,
+        34.05086
+      ],
+      "source": "OpenStreetMap",
+      "source_url": "https://mapcarta.com/W904226187"
+    },
+    {
+      "id": "bradbury",
+      "name": "Bradbury Building",
+      "short": "Bradbury Building",
+      "kind": "historic",
+      "coordinates": [
+        -118.24786,
+        34.05051
+      ],
+      "source": "OpenStreetMap",
+      "source_url": "https://mapcarta.com/23006560"
+    },
+    {
+      "id": "central-library",
+      "name": "Los Angeles Central Library",
+      "short": "Central Library",
+      "kind": "culture",
+      "coordinates": [
+        -118.255,
+        34.0506
+      ],
+      "source": "OpenStreetMap",
+      "source_url": "https://mapcarta.com/26240424"
+    }
+  ]
+}
