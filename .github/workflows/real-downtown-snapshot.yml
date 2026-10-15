@@ -1,0 +1,72 @@
+name: Downtown LA live-data verification
+
+# First addition triggers one bounded live fetch. Repeat only on manual dispatch,
+# not for every normal code push; public Overpass servers are rate-limited.
+on:
+  push:
+    paths:
+      - .github/workflows/real-downtown-snapshot.yml
+  workflow_dispatch:
+
+jobs:
+  verify-live-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Download bounded OSM Downtown LA sample
+        run: bash scripts/fetch-downtown-la.sh
+      - name: Import real-world streets and footprints
+        run: |
+          cargo run --release -- ingest \
+            --region regions/downtown-la.json \
+            --osm data/raw/downtown-la-overpass.json \
+            --out data/processed/downtown-la.json
+      - name: Verify and report source quality
+        run: |
+          python3 - <<'PY'
+          import collections, hashlib, json, pathlib
+          source = pathlib.Path("data/raw/downtown-la-overpass.json")
+          city_path = pathlib.Path("data/processed/downtown-la.json")
+          source_data = json.loads(source.read_text(encoding="utf-8"))
+          city = json.loads(city_path.read_text(encoding="utf-8"))
+          streets, buildings = city["streets"], city["buildings"]
+          counts = collections.Counter(s["kind"] for s in streets)
+          height_count = sum(b["height_m"] is not None for b in buildings)
+          rel_count = sum(b["source_id"].startswith("osm:relation:") for b in buildings)
+          topology_count = sum(bool(s.get("osm_node_ids")) for s in streets)
+          assert source_data.get("elements"), "No OSM elements returned"
+          assert len(streets) > 10, "Suspiciously few streets"
+          assert len(buildings) > 10, "Suspiciously few buildings"
+          assert all(len(s["path"]) >= 2 for s in streets)
+          assert all(b["polygons"] for b in buildings)
+          assert all(b["height_m"] is None or b["height_m"] > 0 for b in buildings)
+          report = {
+            "region": city["region"],
+            "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "source_elements": len(source_data["elements"]),
+            "streets": len(streets),
+            "street_kinds": dict(counts.most_common()),
+            "streets_with_osm_nodes": topology_count,
+            "buildings": len(buildings),
+            "buildings_with_recorded_height": height_count,
+            "building_relations": rel_count,
+            "building_height_completeness_ratio": round(height_count / len(buildings), 4),
+            "provenance": city["provenance"],
+          }
+          pathlib.Path("data/processed/downtown-la-report.json").write_text(
+              json.dumps(report, indent=2) + "\n", encoding="utf-8")
+          print("URBARIUM_REAL_DATA_REPORT_START")
+          print(json.dumps(report, indent=2))
+          print("URBARIUM_REAL_DATA_REPORT_END")
+          PY
+      - name: Package bounded city slice
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: downtown-la-osm-city-slice
+          path: |
+            data/processed/downtown-la.json
+            data/processed/downtown-la-report.json
+          retention-days: 7
