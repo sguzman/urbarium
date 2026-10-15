@@ -37,7 +37,12 @@ with sync_playwright() as p:
     page.on("requestfailed", lambda r: print("REQUEST FAILED:", r.url, r.failure))
     page.on("response", lambda r: print("HTTP ERROR:", r.status, r.url)
             if r.status >= 400 else None)
-    page.goto("http://127.0.0.1:8010/", wait_until="domcontentloaded")
+    qa_mode = "webgl2" if force_webgl else "webgpu"
+    page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}", wait_until="domcontentloaded")
+    page.wait_for_function(
+        "(mode) => document.querySelector('#renderer-select')?.value === mode",
+        arg=qa_mode, timeout=8000
+    )
     try:
         page.wait_for_selector("canvas:not(#minimap-canvas)", timeout=30000)
         page.wait_for_function(
@@ -46,6 +51,8 @@ with sync_playwright() as p:
             " || e.textContent.includes('Viewer error')); }",
             timeout=60000,
         )
+        assert page.locator("#renderer-select").count() == 1
+        assert page.locator("#renderer-health").count() == 1
         state = page.locator("#status").inner_text()
         print("Browser status:", state)
         selected_backend = page.locator("#status").get_attribute("data-gpu-backend")
@@ -56,6 +63,10 @@ with sync_playwright() as p:
             )
         if "Viewer error" in state:
             raise AssertionError(state)
+        if not force_webgl:
+            assert "BrowserWebGpu" in selected_backend, selected_backend
+        else:
+            assert selected_backend == "Gl", selected_backend
         assert not errors, errors
         canvas = page.locator("canvas:not(#minimap-canvas)")
         page.wait_for_function(
@@ -183,6 +194,12 @@ with sync_playwright() as p:
         camera_x=float(page.locator("#status").get_attribute("data-camera-x"))
         assert abs(player_x-camera_x) < 2.0, (player_x,camera_x)
         print("Minimap scene, camera marker and zoom controls passed")
+        page.wait_for_function(
+            "() => document.querySelector('#renderer-health')?.textContent.includes('renderer active')",
+            timeout=6000,
+        )
+        assert page.locator("#renderer-health").is_visible()
+        print("User-visible 3D frame health counter passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
         print("PAGE ERRORS:", errors)
