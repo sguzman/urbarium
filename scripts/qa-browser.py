@@ -7,10 +7,16 @@ with sync_playwright() as p:
     browser = p.chromium.launch(
         headless=False,
         args=[
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--window-size=1280,800",
             "--enable-unsafe-webgpu",
-            "--enable-features=WebGPUDeveloperFeatures",
-            "--use-angle=swiftshader",
-            "--disable-gpu-sandbox",
+            "--enable-features=Vulkan",
+            "--use-angle=vulkan",
+            "--use-vulkan=swiftshader",
+            "--use-webgpu-adapter=swiftshader",
+            "--disable-vulkan-surface",
         ],
     )
     page = browser.new_page(viewport={"width": 1280, "height": 800})

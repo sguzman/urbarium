@@ -76,6 +76,10 @@ jobs:
         run: |
           python3 -m pip install playwright pillow
           python3 -m playwright install --with-deps chromium
+      - name: Install software Vulkan presentation dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers xvfb xauth
       - name: QA viewer in browser with WebGPU
         run: |
           python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
