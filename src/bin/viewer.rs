@@ -533,7 +533,12 @@ impl ApplicationHandler<AppEvent> for App {
                     if key==KeyCode::Escape {
                         #[cfg(not(target_arch="wasm32"))]
                         self.release_mouse();
-                        // Browser Esc releases pointer lock via pointerlockchange.
+                        #[cfg(target_arch="wasm32")]
+                        if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+                            // Explicitly release even in automated Chromium sessions.
+                            // The pointerlockchange listener then updates UI/input.
+                            doc.exit_pointer_lock();
+                        }
                     }
                 }
             },
