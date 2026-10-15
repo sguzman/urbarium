@@ -117,6 +117,12 @@ the source city JSON or claim the estimate is real.
 
 ## Generate street/path surfaces
 
+The flat-world preview places asphalt above crossing pedestrian ribbons.
+The independent footway centerlines are preserved for future sidewalks and
+navigation, rather than being mistaken for perfectly aligned painted
+road markings. Actual curb edges and elevation remain future data tasks.
+
+
 ```sh
 cargo run --release -- mesh-roads \
   --city data/processed/downtown-la.json \
@@ -159,7 +165,7 @@ falls back to WebGL2 if WebGPU is unavailable. Automated Chromium QA must
 render visible pixels through both paths before publishing to GitHub Pages.
 
 The browser loads `assets/downtown-la.json` and supports WASD, Shift, E/Q,
-mouse drag and arrow-key camera navigation. Automated Chromium QA has passed canvas startup, WebGPU rendering
+pointer-locked FPS mouse look, with a 1.7 m eye-height spawn on a mapped Downtown LA roadway. Click the viewer once to capture the mouse; Esc releases it. Automated Chromium QA has passed canvas startup, WebGPU rendering
 initialization and WASD input. Terrain, grade separation, true intersection
 surfaces and player collision are pending.
 

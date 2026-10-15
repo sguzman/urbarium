@@ -17,6 +17,7 @@
     h1 {margin:0 0 5px;font-size:18px;letter-spacing:.06em;}
     p {margin:3px 0;font-size:12px;line-height:1.5;color:#cad3d8;}
     #status {color:#d4eeb4;}
+    #input-state {color:#d6eced;}
     .footer {position:fixed;bottom:12px;left:18px;font-size:11px;color:#e6e5d5;
       background:rgba(8,17,24,.7);padding:7px;border-radius:7px;z-index:2;}
     a {color:#a3cfed;pointer-events:auto;}
@@ -26,7 +27,8 @@
   <div class="hud">
     <h1>URBARIUM <span style="color:#b6bbc5">/ Downtown LA</span></h1>
     <p id="status">Starting Rust / WebGPU viewer...</p>
-    <p>Click the city to focus. WASD move · Shift fast · E/Q up/down · Drag or arrow keys to look.</p>
+    <p id="input-state" data-pointer-locked="false">Click the city to capture mouse</p>
+    <p>Mouse looks · WASD walk · Shift run · E/Q fly · Esc releases</p>
   </div>
   <div class="footer">Geometry: <a href="https://overturemaps.org/">Overture Maps</a>
     · data subject to source licenses · procedural massing, not surveyed facades</div>

@@ -163,10 +163,13 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
             continue;
         };
         // Render-only raised surface offsets avoid coplanar Z-fighting.
+        // Roads should visually cover crossing footpath ribbons on the flat
+        // preview. Distinct mapping of footways is not a route overlay and
+        // must not be draped over asphalt without surveyed grade information.
         let height=match kind {
-            SurfaceKind::Road=>0.025,
-            SurfaceKind::Walk=>0.045,
-            SurfaceKind::Steps=>0.065,
+            SurfaceKind::Road=>0.08,
+            SurfaceKind::Walk=>0.035,
+            SurfaceKind::Steps=>0.040,
             SurfaceKind::Rail=>0.085,
         };
         let Some(strip)=ribbon(&street.path,width,height)? else {
@@ -223,8 +226,8 @@ pub fn write_road_mtl(mut out: impl Write) -> io::Result<()> {
     writeln!(out,"# Neutral debug materials, not a measured surface color")?;
     for (name,color) in [
         ("road_asphalt",[0.24,0.26,0.29]),
-        ("walk_pavement",[0.63,0.61,0.55]),
-        ("steps_stone",[0.79,0.67,0.48]),
+        ("walk_pavement",[0.58,0.60,0.59]),
+        ("steps_stone",[0.65,0.62,0.56]),
         ("rail_surface",[0.34,0.43,0.48]),
     ] {
         writeln!(out,"newmtl {name}")?;
@@ -282,6 +285,18 @@ mod tests {
         let join=(a[0]-10.0).hypot(a[2]);
         assert!(join <= 2.5+1e-4);
     }
+    #[test]
+    fn roads_occlude_pedestrian_centerlines_at_same_ground_height() {
+        let (scene,_) = mesh_streets(&city(vec![
+            street("residential",&[[0.,0.],[10.,0.]]),
+            street("footway",&[[5.,-10.],[5.,10.]]),
+        ])).unwrap();
+        assert!(scene.layers[&SurfaceKind::Road].vertices[0].position[1]
+            > scene.layers[&SurfaceKind::Walk].vertices[0].position[1]);
+        assert_eq!(scene.layers[&SurfaceKind::Walk].vertices.len(),4);
+        assert_eq!(scene.layers[&SurfaceKind::Road].vertices.len(),4);
+    }
+
     #[test]
     fn missing_unknown_and_subway_are_not_surface_roads() {
         let mut invalid=street("primary",&[[0.,0.],[10.,0.]]);
