@@ -268,15 +268,28 @@ source building polygon. The north-up minimap uses the same containment
 rule and palette, as do the world labels. Parks and other sites without a
 matching building receive small, explicitly **representative** ground discs;
 these are not surveyed park outlines or custom landmark architecture.
-The legend includes Civic, Legal, Library, Culture, Park, Transit, Market and
-Historic (not every category has a landmark in the nine-site pilot).
+The legend shows the actual number of mapped landmarks of each type,
+and category mode includes the category name directly in each landmark label.
+There are nine locations total: Stanley Mosk Courthouse is the **only Legal**
+landmark; Los Angeles City Hall is Civic, Central Library is Library,
+Walt Disney Concert Hall and The Broad are Culture, Grand Park is Park,
+Angels Flight is Transit, Grand Central Market is Market, and the Bradbury
+Building is Historic. A category is a semantic site type, not a legal
+permission claim.
 
-The **Sky** slider displays a procedural camera-oriented sky gradient and
-sun position, with dawn, noon, dusk and night previews. The **Now · LA**
-button samples Los Angeles local clock time at the moment it is pressed.
+The **Sky** displays a procedural camera-oriented gradient and sun position.
+On every page load it defaults to **Live · LA**: clock time comes from the
+`America/Los_Angeles` IANA time zone, including daylight-saving transitions.
+A fractional local hour is updated every animation frame so the sun moves
+continuously in real time rather than jumping every 15 minutes. The rendered
+clock label refreshes every second; the wall clock is resynchronized every
+10 seconds and whenever the tab comes back into focus. Dragging the slider
+switches to a frozen manual-preview time. **Resume LA** returns to automatic
+live time. Switching renderer or refreshing the page defaults to live again.
+
 Neither the sun position nor ambient lighting is a seasonally/astronomically
 accurate solar model; building shading still uses a fixed directional light.
-The slider setting and category toggle persist locally.
+The category-color toggle persists locally, while manual time does not.
 
 The nine pins/labels and these simple color-coded markers do **not** mean
 the actual landmarks are finished as distinctive high-fidelity structures.

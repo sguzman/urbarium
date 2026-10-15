@@ -39,7 +39,7 @@
       market:"#f28d87", historic:"#c2b2a5"
     });
   </script>
-  <script src="./minimap.js?v=categories-1" defer></script>
+  <script src="./minimap.js?v=categories-clock-2" defer></script>
   <link data-trunk rel="copy-file" href="web/stats.js">
   <script src="./stats.js" defer></script>
   <style>
@@ -117,7 +117,9 @@
     .scene-controls label {display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
     .scene-controls input[type=checkbox] {accent-color:#8fc2cf;}
     #time-of-day {width:128px;accent-color:#9bc9db;cursor:pointer;}
-    #time-label {min-width:49px;font-variant-numeric:tabular-nums;color:#ffdb9b;}
+    #time-label {min-width:86px;font-variant-numeric:tabular-nums;color:#ffdb9b;}
+    #time-la-now[aria-pressed="true"] {border-color:#7bcda3;background:#205041;color:#e1fff0;}
+    #time-of-day[data-clock-mode="live"] {accent-color:#80d0aa;}
     #time-la-now,#refresh-geography {background:#203847;border:1px solid #547081;
       border-radius:5px;color:#eaf3f8;padding:4px 7px;cursor:pointer;}
     #geodata-cache-state {color:#accbc5;font-size:11px;}
@@ -181,10 +183,12 @@
         Landmark colors
       </label>
       <label for="time-of-day">Sky
-        <input id="time-of-day" type="range" min="0" max="24" step=".25" value="12">
+        <input id="time-of-day" type="range" min="0" max="24" step=".25" value="12"
+          data-clock-mode="live" aria-label="Los Angeles time of day; changing the slider pauses live clock">
       </label>
-      <span id="time-label">12:00</span>
-      <button id="time-la-now" type="button" title="Set the preview to current time in Los Angeles">Now · LA</button>
+      <span id="time-label">LA time...</span>
+      <button id="time-la-now" type="button" aria-pressed="true"
+        title="Resume live Los Angeles time, updated continuously">Live · LA</button>
     </div>
     <div id="landmark-legend" class="landmark-legend" hidden aria-label="Landmark type colors"></div>
     <div class="scene-controls">
@@ -240,12 +244,28 @@
       for(const [kind,color] of Object.entries(colors)){
         const item=document.createElement("span");
         item.className="legend-entry";
+        item.dataset.kind=kind;
         const dot=document.createElement("span");
         dot.className="legend-dot";
         dot.style.setProperty("--legend-color",color);
-        item.append(dot,document.createTextNode(kind==="railway"?"Transit":kind[0].toUpperCase()+kind.slice(1)));
+        const label=document.createElement("span");
+        label.className="legend-label";
+        label.textContent=kind==="railway"?"Transit":kind[0].toUpperCase()+kind.slice(1);
+        item.append(dot,label);
         legend.append(item);
       }
+      window.addEventListener("urbarium-landmarks-ready",event=>{
+        const counts=event.detail?.counts||{};
+        for(const entry of legend.querySelectorAll(".legend-entry")){
+          const kind=entry.dataset.kind;
+          const count=Number(counts[kind]||0);
+          entry.hidden=count===0;
+          const label=entry.querySelector(".legend-label");
+          const title=kind==="railway"?"Transit":kind[0].toUpperCase()+kind.slice(1);
+          label.textContent=title+" ("+count+")";
+          entry.title=title+": "+count+" mapped "+(count===1?"landmark":"landmarks");
+        }
+      });
       function setLandmarkColors(){
         const visible=landmarkToggle.checked;
         landmarkToggle.setAttribute("data-visible",String(visible));
@@ -257,27 +277,91 @@
       setLandmarkColors();
       const sky=document.getElementById("time-of-day");
       const skyLabel=document.getElementById("time-label");
-      function setSky(value){
-        const n=Number(value);
-        if(!Number.isFinite(n))return;
-        sky.value=String(n);
-        sky.setAttribute("data-hour",String(n));
-        skyLabel.textContent=String(Math.floor(n)%24).padStart(2,"0")+":"+
-          String(Math.round((n%1)*60)).padStart(2,"0");
-        try{localStorage.setItem("urbarium-sky-hour",String(n));}catch(_){}
-      }
-      let initial=12;
-      try{initial=Number(localStorage.getItem("urbarium-sky-hour")??12);}catch(_){}
-      setSky(Math.max(0,Math.min(24,initial)));
-      sky.addEventListener("input",()=>setSky(sky.value));
-      document.getElementById("time-la-now").addEventListener("click",()=>{
-        const parts=new Intl.DateTimeFormat("en-US",{
-          timeZone:"America/Los_Angeles",hour:"2-digit",minute:"2-digit",
-          hourCycle:"h23"
-        }).formatToParts(new Date());
-        const val=part=>Number(parts.find(p=>p.type===part)?.value||0);
-        setSky(Math.round((val("hour")+val("minute")/60)*4)/4);
+      const liveButton=document.getElementById("time-la-now");
+      // Live by default on EVERY page load, regardless of yesterday's manual
+      // preview. Manual dragging freezes the sky until Live · LA is selected.
+      let skyMode="live", liveHour=12, clockSample=performance.now();
+      let lastSecond=-1, lastSliderMinute=-1, skyLoopStarted=false;
+      const laClock=new Intl.DateTimeFormat("en-US",{
+        timeZone:"America/Los_Angeles",hour:"2-digit",minute:"2-digit",
+        second:"2-digit",hourCycle:"h23"
       });
+      const pad=n=>String(n).padStart(2,"0");
+      function syncLaClock(){
+        const now=new Date();
+        const parts=laClock.formatToParts(now);
+        const value=type=>Number(parts.find(p=>p.type===type)?.value??0);
+        liveHour=value("hour")+value("minute")/60+
+          (value("second")+now.getMilliseconds()/1000)/3600;
+        clockSample=performance.now();
+      }
+      function writeHour(hour){
+        // Fractional hours go directly to the Rust uniform every animation
+        // frame; no 15-minute quantization, so the sun never jumps in steps.
+        const n=((hour%24)+24)%24;
+        sky.dataset.hour=n.toFixed(9);
+        return n;
+      }
+      function setMode(mode){
+        skyMode=mode;
+        sky.dataset.clockMode=mode;
+        liveButton.setAttribute("aria-pressed",String(mode==="live"));
+        liveButton.textContent=mode==="live"?"Live · LA":"Resume LA";
+      }
+      function manualSky(value){
+        const hour=Number(value);
+        if(!Number.isFinite(hour))return;
+        setMode("manual");
+        const n=writeHour(hour);
+        skyLabel.textContent=pad(Math.floor(n))+":"+
+          pad(Math.round((n%1)*60)%60)+" · preview";
+      }
+      function resumeLive(){
+        syncLaClock();
+        setMode("live");
+        lastSecond=-1;
+        lastSliderMinute=-1;
+        writeHour(liveHour);
+        // Only one RAF chain per tab, including repeated Resume clicks.
+        if(!skyLoopStarted){
+          skyLoopStarted=true;
+          tickSky(performance.now());
+        }
+      }
+      function tickSky(now){
+        if(skyMode==="live"){
+          // performance.now is monotonic between LA timezone re-samples.
+          // Refresh from the actual wall clock periodically (and on focus)
+          // to handle system clock changes, daylight-saving transitions and
+          // background-tab suspension without drifting.
+          const n=writeHour(liveHour+(now-clockSample)/3600000);
+          const seconds=Math.floor(n*3600);
+          if(seconds!==lastSecond){
+            skyLabel.textContent=pad(Math.floor(seconds/3600))+":"+
+              pad(Math.floor((seconds%3600)/60))+":"+pad(seconds%60)+" LA";
+            lastSecond=seconds;
+          }
+          const minute=Math.floor(n*60);
+          if(minute!==lastSliderMinute){
+            sky.value=String(n);
+            lastSliderMinute=minute;
+          }
+        }
+        requestAnimationFrame(tickSky);
+      }
+      sky.addEventListener("input",()=>manualSky(sky.value));
+      liveButton.addEventListener("click",resumeLive);
+      // The actual LA clock is refreshed regularly, not latched at startup.
+      setInterval(()=>{if(skyMode==="live")syncLaClock();},10000);
+      document.addEventListener("visibilitychange",()=>{
+        if(!document.hidden){
+          if(skyMode==="live")syncLaClock();
+        }
+      });
+      window.addEventListener("focus",()=>{
+        if(skyMode==="live")syncLaClock();
+      });
+      resumeLive();
       document.getElementById("refresh-geography").addEventListener("click",async()=>{
         const button=document.getElementById("refresh-geography");
         button.disabled=true;button.textContent="Clearing...";

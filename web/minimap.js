@@ -29,6 +29,9 @@
   const colors={road:"#668497",path:"#b6b9a5",rail:"#80a4ac",
     steps:"#b4aa91",buildings:"#425e68",ground:"#273f3d"};
   const palette=window.urbariumLandmarkPalette||{};
+  const kindNames={civic:"Civic",legal:"Legal",library:"Library",
+    culture:"Culture",park:"Park",railway:"Transit",market:"Market",
+    historic:"Historic"};
   const state={city:null,terrain:null,landmarks:[],categoryVisible:false,width:650,cache:false,
     cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0};
   function project(lon,lat,region) {
@@ -176,14 +179,22 @@
         if(layer) {
           const el=document.createElement("span");
           el.className="world-landmark";
+          el.dataset.kind=mark.kind;
           el.textContent=mark.short||mark.name;
-          el.title=mark.name+" · geographic landmark label (not a custom 3D model)";
+          el.title=mark.name+" · "+(kindNames[mark.kind]||mark.kind)+
+            " · geographic landmark label (not a custom 3D model)";
           layer.appendChild(el);
           mark.el=el;
         }
         return mark;
       });
     canvas.setAttribute("data-landmark-count",String(state.landmarks.length));
+    // Expose grounded classifications so the legend reports actual counts.
+    const counts=Object.create(null);
+    for(const mark of state.landmarks) counts[mark.kind]=(counts[mark.kind]||0)+1;
+    canvas.setAttribute("data-legal-count",String(counts.legal||0));
+    window.dispatchEvent(new CustomEvent("urbarium-landmarks-ready",
+      {detail:{counts}}));
     state.cache=false;
     setCategoryVisibility();
   }
@@ -193,6 +204,8 @@
     state.cache=false;
     for(const mark of state.landmarks) {
       if(mark.el) {
+        mark.el.textContent=(mark.short||mark.name)+
+          (state.categoryVisible?" · "+(kindNames[mark.kind]||mark.kind):"");
         if(state.categoryVisible)
           mark.el.style.setProperty("--lm-color",palette[mark.kind]||"#ffd77d");
         else mark.el.style.removeProperty("--lm-color");

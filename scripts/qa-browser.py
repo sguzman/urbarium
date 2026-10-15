@@ -264,6 +264,15 @@ with sync_playwright() as p:
             timeout=15000,
         )
         assert page.locator("#world-landmarks .world-landmark").count() == 9
+        assert page.locator("#minimap-canvas").get_attribute("data-legal-count") == "1"
+        categorized=page.locator("#world-landmarks .world-landmark").evaluate_all(
+            "(els) => Object.fromEntries(els.map(el => [el.textContent,el.dataset.kind]))")
+        assert categorized.get("Mosk Courthouse")=="legal",categorized
+        assert categorized.get("City Hall")=="civic",categorized
+        assert categorized.get("Central Library")=="library",categorized
+        assert categorized.get("Grand Park")=="park",categorized
+        assert categorized.get("Disney Hall")=="culture",categorized
+        assert sum(1 for kind in categorized.values() if kind=="legal")==1,categorized
         assert page.locator("#world-landmarks").is_visible()
         assert page.locator("#status").get_attribute("data-camera-pose") is not None
         print("Nine source-backed landmarks are mapped and anchored to the camera")
@@ -297,6 +306,12 @@ with sync_playwright() as p:
             timeout=8000,
         )
         assert page.locator("#landmark-legend").is_visible()
+        assert page.locator("#landmark-legend").inner_text().count("Legal (1)") == 1
+        assert "Culture (2)" in page.locator("#landmark-legend").inner_text()
+        labels=page.locator("#world-landmarks .world-landmark").evaluate_all(
+            "(els) => els.map(el => el.textContent)")
+        assert "Mosk Courthouse · Legal" in labels,labels
+        assert "City Hall · Civic" in labels,labels
         assert page.locator("#world-landmarks .world-landmark").count()==9
         page.locator("#layer-landmarks").uncheck()
         page.wait_for_function(
@@ -304,16 +319,49 @@ with sync_playwright() as p:
             timeout=8000,
         )
         print("Landmark category toggle, minmap category flag and legend passed")
-        page.locator("#time-of-day").evaluate("""e => {
+        sky=page.locator("#time-of-day")
+        assert sky.get_attribute("data-clock-mode")=="live"
+        assert page.locator("#time-la-now").get_attribute("aria-pressed")=="true"
+        page.wait_for_function(
+            "() => document.querySelector('#time-label')?.textContent.endsWith(' LA')",
+            timeout=8000)
+        def la_clock_error():
+            return page.evaluate("""() => {
+                const parts=new Intl.DateTimeFormat("en-US",{
+                    timeZone:"America/Los_Angeles",hour:"2-digit",
+                    minute:"2-digit",second:"2-digit",hourCycle:"h23"
+                }).formatToParts(new Date());
+                const v=k=>Number(parts.find(p=>p.type===k)?.value||0);
+                const target=(v("hour")*3600+v("minute")*60+v("second"));
+                const actual=Number(document.querySelector("#time-of-day").dataset.hour)*3600;
+                return Math.min(Math.abs(actual-target),
+                    86400-Math.abs(actual-target));
+            }""")
+        assert la_clock_error()<3, "Sky did not default to live Los Angeles civil time"
+        before_live=float(sky.get_attribute("data-hour"))
+        page.wait_for_function("""(before) => {
+            const now=Number(document.querySelector('#time-of-day')?.dataset.hour);
+            const progressed=(now-before+24)%24;
+            return progressed>0.00020 && progressed<0.004;
+        }""",arg=before_live,timeout=8000)
+        sky.evaluate("""e => {
             e.value="18";e.dispatchEvent(new Event("input",{bubbles:true}));
         }""")
-        assert page.locator("#time-label").inner_text()=="18:00"
-        assert page.locator("#time-of-day").get_attribute("data-hour")=="18"
-        page.locator("#time-of-day").evaluate("""e => {
+        assert sky.get_attribute("data-clock-mode")=="manual"
+        assert page.locator("#time-la-now").get_attribute("aria-pressed")=="false"
+        assert "18:00" in page.locator("#time-label").inner_text()
+        assert float(sky.get_attribute("data-hour"))==18
+        sky.evaluate("""e => {
             e.value="6";e.dispatchEvent(new Event("input",{bubbles:true}));
         }""")
-        assert page.locator("#time-label").inner_text()=="06:00"
-        print("Procedural sky time-of-day input and Rust-visible hour passed")
+        assert "06:00" in page.locator("#time-label").inner_text()
+        assert float(sky.get_attribute("data-hour"))==6
+        page.locator("#time-la-now").click()
+        page.wait_for_function(
+            "() => document.querySelector('#time-of-day')?.dataset.clockMode === 'live'",
+            timeout=8000)
+        assert la_clock_error()<3, "Resume LA did not return to live clock"
+        print("Live Los Angeles clock, continuously advancing sun, manual override and resume passed")
 
         page.wait_for_function(
             "() => document.querySelector('#world-landmarks')?.getAttribute('data-labels-mode') === 'view-frustum'",

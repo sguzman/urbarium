@@ -87,6 +87,12 @@ jobs:
           landmarks=json.loads((dist/"assets"/"landmarks.json").read_text())
           assert landmarks["region_id"] == city["region"]["id"]
           assert len(landmarks["landmarks"]) == 9
+          kinds={m["id"]:m["kind"] for m in landmarks["landmarks"]}
+          assert kinds["stanley-mosk"] == "legal"
+          assert sum(kind == "legal" for kind in kinds.values()) == 1
+          assert kinds["city-hall"] == "civic"
+          assert kinds["central-library"] == "library"
+          assert kinds["grand-park"] == "park"
           assert all(-118.258 <= m["coordinates"][0] <= -118.242 and
                      34.045 <= m["coordinates"][1] <= 34.056
                      for m in landmarks["landmarks"])
