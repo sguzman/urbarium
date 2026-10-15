@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Headless functional smoke check for the actual Rust/wgpu WebAssembly app."""
+import os
 import time
 from playwright.sync_api import sync_playwright
+
+force_webgl = os.environ.get("URBARIUM_QA_FORCE_WEBGL") == "1"
+print("Forced WebGL2 fallback QA:", force_webgl)
 
 with sync_playwright() as p:
     browser = p.chromium.launch(
@@ -20,6 +24,13 @@ with sync_playwright() as p:
         ],
     )
     page = browser.new_page(viewport={"width": 1280, "height": 800})
+    if force_webgl:
+        # Hide browser WebGPU before the WASM loader runs, exercising WebGL2.
+        page.add_init_script("""
+            Object.defineProperty(navigator, 'gpu', {
+                configurable: true, value: undefined
+            });
+        """)
     errors = []
     page.on("pageerror", lambda e: (errors.append(str(e)), print("PAGE ERROR:", str(e))))
     page.on("console", lambda m: print("CONSOLE", m.type, m.text))
@@ -37,6 +48,12 @@ with sync_playwright() as p:
         )
         state = page.locator("#status").inner_text()
         print("Browser status:", state)
+        selected_backend = page.locator("#status").get_attribute("data-gpu-backend")
+        print("Selected graphics backend:", selected_backend)
+        if force_webgl:
+            assert selected_backend is not None and "gl" in selected_backend.lower(), (
+                "WebGL2 fallback test selected " + repr(selected_backend)
+            )
         if "Viewer error" in state:
             raise AssertionError(state)
         assert not errors, errors
@@ -109,8 +126,10 @@ with sync_playwright() as p:
         print("CURRENT STATUS:", page.locator("#status").inner_text())
         print("RENDER STAGE:", page.locator("#status").get_attribute("data-render-stage"))
         print("RENDER FRAMES:", page.locator("#status").get_attribute("data-frame-count"))
+        print("GPU BACKEND:", page.locator("#status").get_attribute("data-gpu-backend"))
         print("DOCUMENT SCRIPTS:", page.locator("script").count())
         raise
     finally:
-        page.screenshot(path="/tmp/urbarium-browser-debug.png", full_page=True)
+        page.screenshot(path=("/tmp/urbarium-browser-debug-webgl.png"
+                              if force_webgl else "/tmp/urbarium-browser-debug.png"), full_page=True)
         browser.close()

@@ -84,6 +84,11 @@ jobs:
         run: |
           python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
           xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-browser.py
+      - name: QA WebGL2 fallback without browser WebGPU
+        env:
+          URBARIUM_QA_FORCE_WEBGL: "1"
+        run: |
+          xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-browser.py
       - name: Stage GitHub Pages site artifact after successful Chromium QA
         uses: actions/upload-pages-artifact@v4
         with:
@@ -93,7 +98,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: urbarium-browser-render
-          path: /tmp/urbarium-browser-debug.png
+          path: /tmp/urbarium-browser-debug*.png
           retention-days: 14
       - name: Package playable browser site
         if: success()
@@ -114,7 +119,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: urbarium-browser-debug
-          path: /tmp/urbarium-browser-debug.png
+          path: /tmp/urbarium-browser-debug*.png
           if-no-files-found: ignore
           retention-days: 7
 

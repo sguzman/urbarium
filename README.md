@@ -154,6 +154,10 @@ WebGPU/WASM runtime will use the same geometry pipeline.
 A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.
 It generates GPU buffers from the same Rust `mesh_city` and `mesh_streets`
 functions used by the OBJ/GLB exporters, without a second JS mesh generator.
+The browser selects native browser WebGPU when supported and automatically
+falls back to WebGL2 if WebGPU is unavailable. Automated Chromium QA must
+render visible pixels through both paths before publishing to GitHub Pages.
+
 The browser loads `assets/downtown-la.json` and supports WASD, Shift, E/Q,
 mouse drag and arrow-key camera navigation. Automated Chromium QA has passed canvas startup, WebGPU rendering
 initialization and WASD input. Terrain, grade separation, true intersection
