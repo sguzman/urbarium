@@ -20,7 +20,7 @@ strip = true
 default = []
 viewer = ["dep:wgpu", "dep:winit", "dep:glam", "dep:bytemuck",
           "dep:pollster", "dep:gloo-net", "dep:wasm-bindgen-futures",
-          "dep:web-sys", "dep:console_error_panic_hook"]
+          "dep:web-sys", "dep:console_error_panic_hook", "dep:web-time"]
 
 [dependencies.wgpu]
 version = "30.0.0"
@@ -28,6 +28,10 @@ optional = true
 
 [dependencies.winit]
 version = "0.30.13"
+optional = true
+
+[dependencies.web-time]
+version = "1.1"
 optional = true
 
 [dependencies.glam]
