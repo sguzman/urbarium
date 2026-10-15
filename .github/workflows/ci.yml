@@ -132,8 +132,8 @@ jobs:
           print("GLB binary structure validated")
           PY
       - name: Check native WebGPU viewer
-        run: cargo check --locked --features viewer --bin urbarium-viewer
+        run: cargo check --features viewer --bin urbarium-viewer
       - name: Install WASM compilation target
         run: rustup target add wasm32-unknown-unknown
       - name: Check WebGPU browser viewer
-        run: cargo check --locked --target wasm32-unknown-unknown --features viewer --bin urbarium-viewer
+        run: cargo check --target wasm32-unknown-unknown --features viewer --bin urbarium-viewer
