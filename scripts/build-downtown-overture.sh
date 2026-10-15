@@ -52,6 +52,21 @@ manifest = {
     ),
     "scoped_road_flag_spans": sum("overture:road_flags" in s["tags"]
         for s in data["streets"]),
+    "bridge_flag_spans_any_scope": sum(
+        any("is_bridge" in (rule.get("values") or []) for rule in
+            json.loads(s["tags"].get("overture:road_flags","[]")))
+        for s in data["streets"]
+    ),
+    "tunnel_flag_spans_any_scope": sum(
+        any("is_tunnel" in (rule.get("values") or []) for rule in
+            json.loads(s["tags"].get("overture:road_flags","[]")))
+        for s in data["streets"]
+    ),
+    "positive_stack_spans_any_scope": sum(
+        any(isinstance(rule.get("value"),int) and rule["value"]>0
+            for rule in json.loads(s["tags"].get("overture:level_rules","[]")))
+        for s in data["streets"]
+    ),
     "provenance": data["provenance"],
 }
 Path("data/processed/downtown-la-overture-report.json").write_text(
