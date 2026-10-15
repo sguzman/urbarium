@@ -95,3 +95,17 @@ jobs:
           assert sum(x.startswith('f ') for x in lines) >= 1
           print('Procedural OBJ geometry smoke test passed')
           PY
+      - name: Generate classified synthetic road/path meshes
+        run: |
+          cargo run -- mesh-roads \
+            --city /tmp/urbarium-overture-only-smoke.json \
+            --out /tmp/urbarium-transport.obj
+          python3 - <<'PY'
+          from pathlib import Path
+          obj=Path('/tmp/urbarium-transport.obj').read_text()
+          mtl=Path('/tmp/urbarium-transport.mtl').read_text()
+          assert 'g road_asphalt' in obj
+          assert sum(line.startswith('f ') for line in obj.splitlines()) >= 2
+          assert 'newmtl road_asphalt' in mtl
+          print('Classified road surface mesh smoke test passed')
+          PY

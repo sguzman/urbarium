@@ -26,6 +26,11 @@ jobs:
           cargo run --release -- mesh \
             --city data/processed/downtown-la.json \
             --out data/processed/downtown-la-buildings.obj
+      - name: Build classified transportation meshes
+        run: |
+          cargo run --release -- mesh-roads \
+            --city data/processed/downtown-la.json \
+            --out data/processed/downtown-la-transport.obj
       - name: Verify real data volume
         run: |
           python3 - <<'PY'
@@ -60,5 +65,7 @@ jobs:
           path: |
             data/processed/downtown-la.json
             data/processed/downtown-la-buildings.obj
+            data/processed/downtown-la-transport.obj
+            data/processed/urbarium-transport.mtl
             data/processed/downtown-la-overture-report.json
           retention-days: 7

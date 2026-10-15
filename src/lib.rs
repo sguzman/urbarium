@@ -3,6 +3,7 @@
 //! X increases east; Z increases north.
 
 pub mod geometry;
+pub mod roads;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

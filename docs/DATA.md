@@ -64,3 +64,16 @@ pedestrian footways, steps, and service routes. Source line types must be
 honored when constructing navigation and traversal rules. Road lines are
 clipped to the pilot bbox. Building polygon vertices can extend beyond the
 bbox and need canonical tile ownership when the world is partitioned.
+
+## Transportation mesh conventions
+
+The `mesh-roads` command converts the imported centerlines to narrow
+triangulated surface ribbons, grouped into separately addressable materials.
+It does not treat centerlines as actual curb/sidewalk edge surveys.
+OSM `width` and `lanes` tags are applied when plausible; otherwise the
+width comes from explicit class defaults. Overture `footway`, `steps`,
+`service`, road classes and surface rail render as distinct groups.
+`subway` and unknown categories do not create at-grade surfaces. Bridges,
+tunnels, multi-level rail and stair elevation need 3DEP/grade integration
+before being topologically or visually faithful. Intersections may overlap
+and should not yet be treated as collision-ready paving geometry.

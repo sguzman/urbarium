@@ -3,6 +3,7 @@ use std::error::Error;
 use std::fs;
 use std::io::BufWriter;
 use urbarium::geometry::{mesh_city, write_obj, HeightPolicy};
+use urbarium::roads::{mesh_streets, write_road_mtl, write_road_obj};
 use urbarium::{buildings_from_geojson, count_by_road_kind, from_overpass, streets_from_geojson, City, HeightUnit, Provenance, Region};
 
 fn main() {
@@ -17,11 +18,15 @@ fn run() -> Result<(), Box<dyn Error>> {
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         println!("Usage: urbarium ingest --region FILE --out FILE [--osm FILE] [--streets-geojson FILE] [--buildings-geojson FILE --height-unit meters|feet] [--source-name NAME --source-url URL --source-license LICENSE]");
         println!("       urbarium mesh --city FILE --out FILE [--missing-height M] [--meters-per-level M]");
+        println!("       urbarium mesh-roads --city FILE --out FILE");
         println!("All positions in output are local meters (X east, Z north).");
         return Ok(());
     }
     if args[0] == "mesh" {
         return run_mesh(&args[1..]);
+    }
+    if args[0] == "mesh-roads" {
+        return run_roads(&args[1..]);
     }
     if args[0] != "ingest" {
         return Err(format!("unsupported command: {}", args[0]).into());
@@ -136,5 +141,34 @@ fn run_mesh(args: &[String]) -> Result<(), Box<dyn Error>> {
     println!("Mesh: {} building(s), {} skipped, {} vertices, {} triangles, {} approximate heights; output: {}",
         report.buildings_meshed, report.buildings_skipped, report.vertices,
         report.triangles, report.buildings_with_approximate_heights, output);
+    Ok(())
+}
+
+fn run_roads(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mut opts=std::collections::BTreeMap::new();
+    let mut chunks=args.chunks_exact(2);
+    for chunk in &mut chunks {
+        if !["--city","--out"].contains(&chunk[0].as_str())
+            || opts.insert(chunk[0].as_str(),chunk[1].as_str()).is_some()
+        { return Err(format!("unknown or duplicate argument: {}",chunk[0]).into()); }
+    }
+    if !chunks.remainder().is_empty() || !opts.contains_key("--city") || !opts.contains_key("--out") {
+        return Err("mesh-roads requires --city FILE and --out FILE".into());
+    }
+    let city: City=serde_json::from_str(&fs::read_to_string(opts["--city"])?)?;
+    let (scene,report)=mesh_streets(&city).map_err(|err|format!("road meshes: {err}"))?;
+    let output=std::path::Path::new(opts["--out"]);
+    let dir=output.parent().filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(||std::path::Path::new("."));
+    fs::create_dir_all(dir)?;
+    write_road_mtl(BufWriter::new(fs::File::create(dir.join("urbarium-transport.mtl"))?))?;
+    write_road_obj(BufWriter::new(fs::File::create(output)?),&scene)?;
+    println!("Road meshes: {} surface spans ({} unknown/underground, {} degenerate), {} vertices, {} triangles",
+        report.segments_meshed,report.segments_skipped,report.segments_degenerate,
+        report.total_vertices,report.total_triangles);
+    for (kind,count) in report.by_surface {
+        println!("  {kind}: {count}");
+    }
+    println!("OBJ: {}; materials: {}",output.display(),dir.join("urbarium-transport.mtl").display());
     Ok(())
 }

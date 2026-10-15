@@ -100,6 +100,24 @@ heights are used without changes. Missing heights are *visualization-only*
 approximations (3.1 m per mapped level, otherwise 9 m); this does not alter
 the source city JSON or claim the estimate is real.
 
+## Generate street/path surfaces
+
+```sh
+cargo run --release -- mesh-roads \
+  --city data/processed/downtown-la.json \
+  --out data/processed/downtown-la-transport.obj
+```
+
+This outputs actual indexed ribbon geometry plus `urbarium-transport.mtl`
+with distinct materials for roads, walking paths, stairs, and surface rail.
+The ribbons have limited joins to prevent huge spikes at bends. Widths are
+only measured when explicitly tagged; all other widths are **visual
+defaults**, not surveyed right-of-way or sidewalk edges. Underground subway
+and unknown segments are deliberately excluded from the surface mesh.
+Crossings, junction patches, level changes, navigability and terrain are
+**not** yet solved. Keep road and building OBJ files together when inspecting
+the combined pilot model.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.
