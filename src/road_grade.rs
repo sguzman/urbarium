@@ -5,7 +5,7 @@
 //! here are deliberately marked visual estimates, not engineering assets.
 //! Ordinary motorways remain on terrain unless grade separation is tagged.
 use crate::geometry::{Mesh, Vertex};
-use crate::roads::{BridgeSpan, RoadScene, SurfaceKind, RIBBON_CROSS_STEPS, ribbon};
+use crate::roads::{RoadScene, SurfaceKind, RIBBON_CROSS_STEPS, ribbon};
 
 /// One render-only approximate roadway level. Not a measured bridge height.
 const VISUAL_CLEARANCE_M:f32=5.8;
@@ -138,7 +138,6 @@ pub fn build_bridge_layers(
 mod tests {
     use super::*;
     use crate::{City,Point,Region,Street};
-    use std::collections::BTreeMap;
     fn tagged(kind:&str,tags:&[(&str,&str)])->Street {
         Street{
             source_id:kind.into(),name:None,kind:kind.into(),
@@ -167,7 +166,7 @@ mod tests {
         assert!(!roads.layers[&SurfaceKind::BridgeSupports].indices.is_empty());
         assert!(!roads.layers[&SurfaceKind::BridgeRails].indices.is_empty());
         for mesh in roads.layers.values() {
-            assert!(mesh.indices.iter().all(|&i|i as usize<mesh.vertices.len()));
+            assert!(mesh.indices.iter().all(|&i|(i as usize)<mesh.vertices.len()));
         }
     }
     #[test]
