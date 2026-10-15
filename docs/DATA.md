@@ -27,7 +27,7 @@ Use the same coordinate and schema conventions for LA, Orange, Ventura, Riversid
 The public `overpass-api.de` instance introduced restrictions in 2026 that can
 return HTTP 406 to automated clients. Our acquisition script identifies the
 project with a user-agent and, **at most once**, tries another public instance.
-You can override the endpoint through `OVERPASS_URL`; overrides never trigger
+A 406 or 429 stops immediately rather than evading service limits. You can override the endpoint through `OVERPASS_URL`; overrides never trigger
 the automatic fallback. Do not schedule continuous polling or scale this
 workflow across county-sized extents on public servers. Migrate to versioned
 regional PBF/Parquet extracts for the multi-county ingest.
