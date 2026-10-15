@@ -6,6 +6,11 @@ on:
   push:
     paths:
       - .github/workflows/browser-demo.yml
+      - src/bin/viewer.rs
+      - src/bin/viewer.wgsl
+      - Cargo.toml
+      - index.html
+      - scripts/qa-browser.py
   workflow_dispatch:
 
 jobs:
