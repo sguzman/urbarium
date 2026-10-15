@@ -267,31 +267,97 @@
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
-  async function init(){
-    try {
-      const response=await fetch("./assets/downtown-la.json");
-      if(!response.ok)throw new Error("City HTTP "+response.status);
-      const city=await response.json();
-      if(!city.region||!Array.isArray(city.streets)||!Array.isArray(city.buildings))
-        throw new Error("Invalid city scene");
-      state.city=city;
-      const [lmResult,terrainResult]=await Promise.allSettled([
-        fetch("./assets/landmarks.json").then(r=>{
-          if(!r.ok)throw Error("landmarks HTTP "+r.status);
-          return r.json();
-        }),
-        fetch("./assets/downtown-la-terrain.json").then(r=>{
-          if(!r.ok)throw Error("terrain HTTP "+r.status);
-          return r.json();
-        })
-      ]);
-      if(terrainResult.status==="fulfilled")state.terrain=terrainResult.value;
-      if(lmResult.status==="fulfilled")installLandmarks(lmResult.value);
-      else console.warn("Urbarium landmarks unavailable",lmResult.reason);
-    }catch(error) {
-      scaleLabel.textContent="Map unavailable";
-      coordsLabel.textContent=String(error);
+  // The Rust viewer downloads and parses the city exactly once. A browser
+  // event passes the same validated payload into the map, avoiding the extra
+  // network request that previously failed on intermittent connections.
+  let landmarksStarted=false;
+  let citySource="";
+  function applyCity(city,source) {
+    if(state.city) return;
+    if(!city?.region||!Array.isArray(city.streets)||
+       !Array.isArray(city.buildings))
+      throw new Error("Invalid geographic city scene");
+    state.city=city;
+    citySource=source;
+    state.cache=false;
+    canvas.setAttribute("data-map-source",source);
+    scaleLabel.textContent="Loading map...";
+    coordsLabel.textContent="Geography loaded";
+    // Render an initial map even before the next animation frame.
+    draw(pose());
+    if(!landmarksStarted) {
+      landmarksStarted=true;
+      void loadOptionalLandmarks();
     }
   }
-  init();
+  function useSharedCity() {
+    if(state.city)return true;
+    const payload=window.__urbariumCityJson;
+    if(typeof payload!=="string")return false;
+    try {
+      applyCity(JSON.parse(payload),"rust-shared");
+      delete window.__urbariumCityJson;
+      return true;
+    }catch(error){
+      console.error("Urbarium shared city parse failed",error);
+      scaleLabel.textContent="Map data error";
+      coordsLabel.textContent=String(error);
+      return false;
+    }
+  }
+  function useSharedTerrain() {
+    const payload=window.__urbariumTerrainJson;
+    if(typeof payload!=="string")return false;
+    try {
+      state.terrain=JSON.parse(payload);
+      delete window.__urbariumTerrainJson;
+      for(const mark of state.landmarks)mark.y=landmarkHeight(mark);
+      return true;
+    }catch(error){
+      console.warn("Urbarium shared elevation unavailable",error);
+      return false;
+    }
+  }
+  async function loadOptionalLandmarks() {
+    // Landmarks are an enhancement. Their failure must never black out the
+    // basic street/building map. Retry them independently a few times.
+    for(const delay of [0,1000,3500]) {
+      if(delay)await new Promise(resolve=>setTimeout(resolve,delay));
+      try {
+        const response=await fetch("./assets/landmarks.json");
+        if(!response.ok)throw new Error("Landmarks HTTP "+response.status);
+        const doc=await response.json();
+        installLandmarks(doc);
+        return;
+      }catch(error){
+        console.warn("Urbarium landmark labels delayed",error);
+      }
+    }
+  }
+  async function retryMapLoad() {
+    if(useSharedCity()||state.city) {
+      state.cache=false;
+      return;
+    }
+    scaleLabel.textContent="Retrying map...";
+    coordsLabel.textContent="Waiting for the same geographic dataset";
+    try {
+      // Last-resort explicit retry only. Normal startup NEVER makes a
+      // second request; Rust owns the initial city fetch.
+      const response=await fetch("./assets/downtown-la.json",{cache:"no-cache"});
+      if(!response.ok)throw new Error("City HTTP "+response.status);
+      applyCity(await response.json(),"manual-retry");
+    }catch(error){
+      scaleLabel.textContent="Map unavailable · Retry";
+      coordsLabel.textContent="Network error; the 3D viewer can keep running";
+      console.warn("Urbarium map retry failed",error);
+    }
+  }
+  window.addEventListener("urbarium-city-ready",useSharedCity);
+  window.addEventListener("urbarium-terrain-ready",useSharedTerrain);
+  document.getElementById("map-retry")?.addEventListener("click",retryMapLoad);
+  scaleLabel.textContent="Waiting for city data...";
+  coordsLabel.textContent="Shares the Rust viewer's data";
+  useSharedCity();
+  useSharedTerrain();
 })();
