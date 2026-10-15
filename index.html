@@ -28,6 +28,8 @@
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/minimap.js">
   <script src="./minimap.js" defer></script>
+  <link data-trunk rel="copy-file" href="web/stats.js">
+  <script src="./stats.js" defer></script>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; }
     html, body {margin:0;width:100%;height:100%;overflow:hidden;background:#101921;color:#e7eef3;}
@@ -68,6 +70,28 @@
       border:1px solid #577688;border-radius:5px;padding:4px 7px;}
     #renderer-health {color:#a3bec8;font-variant-numeric:tabular-nums;}
     #renderer-health.warn {color:#ffcb7d;font-weight:600;}
+    .debug-controls {pointer-events:auto;display:flex;flex-wrap:wrap;
+      gap:10px;align-items:center;font-size:12px;color:#c6d6da;margin:6px 0;}
+    .debug-controls label {cursor:pointer;display:inline-flex;align-items:center;gap:3px;}
+    .debug-controls input {accent-color:#8fc2cf;}
+    #stats-toggle {background:#1d3642;color:#e9f5f7;cursor:pointer;
+      border:1px solid #516c79;border-radius:5px;padding:4px 9px;}
+    #stats-toggle[aria-pressed="true"] {border-color:#b6d7d9;background:#284951;}
+    #stats-panel {position:fixed;z-index:5;left:18px;bottom:48px;
+      width:280px;max-width:calc(100vw - 50px);max-height:42vh;overflow:auto;
+      background:rgba(7,16,22,.94);border:1px solid #45606b;
+      box-shadow:0 4px 28px #0008;border-radius:10px;padding:12px 14px;
+      color:#d9e7ea;font:12px system-ui,sans-serif;pointer-events:auto;}
+    #stats-panel[hidden] {display:none;}
+    #stats-panel h2 {font-size:13px;margin:0 0 8px;letter-spacing:.04em;}
+    #stats-panel dl {display:grid;grid-template-columns:1fr auto;
+      gap:5px 14px;margin:0;font-variant-numeric:tabular-nums;}
+    #stats-panel dt {color:#b0c7cb;}
+    #stats-panel dd {margin:0;text-align:right;color:#eff9fa;}
+    #stats-panel .stats-note {color:#a4b9bf;font-size:10px;line-height:1.5;
+      margin:9px 0 0;}
+    #stats-last-error {color:#ffbf9d;overflow-wrap:anywhere;max-height:55px;
+      overflow:hidden;margin-top:6px;font-size:11px;}
     .footer {position:fixed;bottom:12px;left:18px;font-size:11px;color:#e6e5d5;
       background:rgba(8,17,24,.7);padding:7px;border-radius:7px;z-index:2;}
     a {color:#a3cfed;pointer-events:auto;}
@@ -88,7 +112,39 @@
       </select>
     </label>
     <p id="renderer-health" role="status">Waiting for first 3D frame...</p>
+    <div class="debug-controls">
+      <button id="stats-toggle" type="button" aria-controls="stats-panel"
+        aria-pressed="false">Stats: off</button>
+      <label title="Display approximate pedestrian paths, not surveyed curbs">
+        <input id="layer-walk" type="checkbox" data-visible="true" checked>
+        Footpaths
+      </label>
+      <label title="Rail levels are not surveyed; keep hidden until needed">
+        <input id="layer-rail" type="checkbox" data-visible="false">
+        Rail
+      </label>
+    </div>
   </div>
+  <section id="stats-panel" aria-label="Renderer diagnostics" hidden>
+    <h2>URBARIUM / Performance</h2>
+    <dl>
+      <dt>Graphics backend</dt><dd id="stats-backend">Waiting...</dd>
+      <dt>FPS (presented)</dt><dd id="stats-fps">—</dd>
+      <dt>Frame interval</dt><dd id="stats-frame">—</dd>
+      <dt>CPU-side frame work</dt><dd id="stats-cpu-frame">—</dd>
+      <dt>Triangles / frame</dt><dd id="stats-triangles">—</dd>
+      <dt>Draw calls / frame</dt><dd id="stats-drawcalls">—</dd>
+      <dt>GPU mesh buffers</dt><dd id="stats-gpu-buffers">—</dd>
+      <dt>JS heap (Chromium)</dt><dd id="stats-js-heap">—</dd>
+      <dt>System CPU utilization</dt><dd>N/A · browser restricted</dd>
+      <dt>GPU utilization / VRAM</dt><dd>N/A · browser restricted</dd>
+      <dt>GPU frame time</dt><dd>N/A · query unsupported</dd>
+    </dl>
+    <p class="stats-note">CPU-side frame work excludes asynchronous GPU time.
+      Mesh buffers exclude browser, texture and driver allocations.
+      JS heap is shown only if the browser exposes it.</p>
+    <div id="stats-last-error" aria-live="polite"></div>
+  </section>
   <aside class="minimap" aria-label="Downtown Los Angeles minimap">
     <div class="map-title"><span>DOWNTOWN LA</span><small>N ↑ · Pilot area</small></div>
     <canvas id="minimap-canvas" width="260" height="260" role="img"
