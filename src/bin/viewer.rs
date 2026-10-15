@@ -10,6 +10,7 @@ use glam::{Mat4, Vec3};
 use urbarium::geometry::{mesh_city, HeightPolicy, Mesh, Vertex};
 use urbarium::roads::{mesh_streets, SurfaceKind};
 use urbarium::City;
+use urbarium::collision::CollisionWorld;
 use wgpu::util::DeviceExt;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalSize;
@@ -54,7 +55,7 @@ impl Camera {
     /// Select a real roadway centerline nearest Downtown LA's reference point.
     /// Do not start the viewer 95 meters over the city or inside an arbitrary
     /// building mass. This is a flat-ground, non-collision-aware preview.
-    fn spawn_at_street(city:&City) -> Self {
+    fn spawn_at_street(city:&City, world:&CollisionWorld) -> Self {
         let mut camera=Self::default();
         let mut closest=f64::INFINITY;
         for street in &city.streets {
@@ -70,7 +71,7 @@ impl Camera {
                 let x=(pair[0].x+pair[1].x)*0.5;
                 let z=(pair[0].z+pair[1].z)*0.5;
                 let score=x*x+z*z;
-                if score<closest {
+                if score<closest && !world.blocked(x,z,1.7,0.35) {
                     closest=score;
                     camera.position=Vec3::new(x as f32,1.7,z as f32);
                     camera.yaw=(dx as f32).atan2(dz as f32);
@@ -94,7 +95,7 @@ impl Camera {
         self.yaw -= dx * 0.0025;
         self.pitch = (self.pitch - dy * 0.0025).clamp(-1.52, 1.52);
     }
-    fn move_by(&mut self, pressed: &HashSet<KeyCode>, elapsed: f32) {
+    fn move_by(&mut self, pressed: &HashSet<KeyCode>, elapsed: f32, world:Option<&CollisionWorld>) {
         let ground_forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
         let right = Vec3::new(-ground_forward.z, 0.0, ground_forward.x);
         let mut delta = Vec3::ZERO;
@@ -115,8 +116,19 @@ impl Camera {
         if delta.length_squared() > 0.0 {
             let boost = if pressed.contains(&KeyCode::ShiftLeft) ||
                 pressed.contains(&KeyCode::ShiftRight) { 4.0 } else { 1.0 };
-            self.position += delta.normalize() * elapsed.min(0.08) * self.speed * boost;
-            self.position.y = self.position.y.max(1.8);
+            let movement=delta.normalize() * elapsed.min(0.08) * self.speed * boost;
+            let target_y=(self.position.y+movement.y).max(1.7);
+            if let Some(world)=world {
+                let start=[self.position.x as f64,self.position.z as f64];
+                let end=[start[0]+movement.x as f64,start[1]+movement.z as f64];
+                let resolved=world.move_sliding(start,end,target_y as f64,0.35);
+                self.position.x=resolved[0] as f32;
+                self.position.z=resolved[1] as f32;
+            } else {
+                self.position.x+=movement.x;
+                self.position.z+=movement.z;
+            }
+            self.position.y=target_y;
         }
     }
 }
@@ -249,6 +261,7 @@ struct Graphics {
     pipeline: wgpu::RenderPipeline,
     depth: wgpu::TextureView,
     camera: Camera,
+    collision: CollisionWorld,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     vertices: wgpu::Buffer,
@@ -276,7 +289,7 @@ impl Graphics {
         self.depth=Self::depth_view(&self.device,self.config.width,self.config.height);
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
-        self.camera.move_by(pressed,dt);
+        self.camera.move_by(pressed,dt,Some(&self.collision));
         expose_camera_pose(&self.camera);
         let vp=self.camera.view_projection(self.config.width,self.config.height);
         self.queue.write_buffer(&self.camera_buffer,0,
@@ -367,7 +380,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         .ok_or("No compatible GPU surface configuration")?;
     config.present_mode=wgpu::PresentMode::Fifo;
     surface.configure(&device,&config);
-    let camera=Camera::spawn_at_street(&city);
+    let collision=CollisionWorld::from_city(&city);
+    let camera=Camera::spawn_at_street(&city,&collision);
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label:Some("Camera uniform"),
         contents:bytemuck::bytes_of(&CameraUniform {
@@ -440,11 +454,11 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     });
     let index_count=u32::try_from(indices.len()).map_err(|_|"scene has too many indices")?;
     let graphics=Graphics {
-        window,surface,device,queue,config,pipeline,depth,camera,
+        window,surface,device,queue,config,pipeline,depth,camera,collision,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,
     };
-    info(&format!("Downtown LA ready ({backend}) — click to capture mouse, WASD walk, Shift run, E/Q fly, Esc release"));
+    info(&format!("Downtown LA ready ({backend}) — building walls enabled, WASD walk, Shift run, E/Q fly, Esc release"));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }
@@ -675,7 +689,7 @@ mod tests {
         let before=camera.position;
         let mut keys=HashSet::new();
         keys.insert(KeyCode::KeyW);
-        camera.move_by(&keys,0.04);
+        camera.move_by(&keys,0.04,None);
         assert_ne!(camera.position,before);
         camera.mouse_look(0.0,1e6);
         assert!(camera.pitch >= -1.52);
