@@ -29,7 +29,8 @@
   const colors={road:"#668497",path:"#b6b9a5",rail:"#80a4ac",
     steps:"#b4aa91",buildings:"#425e68",ground:"#273f3d"};
   const state={city:null,terrain:null,landmarks:[],width:650,cache:false,
-    cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0};
+    cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0,
+    labelYaw:null,labelPitch:null,labelPauseUntil:0};
   function project(lon,lat,region) {
     return {x:(lon-region.origin[0])*radius*Math.cos(region.origin[1]*Math.PI/180),
       z:(lat-region.origin[1])*radius};
@@ -194,26 +195,58 @@
   }
   function updateWorldLabels(p) {
     if(!layer||!state.landmarks.length)return;
-    const w=window.innerWidth,h=window.innerHeight,aspect=w/Math.max(1,h);
+    const now=performance.now();
+    const headingChange=state.labelYaw===null?0:
+      Math.abs(Math.atan2(Math.sin(p.yaw-state.labelYaw),
+                          Math.cos(p.yaw-state.labelYaw)));
+    const pitchChange=state.labelPitch===null?0:
+      Math.abs(p.pitch-state.labelPitch);
+    state.labelYaw=p.yaw;state.labelPitch=p.pitch;
+    // Moving labels across the screen during a quick camera turn looks like
+    // spinning text. Keep names screen-upright, hide them during rotation,
+    // then reveal only the nearby labels once the view settles.
+    if(headingChange>0.009||pitchChange>0.009)
+      state.labelPauseUntil=now+250;
+    const paused=now<state.labelPauseUntil;
+    layer.setAttribute("data-labels-paused",String(paused));
+    if(paused) {
+      for(const mark of state.landmarks)if(mark.el)mark.el.hidden=true;
+      return;
+    }
+    const rect=document.querySelector("canvas:not(#minimap-canvas):not(#webgpu-control)")
+      ?.getBoundingClientRect();
+    const left=rect?.left??0,top=rect?.top??0;
+    const w=rect?.width||window.innerWidth,h=rect?.height||window.innerHeight;
+    const aspect=w/Math.max(1,h);
     const cp=Math.cos(p.pitch),sp=Math.sin(p.pitch);
     const sy=Math.sin(p.yaw),cy=Math.cos(p.yaw);
     const fx=sy*cp,fy=sp,fz=cy*cp;
     const rx=-cy,rz=sy;
     const ux=-sy*sp,uy=cp,uz=-cy*sp;
     const tan=Math.tan(68*Math.PI/360);
+    // Keep world-space tags local: distant labels are already mapped on
+    // the minimap and add distracting fast-moving clutter in first person.
+    const nearby=state.landmarks.map(mark=>({
+      mark,distance:Math.hypot(mark.x-p.x,mark.y-p.y,mark.z-p.z)
+    })).filter(row=>row.distance<350)
+      .sort((a,b)=>a.distance-b.distance).slice(0,3);
+    const allowed=new Set(nearby.map(row=>row.mark.id));
     for(const mark of state.landmarks) {
       const el=mark.el;if(!el)continue;
+      if(!allowed.has(mark.id)) {el.hidden=true;continue;}
       const dx=mark.x-p.x,dy=mark.y-p.y,dz=mark.z-p.z;
       const distance=Math.hypot(dx,dy,dz);
       const depth=dx*fx+dy*fy+dz*fz;
-      if(depth<3||distance>1250) {el.hidden=true;continue;}
+      if(depth<4) {el.hidden=true;continue;}
       const hor=(dx*rx+dz*rz)/(depth*tan*aspect);
       const ver=(dx*ux+dy*uy+dz*uz)/(depth*tan);
-      if(Math.abs(hor)>1.08||Math.abs(ver)>1.05) {el.hidden=true;continue;}
+      if(Math.abs(hor)>.85||Math.abs(ver)>.78) {el.hidden=true;continue;}
       el.hidden=false;
-      el.style.left=((hor+1)*w/2).toFixed(1)+"px";
-      el.style.top=((1-ver)*h/2).toFixed(1)+"px";
-      el.style.opacity=String(Math.min(1,Math.max(.35,150/distance)));
+      // Labels are flat HTML pills, always horizontal, never billboards
+      // rotating in 3D or orbiting around the edges of the screen.
+      el.style.left=(left+(hor+1)*w/2).toFixed(1)+"px";
+      el.style.top=(top+(1-ver)*h/2).toFixed(1)+"px";
+      el.style.opacity=String(Math.min(1,Math.max(.65,180/distance)));
     }
   }
 
