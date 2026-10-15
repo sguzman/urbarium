@@ -71,6 +71,35 @@ with sync_playwright() as p:
             assert selected_backend == "Gl", selected_backend
         assert not errors, errors
         canvas = page.locator("canvas:not(#minimap-canvas)")
+        # The former 1280x800 drawing buffer left blank right/bottom borders
+        # on larger browser windows. Test both CSS and actual GPU pixel size.
+        page.set_viewport_size({"width":1664,"height":926})
+        page.wait_for_function("""() => {
+            const c=document.querySelector('canvas:not(#minimap-canvas):not(#webgpu-control)');
+            const s=document.querySelector('#status');
+            if(!c||!s)return false;
+            const box=c.getBoundingClientRect();
+            const expectedW=Math.round(innerWidth*devicePixelRatio);
+            const expectedH=Math.round(innerHeight*devicePixelRatio);
+            return Math.abs(box.width-innerWidth)<2 &&
+                Math.abs(box.height-innerHeight)<2 &&
+                c.width===expectedW && c.height===expectedH &&
+                Number(s.getAttribute('data-surface-width'))===expectedW &&
+                Number(s.getAttribute('data-surface-height'))===expectedH;
+        }""",timeout=15000)
+        print("Fullscreen canvas and backing size verified:",
+              canvas.evaluate("(c) => [c.width,c.height,c.getBoundingClientRect().width,c.getBoundingClientRect().height]"))
+        page.set_viewport_size({"width":1120,"height":740})
+        page.wait_for_function("""() => {
+            const c=document.querySelector('canvas:not(#minimap-canvas):not(#webgpu-control)');
+            const s=document.querySelector('#status');
+            return c && s &&
+                Math.abs(c.getBoundingClientRect().width-1120)<2 &&
+                Math.abs(c.getBoundingClientRect().height-740)<2 &&
+                Number(s.getAttribute('data-surface-width'))===c.width &&
+                Number(s.getAttribute('data-surface-height'))===c.height;
+        }""",timeout=15000)
+        print("3D viewport tracks dynamic browser resize")
         page.wait_for_function(
             "() => Number(document.querySelector('#status')?.getAttribute('data-eye-clearance')) >= 1.7",
             timeout=15000,
@@ -221,6 +250,14 @@ with sync_playwright() as p:
         assert page.locator("#world-landmarks").is_visible()
         assert page.locator("#status").get_attribute("data-camera-pose") is not None
         print("Eight source-backed landmarks are mapped and anchored to the camera")
+        page.wait_for_function(
+            "() => document.querySelector('#world-landmarks')?.getAttribute('data-labels-paused') !== null",
+            timeout=8000,
+        )
+        assert "rotate(" not in page.locator(".world-landmark").first.evaluate(
+            "(e) => e.style.transform"
+        )
+        print("Landmark labels are screen-upright and camera-turn stabilization is active")
         # Compare map frames to the browser's own requestAnimationFrame
         # budget, not wall-clock FPS. SwiftShader CI is a software GPU and
         # sometimes can present only a handful of total page frames.

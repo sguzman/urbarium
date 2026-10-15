@@ -256,6 +256,19 @@ drawing. The source JSON's content is not committed; the handoff happens
 within the browser. Browser CI requires exactly one city and one terrain
 request across the 3D viewer and minimap.
 
+## Fullscreen viewport and stable landmark labels
+
+The browser's 3D canvas now starts at the actual viewport dimensions instead
+of the previous hard-coded 1280×800 buffer. Window-resize events update the
+winit window, GPU surface, and depth texture together. CI verifies both a
+large 1664×926 browser viewport and another 1120×740 live resize.
+
+World landmark names remain fixed, horizontal HTML pills. Quick mouse-look
+rotation temporarily hides them, preventing distracting text that sweeps
+around the viewpoint; nearby labels return once the camera settles. The
+visible world tags are limited to the nearest three within 350 meters.
+Landmark pins on the north-up minimap remain independent and always available.
+
 ## Live landmark catalog and smooth locator
 
 Eight **georeferenced** Downtown LA landmarks are now included as a
