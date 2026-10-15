@@ -58,11 +58,17 @@ with sync_playwright() as p:
             raise AssertionError(state)
         assert not errors, errors
         canvas = page.locator("canvas")
-        page.wait_for_function("() => Number(document.querySelector('#status')?.getAttribute('data-camera-y')) > 0", timeout=15000)
+        page.wait_for_function(
+            "() => Number(document.querySelector('#status')?.getAttribute('data-eye-clearance')) >= 1.7",
+            timeout=15000,
+        )
         obstacles=int(page.locator("#status").get_attribute("data-building-obstacles") or "0")
         assert obstacles > 300, f"Geographic building colliders missing: {obstacles}"
+        terrain_points=int(page.locator("#status").get_attribute("data-terrain-points") or "0")
+        assert terrain_points == 4225, f"Terrain DEM missing or incomplete: {terrain_points}"
         print("Footprint obstacles loaded:", obstacles)
-        eye_height=float(page.locator("#status").get_attribute("data-camera-y"))
+        print("Geographic elevation samples loaded:", terrain_points)
+        eye_height=float(page.locator("#status").get_attribute("data-eye-clearance"))
         assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
         canvas.click(position={"x": 500, "y": 420})
         page.wait_for_function(
