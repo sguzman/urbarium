@@ -66,6 +66,13 @@ jobs:
         run: |
           python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
           python3 scripts/qa-browser.py
+      - name: Retain actual WebGPU render screenshot
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: urbarium-browser-render
+          path: /tmp/urbarium-browser-debug.png
+          retention-days: 14
       - name: Package playable browser site
         if: success()
         uses: actions/upload-artifact@v4
