@@ -196,6 +196,27 @@ Trunk/WASM bundle. After the source is corrected, rerun
 "Build and test browser demo" from the Actions tab to publish and verify
 the actual site.
 
+## First-person collision and connected street junctions
+
+The current browser demo uses **real building footprint polygons as horizontal
+collision obstacles**: the camera starts on an unobstructed source street,
+cannot walk through building walls or tile bounds, and slides along walls.
+Interior courtyard polygons remain open. Aerial free flight still works when
+the camera rises above an estimated or source-recorded roof height.
+
+The transportation generator fills only road intersections at **three or more
+connected endpoints**, producing compact asphalt patches from local road widths.
+Simple centerline crossings are not automatically promoted to intersections:
+bridge, tunnel and grade separation remain unresolved without better data.
+
+**Sidewalk fidelity:** The 2026-10-15 Overture pilot contains 912 pedestrian
+`footway` segments, but none identifies a surveyed sidewalk-edge polygon;
+these are pedestrian centerlines, not actual curb boundaries. Generating
+parallel sidewalks around every street would invent geography, so sidewalks
+remain a separate source acquisition and geometry task. The ground is still
+flat until we have a validated terrain DEM with vertical alignment for
+buildings and roads.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.

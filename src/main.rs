@@ -168,9 +168,9 @@ fn run_roads(args: &[String]) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(dir)?;
     write_road_mtl(BufWriter::new(fs::File::create(dir.join("urbarium-transport.mtl"))?))?;
     write_road_obj(BufWriter::new(fs::File::create(output)?),&scene)?;
-    println!("Road meshes: {} surface spans ({} unknown/underground, {} degenerate), {} vertices, {} triangles",
+    println!("Road meshes: {} surface spans ({} unknown/underground, {} degenerate), {} filled junctions, {} vertices, {} triangles",
         report.segments_meshed,report.segments_skipped,report.segments_degenerate,
-        report.total_vertices,report.total_triangles);
+        report.junction_patches,report.total_vertices,report.total_triangles);
     for (kind,count) in report.by_surface {
         println!("  {kind}: {count}");
     }

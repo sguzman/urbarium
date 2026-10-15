@@ -77,3 +77,19 @@ width comes from explicit class defaults. Overture `footway`, `steps`,
 tunnels, multi-level rail and stair elevation need 3DEP/grade integration
 before being topologically or visually faithful. Intersections may overlap
 and should not yet be treated as collision-ready paving geometry.
+
+## Street-level prototype quality gates (2026-10-15)
+
+The Overture pilot has **912 footway centerline segments**, but their
+`subtype` is merely `road`, not a surveyed sidewalk class. A centerline
+cannot establish curb boundaries or walking connectivity. The renderer now
+adds width-based asphalt patches only when 3+ street endpoints agree within
+1 meter; testing the retained pilot source found 117 candidate junctions.
+Crossing 2D geometry alone never grants a connected junction, and explicit
+OSM bridge/tunnel/layer tags suppress patch generation. Dataset consumers
+should not infer traffic rules or physical grade from these visual patches.
+
+Collision is a temporary **2D circular footprint constraint** with flat
+terrain, height-aware overhead flying and intact courtyard holes. It is not
+full 3D collision or an accessible-navigation graph. The 3DEP DEM and
+surveyed sidewalk-source integration are separate future work.

@@ -11,6 +11,7 @@ on:
       - src/lib.rs
       - src/geometry.rs
       - src/roads.rs
+      - src/collision.rs
       - src/gltf.rs
       - src/main.rs
       - regions/downtown-la.json

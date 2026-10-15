@@ -23,8 +23,9 @@
 - [ ] Ingest versioned Overture building and building-part datasets with tiled streaming.
 - [ ] Evaluate 2020/2023 LA County GIS outlines, units, coverage, terms, and permitted redistribution.
 - [ ] Merge/conflict resolution keyed by source feature IDs, with geometry overlays and QA reports.
-- [ ] Add street widths, sidewalks, road intersections, footpath crossings.
-- [ ] Integrate 3DEP terrain; preserve local elevation and bridge/underpass levels.
+- [x] Add first-pass at-grade T/cross junction patches using shared centerline endpoints and local widths.
+- [ ] Acquire surveyed sidewalk geometries, improve road width/curb edges, and handle footpath crossings.
+- [ ] Integrate a documented elevation DEM (3DEP preferred); drape roads while keeping building roofs/foundations coherent and bridge/underpass levels separate.
 - [ ] Hand-authored corrections for standout landmarks only when primary data cannot represent them.
 
 ## P2 — First playable walk
@@ -35,7 +36,8 @@
 - [x] Export self-contained combined glTF 2.0 binary with materials, indexed buildings and transportation meshes.
 - [x] Validate actual Downtown LA GLB: 34,660 triangles, 6 scene meshes, 1,719,448 bytes, independently loaded via trimesh.
 - [ ] Add physically correct intersections, crossings, grade separation and additional roof primitives.
-- [ ] Tile spatial indexing, culling, LOD, material batching and simple collision.
+- [x] Add first-person capsule-like planar building-footprint collision with swept horizontal movement, courtyards and wall sliding.
+- [ ] Add broad-phase collision spatial indexing, terrain-aware feet, tile streaming, culling and LOD.
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [ ] Start at a recognizable Downtown LA site; navigation, FPS and error overlay.
 - [x] Reproducible browser QA in Chromium with real Downtown LA scene.

@@ -220,6 +220,17 @@ async fn fetch_city() -> Result<City, String> {
 }
 
 #[cfg(target_arch="wasm32")]
+fn set_collision_count(count: usize) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-building-obstacles",&count.to_string());
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_collision_count(_:usize) {}
+
+#[cfg(target_arch="wasm32")]
 fn set_browser_backend(backend: &str) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
@@ -381,6 +392,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     config.present_mode=wgpu::PresentMode::Fifo;
     surface.configure(&device,&config);
     let collision=CollisionWorld::from_city(&city);
+    set_collision_count(collision.obstacle_count());
     let camera=Camera::spawn_at_street(&city,&collision);
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label:Some("Camera uniform"),
