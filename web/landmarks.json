@@ -99,6 +99,18 @@
       ],
       "source": "OpenStreetMap",
       "source_url": "https://mapcarta.com/26240424"
+    },
+    {
+      "id": "stanley-mosk",
+      "name": "Stanley Mosk Courthouse",
+      "short": "Mosk Courthouse",
+      "kind": "legal",
+      "coordinates": [
+        -118.2468222,
+        34.0552178
+      ],
+      "source": "Wikipedia geographic coordinates; court location corroborated by 211 LA",
+      "source_url": "https://en.wikipedia.org/wiki/Stanley_Mosk_Courthouse"
     }
   ]
 }

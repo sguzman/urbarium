@@ -723,7 +723,14 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
             topology:wgpu::PrimitiveTopology::TriangleList,
             cull_mode:None,..Default::default()
         },
-        depth_stencil:None,
+        // WebGPU/WebGL2 require the sky pipeline's attachment signature
+        // to match the render pass even though sky must not change depth.
+        depth_stencil:Some(wgpu::DepthStencilState {
+            format:wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled:Some(false),
+            depth_compare:Some(wgpu::CompareFunction::Always),
+            stencil:Default::default(),bias:Default::default(),
+        }),
         multisample:Default::default(),multiview_mask:None,cache:None,
     });
     let depth=Graphics::depth_view(&device,config.width,config.height);

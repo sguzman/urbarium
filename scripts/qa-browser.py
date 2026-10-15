@@ -260,13 +260,13 @@ with sync_playwright() as p:
         print("Rust-to-minimap shared data works with exactly one city and DEM request")
         print("Minimap scene, camera marker and zoom controls passed")
         page.wait_for_function(
-            "() => document.querySelector('#minimap-canvas')?.getAttribute('data-landmark-count') === '8'",
+            "() => document.querySelector('#minimap-canvas')?.getAttribute('data-landmark-count') === '9'",
             timeout=15000,
         )
-        assert page.locator("#world-landmarks .world-landmark").count() == 8
+        assert page.locator("#world-landmarks .world-landmark").count() == 9
         assert page.locator("#world-landmarks").is_visible()
         assert page.locator("#status").get_attribute("data-camera-pose") is not None
-        print("Eight source-backed landmarks are mapped and anchored to the camera")
+        print("Nine source-backed landmarks are mapped and anchored to the camera")
         # A repeat fetch must be fulfilled from persistent CacheStorage,
         # without any second HTTP transfer to this flaky-network-sensitive app.
         saved=page.evaluate("""async () => {

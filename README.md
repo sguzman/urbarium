@@ -269,7 +269,7 @@ rule and palette, as do the world labels. Parks and other sites without a
 matching building receive small, explicitly **representative** ground discs;
 these are not surveyed park outlines or custom landmark architecture.
 The legend includes Civic, Legal, Library, Culture, Park, Transit, Market and
-Historic (not every category has a landmark in the eight-site pilot).
+Historic (not every category has a landmark in the nine-site pilot).
 
 The **Sky** slider displays a procedural camera-oriented sky gradient and
 sun position, with dawn, noon, dusk and night previews. The **Now · LA**
@@ -278,7 +278,7 @@ Neither the sun position nor ambient lighting is a seasonally/astronomically
 accurate solar model; building shading still uses a fixed directional light.
 The slider setting and category toggle persist locally.
 
-The eight pins/labels and these simple color-coded markers do **not** mean
+The nine pins/labels and these simple color-coded markers do **not** mean
 the actual landmarks are finished as distinctive high-fidelity structures.
 
 ## Reliable minimap loading
@@ -318,9 +318,9 @@ geographic strafing, and minimap-arrow synchronization with Rust's yaw.
 
 ## Live landmark catalog and smooth locator
 
-Eight **georeferenced** Downtown LA landmarks are now included as a
+Nine **georeferenced** Downtown LA landmarks are now included as a
 source-attributed catalog with WGS84 coordinates, source URLs and stable IDs.
-Examples include City Hall, Walt Disney Concert Hall, The Broad, Grand Park,
+Examples include City Hall, Stanley Mosk Courthouse, Walt Disney Concert Hall, The Broad, Grand Park,
 Grand Central Market, the Bradbury Building, Angels Flight, and Central Library.
 Pins appear on the minimap and world-space labels project over the 3D scene
 from their real coordinates. The landmarks are **labels anchored in the

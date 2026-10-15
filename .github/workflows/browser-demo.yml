@@ -86,7 +86,7 @@ jobs:
           assert "urbarium-geography-downtown-la-v1" in (dist/"data-cache.js").read_text()
           landmarks=json.loads((dist/"assets"/"landmarks.json").read_text())
           assert landmarks["region_id"] == city["region"]["id"]
-          assert len(landmarks["landmarks"]) == 8
+          assert len(landmarks["landmarks"]) == 9
           assert all(-118.258 <= m["coordinates"][0] <= -118.242 and
                      34.045 <= m["coordinates"][1] <= 34.056
                      for m in landmarks["landmarks"])
@@ -180,7 +180,7 @@ jobs:
           grep -q 'data-map-ready' /tmp/urbarium-minimap-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/assets/landmarks.json" -o /tmp/urbarium-landmarks-live.json
-          python3 -c "import json; assert len(json.load(open('/tmp/urbarium-landmarks-live.json'))['landmarks']) == 8"
+          python3 -c "import json; assert len(json.load(open('/tmp/urbarium-landmarks-live.json'))['landmarks']) == 9"
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/data-cache.js" -o /tmp/urbarium-cache-live.js
           grep -q 'urbarium-geography-downtown-la-v1' /tmp/urbarium-cache-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/stats.js" -o /tmp/urbarium-stats-live.js
