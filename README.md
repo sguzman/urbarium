@@ -241,6 +241,29 @@ actual curb edges need distinct treatment and better source data.
 See [Mapzen's Terrarium encoding](https://github.com/tilezen/joerd/blob/master/docs/formats.md)
 for the height decoder.
 
+## Live landmark catalog and smooth locator
+
+Eight **georeferenced** Downtown LA landmarks are now included as a
+source-attributed catalog with WGS84 coordinates, source URLs and stable IDs.
+Examples include City Hall, Walt Disney Concert Hall, The Broad, Grand Park,
+Grand Central Market, the Bradbury Building, Angels Flight, and Central Library.
+Pins appear on the minimap and world-space labels project over the 3D scene
+from their real coordinates. The landmarks are **labels anchored in the
+geographic world, not custom landmark meshes or surveyed architectural
+reconstructions**. Actual high-fidelity building models are a subsequent pass.
+
+The minimap now separates two workloads: a cached 3× viewport basemap made
+from the real road/building data, regenerated only when zoom or camera travel
+requires it, and a lightweight player marker updated every animation frame.
+The Rust viewer exports a compact live pose attribute every frame rather than
+a set of camera attributes once per eight frames. This removes the intentional
+150 ms stepping and scales better with source geometry complexity.
+
+Coordinate records: `web/landmarks.json`. Refer to each entry's `source_url`
+for upstream OpenStreetMap/Wikidata-derived geographic coordinates. These
+small annotation records **are stored in Git**; the much larger raw/processed
+GIS geometry and DEM bundles remain generated assets excluded from Git.
+
 ## First-person fast travel and geographic minimap
 
 - Press **Shift once** to toggle **fast travel** (~61.2 m/s, 18× walking);

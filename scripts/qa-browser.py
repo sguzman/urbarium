@@ -195,6 +195,28 @@ with sync_playwright() as p:
         assert abs(player_x-camera_x) < 2.0, (player_x,camera_x)
         print("Minimap scene, camera marker and zoom controls passed")
         page.wait_for_function(
+            "() => document.querySelector('#minimap-canvas')?.getAttribute('data-landmark-count') === '8'",
+            timeout=15000,
+        )
+        assert page.locator("#world-landmarks .world-landmark").count() == 8
+        assert page.locator("#world-landmarks").is_visible()
+        assert page.locator("#status").get_attribute("data-camera-pose") is not None
+        print("Eight source-backed landmarks are mapped and anchored to the camera")
+        start_map_frames=int(minimap.get_attribute("data-map-frame"))
+        start_cache_count=int(minimap.get_attribute("data-map-redraws"))
+        page.wait_for_timeout(800)
+        updated_map_frames=int(minimap.get_attribute("data-map-frame"))
+        updated_cache_count=int(minimap.get_attribute("data-map-redraws"))
+        assert updated_map_frames - start_map_frames >= 8, (
+            "Map refresh rate too slow: "+str(updated_map_frames-start_map_frames)
+        )
+        assert updated_cache_count - start_cache_count <= 1, (
+            "Static GIS data must not be redrawn every camera frame"
+        )
+        print("Cached minimap draws",updated_map_frames-start_map_frames,
+              "marker frames per 800 ms with",
+              updated_cache_count-start_cache_count,"GIS cache refreshes")
+        page.wait_for_function(
             "() => document.querySelector('#renderer-health')?.textContent.includes('renderer active')",
             timeout=6000,
         )

@@ -9,6 +9,7 @@ on:
       - src/bin/viewer.rs
       - src/bin/viewer.wgsl
       - web/minimap.js
+      - web/landmarks.json
       - web/stats.js
       - src/lib.rs
       - src/geometry.rs
@@ -80,6 +81,12 @@ jobs:
           js=list(dist.glob("*.js"))
           assert wasm and js,(wasm,js)
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
+          landmarks=json.loads((dist/"assets"/"landmarks.json").read_text())
+          assert landmarks["region_id"] == city["region"]["id"]
+          assert len(landmarks["landmarks"]) == 8
+          assert all(-118.258 <= m["coordinates"][0] <= -118.242 and
+                     34.045 <= m["coordinates"][1] <= 34.056
+                     for m in landmarks["landmarks"])
           assert (dist/"stats.js").is_file(), "Stats JavaScript missing from published site"
           page=(dist/"index.html").read_text()
           assert 'minimap-canvas' in page
@@ -166,6 +173,9 @@ jobs:
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/minimap.js" -o /tmp/urbarium-minimap-live.js
           grep -q 'data-map-ready' /tmp/urbarium-minimap-live.js
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+            "${PAGE_URL%/}/assets/landmarks.json" -o /tmp/urbarium-landmarks-live.json
+          python3 -c "import json; assert len(json.load(open('/tmp/urbarium-landmarks-live.json'))['landmarks']) == 8"
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/stats.js" -o /tmp/urbarium-stats-live.js
           grep -q 'gpu-mesh-bytes' /tmp/urbarium-stats-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \

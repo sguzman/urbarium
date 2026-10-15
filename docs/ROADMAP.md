@@ -43,6 +43,9 @@
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [x] First-person street-level navigation, mouse capture, error overlay and toggleable 18× fast travel.
 - [x] Interactive north-up Downtown LA minimap with zoom, mapped buildings and camera location/heading.
+- [x] Move marker tracking to RAF with a cached GIS basemap and compact per-frame Rust camera pose.
+- [x] Add eight sourced Downtown LA landmark anchors with projected in-world labels and map pins.
+- [ ] Replace label-only landmarks with high-fidelity landmark geometry anchored to existing footprints.
 - [x] Subdivide road ribbons for terrain draping; align elevations with the exact rendered DEM triangles.
 - [x] Isolate approximate roadway/footpath/rail batches with layer-visibility toggles and deterministic depth priority.
 - [x] Add observable FPS/frame-time/CPU-side time/GPU mesh-size statistics and browser-error diagnostics.
