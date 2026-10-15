@@ -304,9 +304,12 @@ patches. The mesh also exports in portable GLB/OBJ with named materials.
 not measured meters. Deck height uses approximately 5.8 m of *visual*
 clearance per level (capped at 3), and the side barriers and pier locations
 are not surveyed or engineered. The importer preserves scoped
-`road_flags`, `level_rules` and `width_rules`, but currently elevates
-only unambiguously **whole-segment** bridge/level tags. Partial-segment rules
-still need geometry splitting. True level-continuous freeway ramps, terrain
+`road_flags`, `level_rules` and `width_rules`, and now splits
+**partial-segment bridge and level ranges along the original centerline
+before clipping**. This gives bridge-only sections their own 3D decks
+without elevating the rest of the road. Height remains a visual
+approximation; the newly split parts are not yet connected by smooth
+vertical ramp profiles. True level-continuous freeway ramps, terrain
 cutouts, retaining walls, bridge deck collision and real connector topology
 remain unfinished. The named-road exporter reports the number of
 source-qualified bridge spans so a geography release without any evidence

@@ -500,6 +500,95 @@ pub fn buildings_from_geojson(
     Ok(buildings)
 }
 
+/// Split grade-related source rules by their linearly-referenced fractions
+/// **before** regional clipping. Relative levels are Z-order, not metric height.
+/// Scoped is_bridge/is_tunnel spans become independently meshable lines, while
+/// unqualified source roads remain at grade. All source rules are still retained.
+fn split_street_grade_scopes(
+    path:&[Point],
+    tags:&BTreeMap<String,String>,
+)->Vec<(Vec<Point>,BTreeMap<String,String>)> {
+    if path.len()<2 {return vec![(path.to_vec(),tags.clone())];}
+    let flags:Vec<Value>=tags.get("overture:road_flags")
+        .and_then(|text|serde_json::from_str(text).ok()).unwrap_or_default();
+    let levels:Vec<Value>=tags.get("overture:level_rules")
+        .and_then(|text|serde_json::from_str(text).ok()).unwrap_or_default();
+    let relevant=|rule:&Value| {
+        rule.get("values").and_then(Value::as_array).is_some_and(|v|
+            v.iter().any(|x|matches!(x.as_str(),Some("is_bridge"|"is_tunnel"))))
+    };
+    if !flags.iter().any(relevant) && levels.is_empty() {
+        return vec![(path.to_vec(),tags.clone())];
+    }
+    let range=|rule:&Value|->Option<(f64,f64)> {
+        let Some(value)=rule.get("between") else {return Some((0.0,1.0));};
+        if value.is_null(){return Some((0.0,1.0));}
+        let a=value.as_array()?;
+        if a.len()!=2 {return None;}
+        let lo=a[0].as_f64()?;
+        let hi=a[1].as_f64()?;
+        (lo.is_finite()&&hi.is_finite()&&lo>=0.&&hi<=1.&&hi-lo>0.0000001)
+            .then_some((lo,hi))
+    };
+    let mut cuts=vec![0.0_f64,1.0];
+    for rule in flags.iter().filter(|r|relevant(r)).chain(levels.iter()) {
+        if let Some((lo,hi))=range(rule) {cuts.extend([lo,hi]);}
+    }
+    cuts.sort_by(|a,b|a.total_cmp(b));
+    cuts.dedup_by(|a,b|(*a-*b).abs()<1e-7);
+    if cuts.len()<3 {
+        return vec![(path.to_vec(),tags.clone())];
+    }
+    let mut stations=vec![0.0];
+    for w in path.windows(2) {
+        let length=(w[1].x-w[0].x).hypot(w[1].z-w[0].z);
+        stations.push(stations.last().copied().unwrap_or(0.)+length);
+    }
+    let total=*stations.last().unwrap_or(&0.);
+    if !total.is_finite() || total<0.01 {
+        return vec![(path.to_vec(),tags.clone())];
+    }
+    let sample=|fraction:f64| -> Point {
+        let distance=fraction*total;
+        let index=stations.partition_point(|&v|v<distance).clamp(1,path.len()-1);
+        let span=stations[index]-stations[index-1];
+        let t=if span>0.0 {(distance-stations[index-1])/span}
+              else {0.0};
+        Point {
+            x:path[index-1].x+(path[index].x-path[index-1].x)*t,
+            z:path[index-1].z+(path[index].z-path[index-1].z)*t,
+        }
+    };
+    let mut result=Vec::new();
+    for w in cuts.windows(2) {
+        let (lo,hi)=(w[0],w[1]);
+        if hi-lo<1e-7 {continue;}
+        let center=(lo+hi)*0.5;
+        let matches=|rule:&Value|range(rule).is_some_and(|(a,b)|center>=a && center<=b);
+        let flag=|name:&str| flags.iter().any(|rule|matches(rule)&&
+            rule.get("values").and_then(Value::as_array)
+                .is_some_and(|v|v.iter().any(|x|x.as_str()==Some(name))));
+        let mut local_tags=tags.clone();
+        for key in ["bridge","tunnel","layer"] {local_tags.remove(key);}
+        if flag("is_bridge"){local_tags.insert("bridge".into(),"yes".into());}
+        if flag("is_tunnel"){local_tags.insert("tunnel".into(),"yes".into());}
+        if let Some(level)=levels.iter().filter(|rule|matches(rule))
+            .filter_map(|rule|rule.get("value").and_then(Value::as_i64)).last(){
+            local_tags.insert("layer".into(),level.to_string());
+        }
+        let mut section=vec![sample(lo)];
+        let begin=lo*total;
+        let end=hi*total;
+        for (i,&d) in stations.iter().enumerate().skip(1).take(path.len()-2) {
+            if d>begin+0.001 && d<end-0.001 {section.push(path[i]);}
+        }
+        section.push(sample(hi));
+        section.dedup_by(|a,b|(a.x-b.x).hypot(a.z-b.z)<0.001);
+        if section.len()>=2 {result.push((section,local_tags));}
+    }
+    if result.is_empty() {vec![(path.to_vec(),tags.clone())]}else{result}
+}
+
 /// Import Overture (or other GeoJSON) street/transport segments as city-local
 /// metric centerlines. MultiLineString geometries are split into independently
 /// addressable segment parts. Nonlinear geometries are ignored.
@@ -590,20 +679,23 @@ pub fn streets_from_geojson(json: &str, region: &Region) -> Result<Vec<Street>, 
             }
             let path: Vec<Point> = coordinates.into_iter()
                 .map(|(lon, lat)| region.project(lon, lat)).collect();
-            let spans = clip_street_path(&path, region);
-            for (piece, clipped) in spans.into_iter().enumerate() {
-                streets.push(Street {
-                    source_id: if piece == 0 {
-                        format!("geojson:segment:{id}:{part}")
-                    } else {
-                        format!("geojson:segment:{id}:{part}:clip:{piece}")
-                    },
-                    name: name.clone(),
-                    kind: class.clone(),
-                    path: clipped,
-                    osm_node_ids: Vec::new(),
-                    tags: tags.clone(),
-                });
+            let scopes=split_street_grade_scopes(&path,&tags);
+            let multiple=scopes.len()>1;
+            for (scope_index,(scoped_path,scoped_tags)) in scopes.into_iter().enumerate() {
+                // Cut at source-defined grade transitions before clipping. A
+                // clipped segment never silently reinterprets the rule's
+                // [0,1] range as a fraction of the shortened geometry.
+                let spans=clip_street_path(&scoped_path,region);
+                for (piece,clipped) in spans.into_iter().enumerate() {
+                    let base=format!("geojson:segment:{id}:{part}");
+                    let base=if multiple{format!("{base}:scope:{scope_index}")}else{base};
+                    streets.push(Street {
+                        source_id:if piece==0{base}
+                            else{format!("{base}:clip:{piece}")},
+                        name:name.clone(),kind:class.clone(),path:clipped,
+                        osm_node_ids:Vec::new(),tags:scoped_tags.clone(),
+                    });
+                }
             }
         }
     }
@@ -754,6 +846,31 @@ mod tests {
     }
 
     #[test]
+    fn scoped_overture_bridge_is_split_before_clipping() {
+        let region=downtown();
+        let input=r#"{"type":"FeatureCollection","features":[{
+          "type":"Feature","id":"partial-bridge",
+          "properties":{"class":"primary",
+            "road_flags":[{"values":["is_bridge"],"between":[0.2,0.8]}],
+            "level_rules":[{"value":1,"between":[0.2,0.8]}]},
+          "geometry":{"type":"LineString","coordinates":[
+            [-118.252,34.05],[-118.250,34.05]
+          ]}
+        }]}"#;
+        let streets=streets_from_geojson(input,&region).unwrap();
+        assert_eq!(streets.len(),3);
+        assert_eq!(streets.iter().filter(|r|r.tags.get("bridge")
+            .is_some_and(|v|v=="yes")).count(),1);
+        assert_eq!(streets[1].tags.get("layer").map(String::as_str),Some("1"));
+        assert!(streets[0].tags.get("bridge").is_none());
+        assert!(streets[2].tags.get("bridge").is_none());
+        let join=|a:Point,b:Point| (a.x-b.x).hypot(a.z-b.z);
+        assert!(join(*streets[0].path.last().unwrap(),streets[1].path[0])<0.01);
+        assert!(join(*streets[1].path.last().unwrap(),streets[2].path[0])<0.01);
+        assert!(streets[1].source_id.contains(":scope:1"));
+    }
+
+    #[test]
     fn overture_bridge_level_and_width_rules_survive_geojson_import() {
         let input=r#"{"type":"FeatureCollection","features":[
           {"type":"Feature","id":"bridge-1",
@@ -771,16 +888,20 @@ mod tests {
              [-118.252,34.05],[-118.251,34.0505]]}}
         ]}"#;
         let roads=streets_from_geojson(input,&downtown()).unwrap();
-        assert_eq!(roads.len(),2);
+        assert_eq!(roads.len(),4);
         let full=roads.iter().find(|r|r.source_id.contains("bridge-1")).unwrap();
         assert_eq!(full.tags.get("bridge").map(String::as_str),Some("yes"));
         assert_eq!(full.tags.get("layer").map(String::as_str),Some("2"));
         assert_eq!(full.tags.get("width").map(String::as_str),Some("13.5m"));
         assert!(full.tags.contains_key("overture:road_flags"));
-        let partial=roads.iter().find(|r|r.source_id.contains("scoped")).unwrap();
-        assert!(!partial.tags.contains_key("bridge"),"scoped flags do not describe whole road");
-        assert!(!partial.tags.contains_key("layer"),"partial level is not a whole-road elevation");
-        assert!(partial.tags.contains_key("overture:level_rules"));
+        let scopes=roads.iter().filter(|r|r.source_id.contains("scoped"))
+            .collect::<Vec<_>>();
+        assert_eq!(scopes.len(),3);
+        assert!(!scopes[0].tags.contains_key("bridge"));
+        assert_eq!(scopes[1].tags.get("bridge").map(String::as_str),Some("yes"));
+        assert_eq!(scopes[1].tags.get("layer").map(String::as_str),Some("1"));
+        assert!(!scopes[2].tags.contains_key("bridge"));
+        assert!(scopes[1].tags.contains_key("overture:level_rules"));
     }
 
     #[test]

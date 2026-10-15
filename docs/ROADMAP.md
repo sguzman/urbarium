@@ -29,7 +29,8 @@
 - [x] Integrate DEM-based Rust terrain mesh, road draping, building base offsets and first-person camera ground height.
 - [ ] Upgrade elevation source to high-resolution 3DEP where available; fix bridge/underpass decks and retaining walls.
 - [x] Preserve Overture transportation bridge/tunnel flags, visual level rules and road width rules during GeoJSON ingestion without inventing metric elevations.
-- [ ] Split roads at scoped bridge/level transitions and derive grade separation from Overture Z-order and topology; validate crossings against source features.
+- [x] Split centerlines at source-scoped bridge/level transitions **before geographic clipping**, assigning separate ground/bridge tags per section.
+- [ ] Recover Overture connector-aware vertical continuity and crossing rules; validate bridge spans against source geometry and ramp gradients.
 - [x] Generate initial source-qualified elevated freeway/bridge decks with genuine vertical mesh geometry, slab soffits/fascia, side barriers and approximate support columns; default render layers remain separate from at-grade junctions.
 - [ ] Join elevated segment profiles across real Overture connector topology and model true source-scoped bridge transitions, ramps, underpasses, engineering clearances and collisions (never infer surveyed altitude solely from Z-order).
 - [ ] Add optional named building discovery from Overture's source names/heights, with careful label density and independently matched provenance for notable buildings.
