@@ -20,6 +20,15 @@ produced a geographic city JSON and a low-poly 3D building OBJ:
 - A single combined glTF 2.0 binary (.glb) contains **34,660 triangles** in six layers (reference ground, buildings, roads, pedestrian paths, steps, rail).
 - **1,719,448 bytes** total for the uncompressed GLB, independently loaded through a separate glTF-capable 3D library.
 
+**October 15 browser milestone:** headed Chromium on software Vulkan
+confirmed genuinely rendered Downtown LA rooftops, streets and building
+facades (not merely a running WASM process). The automated pixel check saw
+separate sky, building, street and terrain colors and passed keyboard camera
+interaction. [Validated build and screenshot](https://github.com/sguzman/urbarium/actions/runs/38725915571).
+The shader and geometry are procedural Rust/WebGPU, with no screenshot
+substitution or static fake viewport. The dataset remains a small downtown
+pilot, not LA County coverage.
+
 The sample covers approximately 1.5 × 1.2 km around Bunker Hill / Civic
 Center, not the whole city. The outputs include real indexed 3D geometry and a first
 **Rust/WASM/WebGPU flythrough viewer**. Chromium automated QA successfully
@@ -167,10 +176,15 @@ GitHub's official Pages actions. The deploy job runs only after QA succeeds
 on `main`. Nothing under `data/raw`, `data/processed`, or `web/assets`
 needs to be committed to Git.
 
-Site address: https://sguzman.github.io/urbarium/ (requires Pages publication
-to complete successfully). To use this workflow, set **Settings → Pages →
-Build and deployment → Source → GitHub Actions**. Merely enabling the
-branch-based Pages build does not publish the Trunk/WASM output.
+Expected site address: https://sguzman.github.io/urbarium/ .
+The verified Pages artifact was accepted by GitHub Actions on October 15,
+but the site was still returning HTTP 404 from the public CDN. **Pages must
+be configured with Settings → Pages → Build and deployment → Source →
+GitHub Actions**, rather than "Deploy from a branch". The latter runs a
+separate default repository/Jekyll publish job rather than the validated
+Trunk/WASM bundle. After the source is corrected, rerun
+"Build and test browser demo" from the Actions tab to publish and verify
+the actual site.
 
 ## Geometry contract
 
