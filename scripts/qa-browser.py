@@ -5,10 +5,10 @@ from playwright.sync_api import sync_playwright
 
 with sync_playwright() as p:
     browser = p.chromium.launch(
-        headless=True,
+        headless=False,
         args=[
             "--enable-unsafe-webgpu",
-            "--enable-features=Vulkan,WebGPUDeveloperFeatures",
+            "--enable-features=WebGPUDeveloperFeatures",
             "--use-angle=swiftshader",
             "--disable-gpu-sandbox",
         ],
