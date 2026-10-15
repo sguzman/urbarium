@@ -61,6 +61,13 @@ pub struct Street {
     pub name: Option<String>,
     pub kind: String,
     pub path: Vec<Point>,
+    /// OSM way node IDs, retained when every coordinate has a corresponding ID.
+    /// These allow exact connectivity recovery at shared street junction nodes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub osm_node_ids: Vec<i64>,
+    /// Selected source tags relevant to accurate road and pedestrian geometry.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tags: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,11 +132,27 @@ pub fn from_overpass(json: &str, region: Region) -> Result<City, String> {
         }
         let name = string_prop(tags.get("name"));
         if let Some(kind) = tags.get("highway").and_then(Value::as_str) {
+            let osm_node_ids = element.get("nodes").and_then(Value::as_array)
+                .filter(|nodes| nodes.len() == geometry.len() && coordinates.len() == geometry.len())
+                .map(|nodes| nodes.iter().filter_map(Value::as_i64).collect::<Vec<_>>())
+                .filter(|nodes| nodes.len() == geometry.len())
+                .unwrap_or_default();
+            const STREET_TAGS: [&str; 15] = [
+                "lanes", "width", "maxspeed", "sidewalk", "foot",
+                "bicycle", "surface", "bridge", "tunnel", "layer",
+                "oneway", "access", "junction", "lit", "service",
+            ];
+            let street_tags = STREET_TAGS.iter()
+                .filter_map(|key| tags.get(*key).and_then(Value::as_str)
+                    .map(|value| ((*key).to_owned(), value.to_owned())))
+                .collect::<BTreeMap<String, String>>();
             streets.push(Street {
                 source_id: format!("osm:way:{id}"),
                 name: name.clone(),
                 kind: kind.to_owned(),
                 path: coordinates.iter().map(|(lon, lat)| region.project(*lon, *lat)).collect(),
+                osm_node_ids,
+                tags: street_tags,
             });
         }
         if tags.get("building").and_then(Value::as_str).is_some_and(|v| v != "no")
@@ -340,6 +363,17 @@ mod tests {
         assert!((city.buildings[0].height_m.unwrap() - 12.192).abs() < 0.001);
         assert_eq!(city.buildings[1].height_m, None);
         assert_eq!(city.buildings[0].polygons[0].rings[0].len(), 3);
+    }
+
+    #[test]
+    fn preserve_street_topology_and_geometry_tags() {
+        let sample = include_str!("../tests/fixtures/synthetic-overpass.json");
+        let city = from_overpass(sample, downtown()).unwrap();
+        assert_eq!(city.streets.len(), 1);
+        assert_eq!(city.streets[0].osm_node_ids, vec![7001, 7002]);
+        assert_eq!(city.streets[0].tags.get("sidewalk").map(String::as_str), Some("both"));
+        assert_eq!(city.streets[0].tags.get("lanes").map(String::as_str), Some("2"));
+        assert_eq!(city.streets[0].tags.get("bridge").map(String::as_str), Some("no"));
     }
 
     #[test]

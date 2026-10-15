@@ -55,7 +55,7 @@ nor build has been confirmed against live services in this environment.
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.
 - Output is meters relative to the origin: `x` increases east, `z` increases north.
-- Roads are tagged centerlines, not surveyed curb edges or navigable pavement meshes.
+- Roads are tagged centerlines, not surveyed curb edges or navigable pavement meshes. Source node IDs preserve future junction connectivity, and selected tags retain sidewalk, lane, bridge/tunnel and access information.
 - Buildings are polygon/multipolygon footprints with holes supported in GeoJSON.
 - Height is optional and represents a known reported measurement; **missing height is not silently guessed**.
 - Mesh generation, terrain, collision, traffic and rendering belong in later stages, using this data as input.
