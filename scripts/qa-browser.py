@@ -297,7 +297,7 @@ with sync_playwright() as p:
             timeout=8000,
         )
         assert page.locator("#landmark-legend").is_visible()
-        assert page.locator("#world-landmarks .world-landmark").count()==8
+        assert page.locator("#world-landmarks .world-landmark").count()==9
         page.locator("#layer-landmarks").uncheck()
         page.wait_for_function(
             "() => document.querySelector('#minimap-canvas')?.dataset.categoryColors === 'false'",
