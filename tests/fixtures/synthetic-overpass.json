@@ -1,0 +1,50 @@
+{
+  "version": 0.6,
+  "generator": "Urbarium synthetic smoke fixture; NOT real geographic data",
+  "elements": [
+    {
+      "type": "way",
+      "id": 1001,
+      "tags": {
+        "highway": "residential",
+        "name": "Synthetic Test Street"
+      },
+      "geometry": [
+        {
+          "lat": 34.05,
+          "lon": -118.251
+        },
+        {
+          "lat": 34.0503,
+          "lon": -118.2504
+        }
+      ]
+    },
+    {
+      "type": "way",
+      "id": 1002,
+      "tags": {
+        "building": "yes",
+        "height": "10 m"
+      },
+      "geometry": [
+        {
+          "lat": 34.0501,
+          "lon": -118.2502
+        },
+        {
+          "lat": 34.0501,
+          "lon": -118.25
+        },
+        {
+          "lat": 34.0503,
+          "lon": -118.25
+        },
+        {
+          "lat": 34.0501,
+          "lon": -118.2502
+        }
+      ]
+    }
+  ]
+}

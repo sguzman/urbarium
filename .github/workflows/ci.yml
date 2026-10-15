@@ -14,3 +14,20 @@ jobs:
         run: cargo test --all-targets
       - name: CLI help
         run: cargo run -- --help
+      - name: Synthetic ingestion smoke test (no network)
+        run: |
+          cargo run -- ingest \
+            --region regions/downtown-la.json \
+            --osm tests/fixtures/synthetic-overpass.json \
+            --out /tmp/urbarium-smoke.json
+          python3 - <<'PY'
+          import json
+          with open('/tmp/urbarium-smoke.json', encoding='utf-8') as handle:
+              city = json.load(handle)
+          assert city['schema_version'] == 1
+          assert len(city['streets']) == 1
+          assert len(city['buildings']) == 1
+          assert abs(city['buildings'][0]['height_m'] - 10) < 0.001
+          assert city['provenance'][0]['license'] == 'ODbL-1.0'
+          print('Smoke test: validated 1 street and 1 building')
+          PY
