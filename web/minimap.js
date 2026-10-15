@@ -1,147 +1,296 @@
-/* Urbarium 2D locator: real city footprints and centerlines, not a second
- * 3D geometry pipeline. North-up, centered on the player's Rust camera.
- * This map covers the current bounded Downtown LA dataset, not LA County.
+/* Geographic Downtown LA locator, 60Hz camera marker + world-space POI labels.
+ * Background geometry is rasterized only on zoom or cache recenter. The camera
+ * pointer and world labels track the compact Rust camera pose each RAF.
+ * Landmarks are coordinate-anchored labels, NOT reconstructed architecture.
  */
 (() => {
   "use strict";
   const canvas = document.getElementById("minimap-canvas");
-  const ctx = canvas?.getContext("2d");
-  const scaleLabel = document.getElementById("map-scale");
-  const coordsLabel = document.getElementById("map-coordinates");
-  if (!ctx || !scaleLabel || !coordsLabel) return;
-  const size = 260;
-  const radius = Math.PI / 180 * 6371008.8;
-  const states = { city: null, scale: 650, last: 0, shapes: [] };
-  // scale is the visible width in local meters.
+  const ctx = canvas?.getContext("2d", { alpha: false });
+  if (!ctx) return;
+  const size=260, bufferSize=780;
+  const dpr=Math.min(2,window.devicePixelRatio||1);
+  canvas.width=Math.round(size*dpr);
+  canvas.height=Math.round(size*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const buffer=document.createElement("canvas");
+  buffer.width=Math.round(bufferSize*dpr);
+  buffer.height=Math.round(bufferSize*dpr);
+  const bc=buffer.getContext("2d",{alpha:false});
+  bc.setTransform(dpr,0,0,dpr,0,0);
+  const status=document.getElementById("status");
+  const scaleLabel=document.getElementById("map-scale");
+  const coordsLabel=document.getElementById("map-coordinates");
+  const layer=document.getElementById("world-landmarks");
+  const radius=(Math.PI/180)*6371008.8;
+  const kinds=new Set(["motorway","motorway_link","trunk","trunk_link",
+    "primary","primary_link","secondary","secondary_link","tertiary",
+    "tertiary_link","residential","living_street","service","unclassified","track"]);
+  const colors={road:"#668497",path:"#b6b9a5",rail:"#80a4ac",
+    steps:"#b4aa91",buildings:"#425e68",ground:"#273f3d"};
+  const state={city:null,terrain:null,landmarks:[],width:650,cache:false,
+    cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0};
+  function project(lon,lat,region) {
+    return {x:(lon-region.origin[0])*radius*Math.cos(region.origin[1]*Math.PI/180),
+      z:(lat-region.origin[1])*radius};
+  }
+  function pose() {
+    const packed=status?.getAttribute("data-camera-pose");
+    if(packed) {
+      const a=packed.split(",").map(Number);
+      if(a.length===5&&a.every(Number.isFinite))
+        return {x:a[0],y:a[1],z:a[2],yaw:a[3],pitch:a[4]};
+    }
+    const read=(name)=>Number(status?.getAttribute(name)||0);
+    return {x:read("data-camera-x"),y:read("data-camera-y"),
+      z:read("data-camera-z"),yaw:read("data-camera-yaw"),pitch:0};
+  }
   function zoom(factor) {
-    states.scale = Math.max(100, Math.min(2500, states.scale * factor));
-    paint();
+    state.width=Math.max(100,Math.min(2500,state.width*factor));
+    state.cache=false;
   }
-  document.getElementById("map-zoom-in")?.addEventListener("click", () => zoom(0.65));
-  document.getElementById("map-zoom-out")?.addEventListener("click", () => zoom(1 / 0.65));
-  canvas.addEventListener("wheel", (event) => {
-    event.preventDefault();
-    zoom(event.deltaY > 0 ? 1.18 : 1 / 1.18);
-  }, { passive: false });
-  for (const type of ["click", "mousedown", "mouseup"]) {
-    canvas.addEventListener(type, (event) => event.stopPropagation());
-  }
-  const status = () => document.getElementById("status");
-  const readNumber = (name, fallback = 0) => {
-    const n = Number(status()?.getAttribute(name));
-    return Number.isFinite(n) ? n : fallback;
-  };
-  const rgb = {
-    road: "#5e7789", footway: "#bfbea9", steps: "#d4b58c",
-    rail: "#79a7ab", ground: "#233a38", building: "#405b63",
-    boundary: "#788a8a"
-  };
-  const roadKinds = new Set([
-    "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
-    "secondary", "secondary_link", "tertiary", "tertiary_link",
-    "residential", "living_street", "service", "unclassified", "track"
-  ]);
-  const shapeColor = kind => roadKinds.has(kind) ? rgb.road :
-      kind === "steps" ? rgb.steps :
-      ["rail", "tram", "light_rail"].includes(kind) ? rgb.rail : rgb.footway;
-  const project = (lon, lat, region) => ({
-    x: (lon - region.origin[0]) * radius * Math.cos(region.origin[1] * Math.PI / 180),
-    z: (lat - region.origin[1]) * radius,
-  });
-  function paint() {
-    const city = states.city;
-    if (!city) return;
-    const x = readNumber("data-camera-x");
-    const z = readNumber("data-camera-z");
-    const yaw = readNumber("data-camera-yaw");
-    const ppm = size / states.scale;
-    const xy = (p) => [size / 2 + (p.x - x) * ppm,
-                       size / 2 - (p.z - z) * ppm];
-    ctx.clearRect(0, 0, size, size);
-    ctx.fillStyle = "#111f2a";
-    ctx.fillRect(0, 0, size, size);
-    const sw = xy(project(city.region.bbox[0], city.region.bbox[1], city.region));
-    const ne = xy(project(city.region.bbox[2], city.region.bbox[3], city.region));
-    ctx.fillStyle = rgb.ground;
-    ctx.fillRect(sw[0], ne[1], ne[0] - sw[0], sw[1] - ne[1]);
-    ctx.save();
-    ctx.beginPath();
-    ctx.rect(0, 0, size, size);
-    ctx.clip();
-    ctx.fillStyle = rgb.building;
-    // Each source building may contain outer rings and courtyard holes.
-    for (const building of city.buildings) {
-      for (const polygon of building.polygons ?? []) {
-        const rings = polygon.rings ?? [];
-        if (!rings.length) continue;
-        ctx.beginPath();
-        for (const ring of rings) {
-          ring.forEach((p, i) => {
-            const [sx, sy] = xy(p);
-            if (i === 0) ctx.moveTo(sx, sy);
-            else ctx.lineTo(sx, sy);
+  document.getElementById("map-zoom-in")?.addEventListener("click",()=>zoom(.65));
+  document.getElementById("map-zoom-out")?.addEventListener("click",()=>zoom(1/.65));
+  canvas.addEventListener("wheel",(e)=>{e.preventDefault();zoom(e.deltaY>0?1.18:1/1.18);},
+    {passive:false});
+  ["click","mousedown","mouseup"].forEach(event=>
+    canvas.addEventListener(event,e=>e.stopPropagation()));
+
+  function rebuild(x,z) {
+    const city=state.city,ppm=size/state.width;
+    state.cx=x;state.cz=z;state.cache=true;state.mapRedraws++;
+    const xy=p=>[bufferSize/2+(p.x-x)*ppm,bufferSize/2-(p.z-z)*ppm];
+    bc.fillStyle="#101d27";
+    bc.fillRect(0,0,bufferSize,bufferSize);
+    const sw=xy(project(city.region.bbox[0],city.region.bbox[1],city.region));
+    const ne=xy(project(city.region.bbox[2],city.region.bbox[3],city.region));
+    bc.fillStyle=colors.ground;
+    bc.fillRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
+    bc.fillStyle=colors.buildings;
+    for(const building of city.buildings) {
+      for(const polygon of building.polygons||[]) {
+        bc.beginPath();
+        for(const ring of polygon.rings||[]) {
+          ring.forEach((p,i)=>{
+            const pos=xy(p);
+            if(i===0)bc.moveTo(pos[0],pos[1]);
+            else bc.lineTo(pos[0],pos[1]);
           });
-          ctx.closePath();
+          bc.closePath();
         }
-        ctx.fill("evenodd");
+        bc.fill("evenodd");
       }
     }
-    for (const street of city.streets) {
-      if (!street.path || street.path.length < 2) continue;
-      ctx.strokeStyle = shapeColor(street.kind);
-      ctx.lineWidth = roadKinds.has(street.kind) ? 1.7 : 0.9;
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      for (const [i, p] of street.path.entries()) {
-        const [sx, sy] = xy(p);
-        if (i === 0) ctx.moveTo(sx, sy);
-        else ctx.lineTo(sx, sy);
-      }
-      ctx.stroke();
+    for(const street of city.streets) {
+      if(!street.path||street.path.length<2)continue;
+      bc.beginPath();
+      bc.strokeStyle=kinds.has(street.kind)?colors.road:
+        street.kind==="steps"?colors.steps:
+        ["rail","tram","light_rail","funicular"].includes(street.kind)?
+          colors.rail:colors.path;
+      bc.lineWidth=kinds.has(street.kind)?1.7:.9;
+      bc.lineCap="round";
+      street.path.forEach((p,i)=>{
+        const pos=xy(p);
+        if(i===0)bc.moveTo(pos[0],pos[1]);
+        else bc.lineTo(pos[0],pos[1]);
+      });
+      bc.stroke();
     }
-    ctx.strokeStyle = rgb.boundary;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(sw[0], ne[1], ne[0] - sw[0], sw[1] - ne[1]);
-    ctx.restore();
-    // North stays at the top; arrow rotates with the actual FPS yaw.
-    ctx.save();
-    ctx.translate(size / 2, size / 2);
-    ctx.rotate(yaw);
-    ctx.fillStyle = "#ffdf86";
-    ctx.strokeStyle = "#1c2830";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, -12);
-    ctx.lineTo(-7, 9);
-    ctx.lineTo(0, 5);
-    ctx.lineTo(7, 9);
-    ctx.closePath();
-    ctx.stroke();
-    ctx.fill();
-    ctx.restore();
-    scaleLabel.textContent = `${Math.round(states.scale)} m across`;
-    const lon = city.region.origin[0] + x /
-      (radius * Math.cos(city.region.origin[1] * Math.PI / 180));
-    const lat = city.region.origin[1] + z / radius;
-    coordsLabel.textContent = `${lat.toFixed(5)}° N, ${Math.abs(lon).toFixed(5)}° W`;
-    canvas.setAttribute("data-map-ready", "true");
-    canvas.setAttribute("data-map-width-m", String(states.scale));
-    canvas.setAttribute("data-player-x", String(x));
-    canvas.setAttribute("data-player-z", String(z));
+    bc.strokeStyle="#81979b";
+    bc.lineWidth=1;
+    bc.strokeRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
   }
-  async function init() {
+
+  function terrainHeight(x,z) {
+    const t=state.terrain,c=state.city;
+    if(!t||!c||t.width<2||t.height<2)return 0;
+    const sw=project(c.region.bbox[0],c.region.bbox[1],c.region);
+    const ne=project(c.region.bbox[2],c.region.bbox[3],c.region);
+    const fx=Math.max(0,Math.min(t.width-1,(x-sw.x)/(ne.x-sw.x)*(t.width-1)));
+    const fz=Math.max(0,Math.min(t.height-1,(z-sw.z)/(ne.z-sw.z)*(t.height-1)));
+    const col=Math.min(t.width-2,Math.floor(fx)),row=Math.min(t.height-2,Math.floor(fz));
+    const tx=fx-col,tz=fz-row;
+    const at=(ix,iz)=>t.heights_m[iz*t.width+ix];
+    const swy=at(col,row),sey=at(col+1,row),nwy=at(col,row+1),
+      ney=at(col+1,row+1);
+    return tx+tz<=1?swy+(sey-swy)*tx+(nwy-swy)*tz:
+      ney+(nwy-ney)*(1-tx)+(sey-ney)*(1-tz);
+  }
+  function withinRing(x,z,ring) {
+    let hit=false,j=ring.length-1;
+    for(let i=0;i<ring.length;j=i++) {
+      const a=ring[i],b=ring[j];
+      if((a.z>z)!==(b.z>z)&&x<(b.x-a.x)*(z-a.z)/(b.z-a.z)+a.x)
+        hit=!hit;
+    }
+    return hit;
+  }
+  function landmarkHeight(mark) {
+    let height=12;
+    for(const b of state.city.buildings) {
+      const h=Number.isFinite(b.height_m)?b.height_m:
+        Number.isFinite(b.levels)?b.levels*3.1:0;
+      for(const poly of b.polygons||[]) {
+        const rings=poly.rings||[];
+        if(rings.length&&withinRing(mark.x,mark.z,rings[0])&&
+          !rings.slice(1).some(r=>withinRing(mark.x,mark.z,r))) {
+          height=Math.max(height,h+5);
+          return terrainHeight(mark.x,mark.z)+height;
+        }
+      }
+    }
+    return terrainHeight(mark.x,mark.z)+height;
+  }
+
+  function installLandmarks(doc) {
+    if(!doc||doc.region_id!==state.city.region.id||
+      !Array.isArray(doc.landmarks))return;
+    state.landmarks=doc.landmarks
+      .filter(item=>item.coordinates?.length===2 &&
+        item.coordinates.every(Number.isFinite) &&
+        item.coordinates[0]>=state.city.region.bbox[0] &&
+        item.coordinates[0]<=state.city.region.bbox[2] &&
+        item.coordinates[1]>=state.city.region.bbox[1] &&
+        item.coordinates[1]<=state.city.region.bbox[3])
+      .map(item=>{
+        const pos=project(item.coordinates[0],item.coordinates[1],state.city.region);
+        const mark={...item,x:pos.x,z:pos.z};
+        mark.y=landmarkHeight(mark);
+        if(layer) {
+          const el=document.createElement("span");
+          el.className="world-landmark";
+          el.textContent=mark.short||mark.name;
+          el.title=mark.name+" · geographic landmark label (not a custom 3D model)";
+          layer.appendChild(el);
+          mark.el=el;
+        }
+        return mark;
+      });
+    canvas.setAttribute("data-landmark-count",String(state.landmarks.length));
+  }
+  function drawLandmarks(p,ppm) {
+    ctx.save();
+    ctx.font="11px system-ui, sans-serif";
+    for(const lm of state.landmarks) {
+      const sx=size/2+(lm.x-p.x)*ppm;
+      const sy=size/2-(lm.z-p.z)*ppm;
+      if(sx < -25||sx>size+25||sy< -15||sy>size+15)continue;
+      ctx.fillStyle=lm.kind==="park"?"#92d3a4":"#f4cc7b";
+      ctx.strokeStyle="#0b1c25";
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.arc(sx,sy,3.4,0,2*Math.PI);
+      ctx.stroke();ctx.fill();
+      // Text appears only at closer zoom to reduce label crowding.
+      if(state.width<=750) {
+        ctx.lineWidth=3;
+        ctx.strokeText(lm.short||lm.name,sx+6,sy-4);
+        ctx.fillStyle="#faf7df";
+        ctx.fillText(lm.short||lm.name,sx+6,sy-4);
+      }
+    }
+    ctx.restore();
+  }
+  function updateWorldLabels(p) {
+    if(!layer||!state.landmarks.length)return;
+    const w=window.innerWidth,h=window.innerHeight,aspect=w/Math.max(1,h);
+    const cp=Math.cos(p.pitch),sp=Math.sin(p.pitch);
+    const sy=Math.sin(p.yaw),cy=Math.cos(p.yaw);
+    const fx=sy*cp,fy=sp,fz=cy*cp;
+    const rx=-cy,rz=sy;
+    const ux=-sy*sp,uy=cp,uz=-cy*sp;
+    const tan=Math.tan(68*Math.PI/360);
+    for(const mark of state.landmarks) {
+      const el=mark.el;if(!el)continue;
+      const dx=mark.x-p.x,dy=mark.y-p.y,dz=mark.z-p.z;
+      const distance=Math.hypot(dx,dy,dz);
+      const depth=dx*fx+dy*fy+dz*fz;
+      if(depth<3||distance>1250) {el.hidden=true;continue;}
+      const hor=(dx*rx+dz*rz)/(depth*tan*aspect);
+      const ver=(dx*ux+dy*uy+dz*uz)/(depth*tan);
+      if(Math.abs(hor)>1.08||Math.abs(ver)>1.05) {el.hidden=true;continue;}
+      el.hidden=false;
+      el.style.left=((hor+1)*w/2).toFixed(1)+"px";
+      el.style.top=((1-ver)*h/2).toFixed(1)+"px";
+      el.style.opacity=String(Math.min(1,Math.max(.35,150/distance)));
+    }
+  }
+
+  function draw(p) {
+    if(!state.city)return;
+    const ppm=size/state.width;
+    const dx=(p.x-state.cx)*ppm,dz=(p.z-state.cz)*ppm;
+    if(!state.cache||Math.abs(dx)>245||Math.abs(dz)>245)rebuild(p.x,p.z);
+    const cropX=(bufferSize-size)/2+(p.x-state.cx)*ppm;
+    const cropY=(bufferSize-size)/2-(p.z-state.cz)*ppm;
+    ctx.drawImage(buffer,cropX*dpr,cropY*dpr,size*dpr,size*dpr,
+      0,0,size,size);
+    drawLandmarks(p,ppm);
+    ctx.save();
+    ctx.translate(size/2,size/2);
+    ctx.rotate(p.yaw);
+    ctx.fillStyle="#ffe39a";
+    ctx.strokeStyle="#0e2630";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(0,-12);
+    ctx.lineTo(-7,9);
+    ctx.lineTo(0,5);
+    ctx.lineTo(7,9);
+    ctx.closePath();
+    ctx.stroke();ctx.fill();
+    ctx.restore();
+    updateWorldLabels(p);
+    state.frame++;
+    canvas.setAttribute("data-map-ready","true");
+    canvas.setAttribute("data-map-frame",String(state.frame));
+    canvas.setAttribute("data-map-redraws",String(state.mapRedraws));
+    canvas.setAttribute("data-map-width-m",String(state.width));
+    canvas.setAttribute("data-player-x",String(p.x));
+    canvas.setAttribute("data-player-z",String(p.z));
+    if(state.frame%8===0){
+      scaleLabel.textContent=Math.round(state.width)+" m across";
+      const origin=state.city.region.origin;
+      const lon=origin[0]+p.x/(radius*Math.cos(origin[1]*Math.PI/180));
+      const lat=origin[1]+p.z/radius;
+      coordsLabel.textContent=lat.toFixed(5)+"° N, "+
+        Math.abs(lon).toFixed(5)+"° W";
+    }
+  }
+  function loop(){
+    if(state.city&&!document.hidden) {
+      const p=pose();
+      state.lastPose=p;
+      draw(p);
+    }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  async function init(){
     try {
-      const response = await fetch("./assets/downtown-la.json");
-      if (!response.ok) throw new Error("HTTP " + response.status);
-      const city = await response.json();
-      if (!city.region || !Array.isArray(city.streets)) throw Error("Invalid city file");
-      states.city = city;
-      paint();
-      // Do not redraw polygons at 60fps. Camera update is independent.
-      setInterval(paint, 150);
-    } catch (error) {
-      scaleLabel.textContent = "Map unavailable";
-      coordsLabel.textContent = String(error);
+      const response=await fetch("./assets/downtown-la.json");
+      if(!response.ok)throw new Error("City HTTP "+response.status);
+      const city=await response.json();
+      if(!city.region||!Array.isArray(city.streets)||!Array.isArray(city.buildings))
+        throw new Error("Invalid city scene");
+      state.city=city;
+      const [lmResult,terrainResult]=await Promise.allSettled([
+        fetch("./assets/landmarks.json").then(r=>{
+          if(!r.ok)throw Error("landmarks HTTP "+r.status);
+          return r.json();
+        }),
+        fetch("./assets/downtown-la-terrain.json").then(r=>{
+          if(!r.ok)throw Error("terrain HTTP "+r.status);
+          return r.json();
+        })
+      ]);
+      if(terrainResult.status==="fulfilled")state.terrain=terrainResult.value;
+      if(lmResult.status==="fulfilled")installLandmarks(lmResult.value);
+      else console.warn("Urbarium landmarks unavailable",lmResult.reason);
+    }catch(error) {
+      scaleLabel.textContent="Map unavailable";
+      coordsLabel.textContent=String(error);
     }
   }
   init();
