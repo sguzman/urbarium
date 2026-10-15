@@ -28,7 +28,7 @@
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/landmarks.json" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/minimap.js">
-  <script src="./minimap.js" defer></script>
+  <script src="./minimap.js?v=shared-data-2" defer></script>
   <link data-trunk rel="copy-file" href="web/stats.js">
   <script src="./stats.js" defer></script>
   <style>
@@ -163,8 +163,9 @@
     <canvas id="minimap-canvas" width="260" height="260" role="img"
       aria-label="Local street map with player position and heading"></canvas>
     <div class="map-controls">
-      <span id="map-scale">Loading streets...</span>
+      <span id="map-scale" role="status">Waiting for city data...</span>
       <div class="map-buttons">
+        <button id="map-retry" type="button" aria-label="Retry minimap data without reloading the viewer" title="Retry minimap data">↻</button>
         <button id="map-zoom-out" type="button" aria-label="Zoom minimap out">−</button>
         <button id="map-zoom-in" type="button" aria-label="Zoom minimap in">+</button>
       </div>
