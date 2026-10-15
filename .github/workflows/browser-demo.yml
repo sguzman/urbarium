@@ -1,0 +1,78 @@
+name: Build and test browser demo
+
+# Build a complete, self-contained city browser package, with an acquired
+# geographic sample. No massive datasets are checked into the git repository.
+on:
+  push:
+    paths:
+      - .github/workflows/browser-demo.yml
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Acquire actual Downtown LA street and building data
+        run: |
+          python -m pip install overturemaps
+          bash scripts/build-downtown-overture.sh
+          mkdir -p web/assets
+          cp data/processed/downtown-la.json web/assets/downtown-la.json
+      - name: Install pinned Trunk WebAssembly bundler
+        run: |
+          curl -fLS --retry 2 \
+            https://github.com/trunk-rs/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz \
+            -o /tmp/trunk.tar.gz
+          tar -xzf /tmp/trunk.tar.gz -C /usr/local/bin trunk
+          trunk --version
+      - name: Compile real Rust/WebGPU WASM app
+        run: trunk build --release --public-url ./
+      - name: Validate static site and scene data
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          dist=Path("dist")
+          assert (dist/"index.html").is_file()
+          assert (dist/"assets"/"downtown-la.json").is_file()
+          city=json.loads((dist/"assets"/"downtown-la.json").read_text())
+          assert len(city["streets"]) > 500
+          assert len(city["buildings"]) > 300
+          wasm=list(dist.glob("*.wasm"))
+          js=list(dist.glob("*.js"))
+          assert wasm and js,(wasm,js)
+          print("Browser package:",len(city["streets"]),"streets;",
+                len(city["buildings"]),"buildings;",
+                wasm[0].stat().st_size,"WASM bytes")
+          PY
+      - name: Install headless Chromium QA
+        run: |
+          python3 -m pip install playwright
+          python3 -m playwright install --with-deps chromium
+      - name: QA viewer in browser with WebGPU
+        run: |
+          python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
+          python3 scripts/qa-browser.py
+      - name: Package playable browser site
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: urbarium-browser-downtown-la
+          path: dist/
+          retention-days: 14
+      - name: Upload browser debug screenshot on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: urbarium-browser-debug
+          path: /tmp/urbarium-browser-debug.png
+          if-no-files-found: ignore
+          retention-days: 7
