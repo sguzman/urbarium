@@ -253,12 +253,45 @@ validated shared scene; it does not download a second copy.
 
 Application scripts, Rust WASM and the page are **not** pinned in this
 geography cache, so deploying a viewer update still loads current code.
+The launch link opens the same application origin and does not itself erase
+any geographic cache. A brand-new browser profile/private window and a
+browser eviction can cause geographic data to be downloaded again.
+
+The HUD now says **City: CACHE HIT / NETWORK DOWNLOAD / downloaded + saved**
+and the equivalent for **Terrain**, plus measured elapsed startup time and
+the current phase (fetch, JSON decoding, 3D geometry generation, GPU setup,
+first frame). This distinguishes a genuine network download from slower
+local Rust/WASM parsing or GPU initialization. It does **not** mean the
+browser can guarantee offline access forever or that a hung GPU can always
+be recovered inside a page. The old meaningless "cache ready" label has
+been removed.
 Use **Refresh geography** in the HUD when explicitly wanting new downloaded
 city/terrain data. Clearing site data also clears the geographic cache.
 Future geographic region/schema releases must change the cache namespace;
 the default remains stable so merely updating the viewer never forces an
 expensive redownload. Browser cache availability is best-effort, not a promise
 of permanent offline storage.
+
+## Named buildings and real 3D transport grades
+
+The acquired Overture building features already store optional **names**,
+recorded heights and floor counts. Only nine places have manually sourced
+landmark annotations; named buildings not among them can be discovered from
+the building inventory without calling them full architectural recreations.
+External heritage descriptions and Wikipedia/Wikidata identifiers require
+independent source matching and provenance, not guesses.
+
+The road renderer's meshes are truly 3D, but the current road geometry is
+still **terrain-draped**. Even freeway centerlines render at grade.
+Overture transportation offers `level_rules` (relative stacking order),
+`road_flags` (including `is_bridge`), `width_rules`, and routing connectors.
+The GeoJSON importer now preserves these source attributes for future
+grade-separated decks, sloped ramps, support structures and correct
+over/under crossing handling. The presence of a level is **not** a surveyed
+height in meters. Actual elevated highway geometry, pillars, collisions and
+connectivity-aware ramp grades are **not yet implemented**. Correctness must
+be validated against the source tags and ideally higher-resolution elevation
+or city infrastructure surveys before geographic expansion.
 
 ## Landmark categories and time-of-day sky
 

@@ -28,6 +28,10 @@
 - [x] Acquire and validate a bounded real Mapzen elevation DEM (50.25 m Downtown LA pilot relief) with georeferenced provenance.
 - [x] Integrate DEM-based Rust terrain mesh, road draping, building base offsets and first-person camera ground height.
 - [ ] Upgrade elevation source to high-resolution 3DEP where available; fix bridge/underpass decks and retaining walls.
+- [x] Preserve Overture transportation bridge/tunnel flags, visual level rules and road width rules during GeoJSON ingestion without inventing metric elevations.
+- [ ] Split roads at scoped bridge/level transitions and derive grade separation from Overture Z-order and topology; validate crossings against source features.
+- [ ] Generate real 3D elevated freeway decks with thickness, support columns, ramp gradients, guardrails and underpasses (never infer accurate road altitude solely from Z-order).
+- [ ] Add optional named building discovery from Overture's source names/heights, with careful label density and independently matched provenance for notable buildings.
 - [ ] Hand-authored corrections for standout landmarks only when primary data cannot represent them.
 
 ## P2 — First playable walk
@@ -50,6 +54,8 @@
 - [x] Isolate approximate roadway/footpath/rail batches with layer-visibility toggles and deterministic depth priority.
 - [x] Add observable FPS/frame-time/CPU-side time/GPU mesh-size statistics and browser-error diagnostics.
 - [ ] Investigate hardware-specific WebGPU black presentation and browser/GPU context-loss reports.
+- [x] Report actual per-asset CacheStorage hits/network downloads and startup phases rather than claiming the cache is ready before checking it.
+- [ ] Diagnose/reproduce user hardware-specific browser crashes and CPU/GPU stalls with retained telemetry, not just successful CI screenshots.
 - [ ] Add surveyed-grade street surfaces, map coverage beyond the pilot, and optional location jumping.
 - [x] Reproducible browser QA in Chromium with real Downtown LA scene.
 - [ ] Public GitHub Pages URL serving the verified playable browser bundle (deployment workflow configured, live deployment pending).

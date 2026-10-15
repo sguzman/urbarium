@@ -123,7 +123,10 @@
     #time-of-day[data-clock-mode="live"] {accent-color:#80d0aa;}
     #time-la-now,#refresh-geography {background:#203847;border:1px solid #547081;
       border-radius:5px;color:#eaf3f8;padding:4px 7px;cursor:pointer;}
-    #geodata-cache-state {color:#accbc5;font-size:11px;}
+    #geodata-cache-state {color:#accbc5;font-size:11px;line-height:1.5;}
+    #boot-stage {color:#a9c8d8;font-size:11px;line-height:1.5;
+      font-variant-numeric:tabular-nums;}
+    #boot-stage.error {color:#ffae9a;}
     .map-filter-head {border-top:1px solid #354d58;padding:8px 10px 5px;
       display:flex;align-items:center;justify-content:space-between;gap:6px;
       font-size:10px;font-weight:700;letter-spacing:.05em;}
@@ -179,7 +182,8 @@
         <option value="webgpu">WebGPU · experimental</option>
       </select>
     </label>
-    <p id="renderer-health" role="status">Waiting for first 3D frame...</p>
+    <p id="renderer-health" role="status">Loading the Rust viewer...</p>
+    <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
     <div class="debug-controls">
       <button id="stats-toggle" type="button" aria-controls="stats-panel"
         aria-pressed="false">Stats: off</button>
@@ -202,7 +206,7 @@
         title="Resume live Los Angeles time, updated continuously">Live · LA</button>
     </div>
     <div class="scene-controls">
-      <span id="geodata-cache-state" role="status">Geography: cache starting</span>
+      <span id="geodata-cache-state" role="status">Geography: awaiting first asset request</span>
       <button id="refresh-geography" type="button" title="Delete saved Downtown LA geography and reload from source">Refresh geography</button>
     </div>
   </div>
@@ -415,36 +419,78 @@
           button.textContent="Refresh geography";}
       });
       document.getElementById("geodata-cache-state").textContent=
-        "Geography: "+(window.__urbariumCacheState||"cache ready");
+        "Geography: "+(window.__urbariumCacheState||"awaiting first asset request");
+      const bootInfo=document.getElementById("boot-stage");
+      const bootStart=performance.now();
+      const phases={
+        "city-fetch":"Loading city data","city-decoding":"Decoding city data",
+        "terrain-fetch":"Loading terrain","terrain-decoding":"Decoding terrain",
+        "geometry-build":"Generating 3D city geometry","gpu-init":"Initializing GPU",
+        "graphics-received":"Preparing first GPU frame",
+        "first-present":"3D rendered"
+      };
+      function recordStartupError(error){
+        const description=String(error?.message||error||"unknown startup error").slice(0,210);
+        if(status?.dataset.renderStage==="first-present")return;
+        bootInfo.classList.add("error");
+        bootInfo.textContent="Viewer error: "+description;
+        document.getElementById("stats-last-error").textContent=description;
+      }
+      window.addEventListener("error",event=>recordStartupError(event.error||event.message));
+      window.addEventListener("unhandledrejection",event=>recordStartupError(event.reason));
+      document.addEventListener("webglcontextlost",event=>{
+        const message="WebGL context lost; 3D renderer may require a reload";
+        bootInfo.textContent=message;
+        bootInfo.classList.add("error");
+        health.textContent=message;
+        health.classList.add("warn");
+      },true);
+      window.addEventListener("urbarium-cache-status",event=>{
+        // Explicitly separate asset bytes from CPU/GPU startup phases.
+        const {state,asset}=event.detail;
+        document.documentElement.dataset.geographyLatest=asset+":"+state;
+      });
       menu.value = mode;
       menu.addEventListener("change", () => {
         const url = new URL(location.href);
         url.searchParams.set("renderer", menu.value);
         location.assign(url.href);
       });
-      let lastFrames = 0, lastAdvance = performance.now();
-      let lastTime = performance.now();
-      let lastCount = 0;
-      setInterval(() => {
-        if (document.hidden) return;
-        const frames = Number(status?.dataset.frameCount ?? 0);
-        if (frames > lastFrames) {
-          const now = performance.now();
-          const seconds = Math.max(.001, (now - lastTime) / 1000);
-          const fps = (frames - lastCount) / seconds;
-          health.textContent = `3D renderer active · ${Math.round(fps)} FPS · ${frames} frames`;
+      let lastFrames=0,lastAdvance=performance.now();
+      let lastTime=performance.now(),lastCount=0;
+      let lastBootPhase="";
+      setInterval(()=>{
+        if(document.hidden)return;
+        const now=performance.now();
+        const age=Math.floor((now-bootStart)/1000);
+        const frames=Number(status?.dataset.frameCount??0);
+        const phase=status?.dataset.renderStage||"wasm-start";
+        bootInfo.dataset.phase=phase;
+        if(phase!==lastBootPhase){
+          lastBootPhase=phase;
+          bootInfo.dataset.phaseEntered=String(Math.floor(now));
+        }
+        if(!bootInfo.classList.contains("error"))
+          bootInfo.textContent=(phases[phase]||"Starting application")+" · "+
+            age+"s since opening";
+        if(frames>lastFrames){
+          const seconds=Math.max(.001,(now-lastTime)/1000);
+          const fps=(frames-lastCount)/seconds;
+          health.textContent=`3D renderer active · ${Math.round(fps)} FPS · ${frames} frames`;
           health.classList.remove("warn");
-          lastFrames = frames;
-          lastAdvance = now;
-          lastTime = now;
-          lastCount = frames;
-        } else if (performance.now() - lastAdvance > 3500) {
-          health.textContent = frames
-            ? "3D renderer stalled. Select WebGL2 · stable above."
-            : "No 3D frames yet. Select WebGL2 · stable above.";
+          lastFrames=frames;lastAdvance=now;lastTime=now;lastCount=frames;
+        }else if(phase!=="first-present" && phase!=="graphics-received" && frames===0){
+          // No erroneous "renderer stalled" while downloading or meshing.
+          health.textContent=(phases[phase]||"Loading application")+
+            " · "+age+"s";
+          health.classList.remove("warn");
+        }else if(now-lastAdvance>5500){
+          health.textContent=frames
+            ? "3D renderer may be stalled ("+Math.round((now-lastAdvance)/1000)+"s without a frame)"
+            : "GPU initialization has not produced a frame";
           health.classList.add("warn");
         }
-      }, 1500);
+      },1000);
     })();
   </script>
 </body>

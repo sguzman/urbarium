@@ -368,6 +368,8 @@ async fn fetch_city() -> Result<City, String> {
         if !response.ok() {
             return Err(format!("city asset returned HTTP {}",response.status()));
         }
+        set_browser_stage("city-decoding");
+        info("Downloaded/read city data; decoding geography...");
         let data=response.text().await.map_err(|e| format!("city body: {e}"))?;
         let city:City=serde_json::from_str(&data)
             .map_err(|e|format!("city JSON: {e}"))?;
@@ -435,6 +437,8 @@ async fn fetch_terrain() -> Result<TerrainGrid,String> {
         let response=gloo_net::http::Request::get("./assets/downtown-la-terrain.json")
             .send().await.map_err(|e|format!("DEM fetch: {e}"))?;
         if !response.ok(){return Err(format!("DEM returned HTTP {}",response.status()));}
+        set_browser_stage("terrain-decoding");
+        info("Downloaded/read elevation data; decoding terrain...");
         let data=response.text().await.map_err(|e|format!("DEM body: {e}"))?;
         let terrain:TerrainGrid=serde_json::from_str(&data)
             .map_err(|e|format!("DEM JSON: {e}"))?;
@@ -636,13 +640,19 @@ async fn init_graphics(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) {
 }
 
 async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<(), String> {
+    set_browser_stage("city-fetch");
     info("Loading Downtown LA streets and buildings...");
     let city=fetch_city().await?;
+    set_browser_stage("terrain-fetch");
+    info("Loading Downtown LA elevation grid...");
     let terrain=fetch_terrain().await?;
+    set_browser_stage("geometry-build");
+    info("Generating 3D terrain, buildings and streets...");
     terrain.validate(&city.region)?;
     set_terrain_size(terrain.heights_m.len());
     let (vertices,indices,batches)=combined_city(&city,&terrain)?;
-    info("Connecting to WebGPU or WebGL2...");
+    set_browser_stage("gpu-init");
+    info("Geography ready; initializing WebGPU or WebGL2...");
     let instance=wgpu::util::new_instance_with_webgpu_detection(
         wgpu::InstanceDescriptor::new_without_display_handle()).await;
     let surface=instance.create_surface(window.clone())

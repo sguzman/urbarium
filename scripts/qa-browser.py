@@ -296,6 +296,18 @@ with sync_playwright() as p:
         after=len([u for u in requests if "/assets/downtown-la" in u])
         assert after==before, "Cached geography caused redundant network requests"
         print("Geography CacheStorage persisted and reused both assets without HTTP")
+        cache_state=page.evaluate("() => window.__urbariumGeoCache")
+        assert cache_state["networkRequests"]==2,cache_state
+        assert cache_state["cacheHits"]>=2,cache_state
+        assert set(cache_state["assets"])=={"City","Terrain"},cache_state
+        assert page.locator("#geodata-cache-state").inner_text().count("CACHE HIT")==2
+        assert page.locator("#boot-stage").count()==1
+        page.wait_for_function(
+            "() => document.querySelector('#boot-stage')?.dataset.phase === 'first-present'",
+            timeout=8000,
+        )
+        assert "3D rendered" in page.locator("#boot-stage").inner_text()
+        print("Cache provenance and explicit startup phase remain visible; no false cache-ready claim")
 
         palette=page.evaluate("() => window.urbariumLandmarkPalette")
         assert palette.get("park") and palette.get("library") and palette.get("legal")

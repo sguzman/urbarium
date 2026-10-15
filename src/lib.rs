@@ -527,6 +527,49 @@ pub fn streets_from_geojson(json: &str, region: &Region) -> Result<Vec<Street>, 
                 tags.insert(key.to_owned(), value.to_owned());
             }
         }
+        // Overture transportation is 2D but supplies vertical Z-order and
+        // bridge/tunnel flags. Retain full scoped rules rather than silently
+        // interpreting visual layer numbers as surveyed metric elevations.
+        // Full-segment rules can also be exposed as OSM-style tags for the
+        // existing at-grade junction guard.
+        let covers_whole_segment = |v:&Value| -> bool {
+            let Some(between)=v.get("between") else {return true;};
+            let Some(range)=between.as_array() else {return false;};
+            range.len()==2 &&
+                range[0].as_f64().is_some_and(|x|x<=0.000001) &&
+                range[1].as_f64().is_some_and(|x|x>=0.999999)
+        };
+        if let Some(levels)=prop("level_rules").and_then(Value::as_array) {
+            if !levels.is_empty() {
+                tags.insert("overture:level_rules".into(),Value::Array(levels.clone()).to_string());
+            }
+            if levels.len()==1 && covers_whole_segment(&levels[0]) {
+                if let Some(level)=levels[0].get("value").and_then(Value::as_i64) {
+                    tags.insert("layer".into(),level.to_string());
+                }
+            }
+        }
+        if let Some(flags)=prop("road_flags").and_then(Value::as_array) {
+            if !flags.is_empty() {
+                tags.insert("overture:road_flags".into(),Value::Array(flags.clone()).to_string());
+            }
+            for rule in flags {
+                if !covers_whole_segment(rule) {continue;}
+                let names=rule.get("values").and_then(Value::as_array);
+                let has=|key:&str|names.is_some_and(|names|
+                    names.iter().any(|v|v.as_str()==Some(key)));
+                if has("is_bridge") { tags.insert("bridge".into(),"yes".into()); }
+                if has("is_tunnel") { tags.insert("tunnel".into(),"yes".into()); }
+            }
+        }
+        if let Some(widths)=prop("width_rules").and_then(Value::as_array) {
+            if widths.len()==1 && covers_whole_segment(&widths[0]) {
+                if let Some(width)=widths[0].get("value").and_then(number_value)
+                    .filter(|v| (1.0..=100.0).contains(v)) {
+                    tags.insert("width".into(),format!("{width}m"));
+                }
+            }
+        }
         let paths: Vec<&Value> = match kind {
             "LineString" => vec![coords],
             "MultiLineString" => coords.as_array().into_iter().flatten().collect(),
@@ -707,6 +750,36 @@ mod tests {
         assert_eq!(city.buildings[0].polygons[0].rings.len(), 2);
         assert_eq!(city.buildings[0].polygons[0].rings[0].len(), 4);
         assert!((city.buildings[0].height_m.unwrap() - 18.288).abs() < 0.001);
+    }
+
+    #[test]
+    fn overture_bridge_level_and_width_rules_survive_geojson_import() {
+        let input=r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","id":"bridge-1",
+           "properties":{"class":"motorway","subclass":"link",
+             "road_flags":[{"values":["is_bridge"],"between":[0,1]}],
+             "level_rules":[{"value":2,"between":[0,1]}],
+             "width_rules":[{"value":13.5,"between":[0,1]}]},
+           "geometry":{"type":"LineString","coordinates":[
+             [-118.251,34.05],[-118.250,34.0505]]}},
+          {"type":"Feature","id":"scoped",
+           "properties":{"class":"primary",
+             "road_flags":[{"values":["is_bridge"],"between":[0.2,0.6]}],
+             "level_rules":[{"value":1,"between":[0.2,0.6]}]},
+           "geometry":{"type":"LineString","coordinates":[
+             [-118.252,34.05],[-118.251,34.0505]]}}
+        ]}"#;
+        let roads=streets_from_geojson(input,&downtown()).unwrap();
+        assert_eq!(roads.len(),2);
+        let full=roads.iter().find(|r|r.source_id.contains("bridge-1")).unwrap();
+        assert_eq!(full.tags.get("bridge").map(String::as_str),Some("yes"));
+        assert_eq!(full.tags.get("layer").map(String::as_str),Some("2"));
+        assert_eq!(full.tags.get("width").map(String::as_str),Some("13.5m"));
+        assert!(full.tags.contains_key("overture:road_flags"));
+        let partial=roads.iter().find(|r|r.source_id.contains("scoped")).unwrap();
+        assert!(!partial.tags.contains_key("bridge"),"scoped flags do not describe whole road");
+        assert!(!partial.tags.contains_key("layer"),"partial level is not a whole-road elevation");
+        assert!(partial.tags.contains_key("overture:level_rules"));
     }
 
     #[test]
