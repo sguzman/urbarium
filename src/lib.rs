@@ -218,7 +218,7 @@ pub fn buildings_from_geojson(
         let Some(geometry) = feature.get("geometry") else { continue };
         let Some(kind) = geometry.get("type").and_then(Value::as_str) else { continue };
         let Some(coords) = geometry.get("coordinates") else { continue };
-        let polygons = match kind {
+        let polygons: Vec<Polygon> = match kind {
             "Polygon" => polygon_from_geojson(coords, region).into_iter().collect(),
             "MultiPolygon" => coords.as_array().into_iter().flatten()
                 .filter_map(|polygon| polygon_from_geojson(polygon, region)).collect(),
