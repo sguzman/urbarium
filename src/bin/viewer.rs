@@ -330,7 +330,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     });
     let layout=device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor{
         label:Some("City pipeline layout"),
-        bind_group_layouts:&[&camera_layout],
+        bind_group_layouts:&[Some(&camera_layout)],
         immediate_size:0,
     });
     let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
@@ -338,11 +338,11 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         layout:Some(&layout),
         vertex:wgpu::VertexState{
             module:&shader,entry_point:Some("vs_main"),
-            buffers:&[wgpu::VertexBufferLayout{
+            buffers:&[Some(wgpu::VertexBufferLayout{
                 array_stride:size_of::<GpuVertex>() as u64,
                 step_mode:wgpu::VertexStepMode::Vertex,
                 attributes:&VERTEX_ATTRS,
-            }],
+            })],
             compilation_options:Default::default(),
         },
         fragment:Some(wgpu::FragmentState{
@@ -356,7 +356,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         },
         depth_stencil:Some(wgpu::DepthStencilState {
             format:wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled:true,depth_compare:wgpu::CompareFunction::LessEqual,
+            depth_write_enabled:Some(true),depth_compare:Some(wgpu::CompareFunction::LessEqual),
             stencil:Default::default(),bias:Default::default(),
         }),
         multisample:Default::default(),multiview_mask:None,cache:None,
