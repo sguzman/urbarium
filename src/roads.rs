@@ -38,6 +38,8 @@ pub struct RoadReport {
     pub segments_meshed: usize,
     pub segments_skipped: usize,
     pub segments_degenerate: usize,
+    /// Filled at-grade T/cross intersections inferred from shared road endpoints.
+    pub junction_patches: usize,
     pub total_vertices: usize,
     pub total_triangles: usize,
     pub by_surface: BTreeMap<String, usize>,
@@ -154,6 +156,139 @@ fn ribbon(path: &[Point], width: f64, height: f32) -> Result<Option<Mesh>, Strin
     Ok(Some(mesh))
 }
 
+#[derive(Clone,Copy)]
+struct RoadEnd {
+    x:f64, z:f64, width:f64,
+    direction:[f64;2],
+}
+
+/// Patches only real mapped *road endpoints* joining at grade. We do not
+/// infer a junction from two centerlines merely crossing in 2D, which might
+/// be an overpass, an underpass, or an unconnected footbridge.
+fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport) -> Result<(),String> {
+    let mut groups:Vec<Vec<RoadEnd>>=Vec::new();
+    let mut cells:BTreeMap<(i64,i64),Vec<usize>>=BTreeMap::new();
+    for street in &city.streets {
+        let Some((SurfaceKind::Road,width))=surface_class(street) else {continue};
+        if street.path.len()<2
+            || street.tags.get("bridge").is_some_and(|v|v!="no")
+            || street.tags.get("tunnel").is_some_and(|v|v!="no")
+            || street.tags.get("layer").is_some_and(|v|v!="0") {
+            continue;
+        }
+        for (p,q) in [
+            (street.path[0],street.path[1]),
+            (street.path[street.path.len()-1],street.path[street.path.len()-2]),
+        ] {
+            let Some(heading)=direction(p,q) else {continue};
+            let item=RoadEnd{x:p.x,z:p.z,width,direction:heading};
+            let cell=((p.x/2.0).floor() as i64,(p.z/2.0).floor() as i64);
+            let mut found=None;
+            for ox in -1..=1 {
+                for oz in -1..=1 {
+                    if let Some(indices)=cells.get(&(cell.0+ox,cell.1+oz)) {
+                        for &index in indices {
+                            let anchor=groups[index][0];
+                            if (p.x-anchor.x).hypot(p.z-anchor.z)<1.0 {
+                                found=Some(index);
+                                break;
+                            }
+                        }
+                    }
+                    if found.is_some(){break;}
+                }
+                if found.is_some(){break;}
+            }
+            if let Some(index)=found {
+                groups[index].push(item);
+            } else {
+                let index=groups.len();
+                groups.push(vec![item]);
+                cells.entry(cell).or_default().push(index);
+            }
+        }
+    }
+    for group in groups {
+        let mut arms:Vec<RoadEnd>=Vec::new();
+        for &item in &group {
+            // A straight segment split in two is not a 3-way intersection.
+            if arms.iter().all(|other| {
+                other.direction[0]*item.direction[0]+
+                    other.direction[1]*item.direction[1] < 0.95
+            }) { arms.push(item); }
+        }
+        if arms.len()<3 {continue;}
+        let x=group.iter().map(|e|e.x).sum::<f64>()/group.len() as f64;
+        let z=group.iter().map(|e|e.z).sum::<f64>()/group.len() as f64;
+        let mut edge=Vec::with_capacity(arms.len()*2);
+        for arm in &arms {
+            let nx=-arm.direction[1];
+            let nz=arm.direction[0];
+            let width=arm.width/2.0;
+            edge.push((x+nx*width,z+nz*width));
+            edge.push((x-nx*width,z-nz*width));
+        }
+        let hull=junction_hull(edge);
+        if hull.len()<3 {continue;}
+        let layer=scene.layers.entry(SurfaceKind::Road).or_default();
+        let offset=u32::try_from(layer.vertices.len())
+            .map_err(|_|"road layer exceeds 32-bit indices")?;
+        if hull.len() >= u32::MAX as usize - offset as usize {
+            return Err("junction patch exceeds 32-bit indices".into());
+        }
+        // A 1mm height bias prevents z-fighting without covering vertical
+        // features; the patch is deliberately the same asphalt material.
+        let y=0.081;
+        layer.vertices.push(Vertex{
+            position:[x as f32,y,z as f32],normal:[0.0,1.0,0.0]
+        });
+        for &(ex,ez) in &hull {
+            layer.vertices.push(Vertex{
+                position:[ex as f32,y,ez as f32],normal:[0.0,1.0,0.0]
+            });
+        }
+        for i in 0..hull.len() {
+            let a=offset+1+i as u32;
+            let b=offset+1+((i+1)%hull.len()) as u32;
+            layer.indices.extend([offset,b,a]); // +Y in X east / Z north
+        }
+        report.junction_patches+=1;
+    }
+    Ok(())
+}
+
+/// 2D convex hull of surveyed-road-width offset points around a real node.
+/// This forms squared-off T/cross junctions rather than oversized circular
+/// discs on every Overture path fragment.
+fn junction_hull(mut points:Vec<(f64,f64)>) -> Vec<(f64,f64)> {
+    points.sort_by(|a,b|a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    points.dedup_by(|a,b|(a.0-b.0).abs()<0.0001 && (a.1-b.1).abs()<0.0001);
+    if points.len()<3 {return Vec::new();}
+    let cross=|a:(f64,f64),b:(f64,f64),c:(f64,f64)| {
+        (b.0-a.0)*(c.1-a.1)-(b.1-a.1)*(c.0-a.0)
+    };
+    let mut lower:Vec<(f64,f64)>=Vec::new();
+    for &p in &points {
+        while lower.len()>=2 &&
+            cross(lower[lower.len()-2],lower[lower.len()-1],p)<=0.0 {
+            lower.pop();
+        }
+        lower.push(p);
+    }
+    let mut upper:Vec<(f64,f64)>=Vec::new();
+    for &p in points.iter().rev() {
+        while upper.len()>=2 &&
+            cross(upper[upper.len()-2],upper[upper.len()-1],p)<=0.0 {
+            upper.pop();
+        }
+        upper.push(p);
+    }
+    lower.pop();
+    upper.pop();
+    lower.extend(upper);
+    lower
+}
+
 pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
     let mut scene=RoadScene::default();
     let mut report=RoadReport {source_segments:city.streets.len(),..Default::default()};
@@ -187,6 +322,7 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
         report.segments_meshed+=1;
         *report.by_surface.entry(kind.material().into()).or_insert(0)+=1;
     }
+    add_junction_patches(city,&mut scene,&mut report)?;
     report.total_vertices=scene.layers.values().map(|l| l.vertices.len()).sum();
     report.total_triangles=scene.layers.values().map(|l| l.indices.len()/3).sum();
     Ok((scene,report))
@@ -311,6 +447,31 @@ mod tests {
         assert_eq!(report.segments_degenerate,1);
         assert_eq!(scene.layers[&SurfaceKind::Road].indices.len(),6);
     }
+    #[test]
+    fn shared_t_junction_gets_a_square_asphalt_patch() {
+        let (scene,report)=mesh_streets(&city(vec![
+            street("residential",&[[-20.,0.],[0.,0.]]),
+            street("residential",&[[0.,0.],[20.,0.]]),
+            street("service",&[[0.,0.],[0.,20.]]),
+        ])).unwrap();
+        assert_eq!(report.junction_patches,1);
+        let road=&scene.layers[&SurfaceKind::Road];
+        assert!(road.vertices.len()>12);
+        assert!(road.indices.len()/3>6);
+        assert!(road.indices.iter().all(|&i|(i as usize)<road.vertices.len()));
+    }
+    #[test]
+    fn unconnected_crossings_and_bridges_get_no_fake_junctions() {
+        let mut bridge=street("primary",&[[0.,0.],[0.,10.]]);
+        bridge.tags.insert("bridge".into(),"yes".into());
+        let (scene,report)=mesh_streets(&city(vec![
+            street("primary",&[[-10.,0.],[10.,0.]]),
+            bridge,
+        ])).unwrap();
+        assert_eq!(report.junction_patches,0);
+        assert_eq!(scene.layers[&SurfaceKind::Road].vertices.len(),8);
+    }
+
     #[test]
     fn obj_groups_and_materials_are_present() {
         let (scene,_)=mesh_streets(&city(vec![
