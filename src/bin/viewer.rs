@@ -277,6 +277,7 @@ impl Graphics {
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         self.camera.move_by(pressed,dt);
+        expose_camera_pose(&self.camera);
         let vp=self.camera.view_projection(self.config.width,self.config.height);
         self.queue.write_buffer(&self.camera_buffer,0,
             bytemuck::bytes_of(&CameraUniform{view_proj:vp.to_cols_array_2d()}));
@@ -595,6 +596,19 @@ fn install_pointerlockchange(proxy:EventLoopProxy<AppEvent>) {
         "pointerlockchange",callback.as_ref().unchecked_ref()
     );
     callback.forget();
+}
+fn expose_camera_pose(camera:&Camera) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-camera-y",&camera.position.y.to_string());
+            let _=el.set_attribute("data-camera-yaw",&camera.yaw.to_string());
+            let _=el.set_attribute("data-camera-x",&camera.position.x.to_string());
+            let _=el.set_attribute("data-camera-z",&camera.position.z.to_string());
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=camera;
 }
 fn show_mouse_state(locked:bool) {
     #[cfg(target_arch="wasm32")]

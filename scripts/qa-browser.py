@@ -58,7 +58,23 @@ with sync_playwright() as p:
             raise AssertionError(state)
         assert not errors, errors
         canvas = page.locator("canvas")
+        page.wait_for_function("() => Number(document.querySelector('#status')?.getAttribute('data-camera-y')) > 0", timeout=15000)
+        eye_height=float(page.locator("#status").get_attribute("data-camera-y"))
+        assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
         canvas.click(position={"x": 500, "y": 420})
+        page.wait_for_function(
+            "() => document.pointerLockElement === document.querySelector('canvas')",
+            timeout=12000,
+        )
+        assert page.locator("#input-state").get_attribute("data-pointer-locked") == "true"
+        before_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
+        page.mouse.move(590,420,steps=5)
+        page.wait_for_timeout(300)
+        after_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
+        assert after_yaw < before_yaw-0.03, (
+            f"FPS mouse look did not rotate right: {before_yaw} -> {after_yaw}"
+        )
+        print("Pointer lock + correct non-drag FPS mouse look passed:",before_yaw,"->",after_yaw)
         page.keyboard.down("w")
         page.wait_for_timeout(450)
         page.keyboard.up("w")
@@ -120,6 +136,12 @@ with sync_playwright() as p:
                     print("WebGPU red-clear control pixel:", image.convert("RGB").getpixel((64,64)))
             print("Canvas count:", page.locator("canvas").count())
         assert any(p != (255,255,255) for p in values), "Canvas remains blank white"
+        page.keyboard.press("Escape")
+        page.wait_for_function(
+            "() => document.pointerLockElement === null",
+            timeout=8000,
+        )
+        print("Pointer released on Escape")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
         print("PAGE ERRORS:", errors)
