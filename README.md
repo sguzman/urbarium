@@ -257,6 +257,33 @@ for the height decoder.
   terrain intersections but does **not** turn roads into surveyed surfaces
   or resolve bridge elevations.
 
+## Rendering overlays, crashes, and performance diagnostics
+
+Urbarium now treats the transportation categories as independently renderable
+GPU batches. Ground-level asphalt is raised above approximate pedestrian
+strips to prevent coplanar clipping; the rail preview is **hidden by default**,
+because rail/light-rail centerlines are not surveyed bridge, trackbed, or
+grade-separation surfaces. Use **Footpaths** and **Rail** switches in the
+main HUD to compare the source geometries directly. This does not imply
+perfect sidewalk/crossing topology or measured bridge elevations.
+
+Click **Stats: off** in the HUD to open a performance panel. It reports
+observed presented FPS, frame interval, **CPU-side frame work** (which does
+not include asynchronous GPU work), rendered triangles, draw calls, and
+allocated GPU mesh buffer bytes. The browser may additionally expose its
+JavaScript heap size. Whole-system CPU utilization, GPU utilization, true
+VRAM allocation, and GPU timestamps are not exposed reliably on normal
+public browser pages, so Urbarium explicitly reports them as N/A rather
+than inventing measurements.
+
+The same panel captures JavaScript exceptions, unhandled rejections, and
+WebGL context-loss notifications in the session, including a last-error
+message across page reloads. A full tab or browser process crash cannot
+always be observed by JavaScript. WebGPU remains experimental for some
+drivers; **WebGL2 is the default** until hardware-specific WebGPU
+presentation bugs are resolved. Browser CI tests both backends and verifies
+that real geometry and performance counters continue advancing over time.
+
 ## Geometry contract
 
 - WGS84 bounding boxes are `[west, south, east, north]`; a region has a WGS84 origin.

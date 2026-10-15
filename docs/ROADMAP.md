@@ -44,6 +44,9 @@
 - [x] First-person street-level navigation, mouse capture, error overlay and toggleable 18× fast travel.
 - [x] Interactive north-up Downtown LA minimap with zoom, mapped buildings and camera location/heading.
 - [x] Subdivide road ribbons for terrain draping; align elevations with the exact rendered DEM triangles.
+- [x] Isolate approximate roadway/footpath/rail batches with layer-visibility toggles and deterministic depth priority.
+- [x] Add observable FPS/frame-time/CPU-side time/GPU mesh-size statistics and browser-error diagnostics.
+- [ ] Investigate hardware-specific WebGPU black presentation and browser/GPU context-loss reports.
 - [ ] Add surveyed-grade street surfaces, map coverage beyond the pilot, and optional location jumping.
 - [x] Reproducible browser QA in Chromium with real Downtown LA scene.
 - [ ] Public GitHub Pages URL serving the verified playable browser bundle (deployment workflow configured, live deployment pending).

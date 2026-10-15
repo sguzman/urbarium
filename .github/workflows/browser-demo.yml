@@ -9,6 +9,7 @@ on:
       - src/bin/viewer.rs
       - src/bin/viewer.wgsl
       - web/minimap.js
+      - web/stats.js
       - src/lib.rs
       - src/geometry.rs
       - src/roads.rs
@@ -79,6 +80,7 @@ jobs:
           js=list(dist.glob("*.js"))
           assert wasm and js,(wasm,js)
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
+          assert (dist/"stats.js").is_file(), "Stats JavaScript missing from published site"
           page=(dist/"index.html").read_text()
           assert 'minimap-canvas' in page
           assert 'map-zoom-in' in page
@@ -164,6 +166,8 @@ jobs:
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/minimap.js" -o /tmp/urbarium-minimap-live.js
           grep -q 'data-map-ready' /tmp/urbarium-minimap-live.js
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/stats.js" -o /tmp/urbarium-stats-live.js
+          grep -q 'gpu-mesh-bytes' /tmp/urbarium-stats-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/assets/downtown-la.json" -o /tmp/urbarium-live.json
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/assets/downtown-la-terrain.json" -o /tmp/urbarium-terrain-live.json

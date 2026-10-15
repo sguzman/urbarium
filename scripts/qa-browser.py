@@ -200,6 +200,37 @@ with sync_playwright() as p:
         )
         assert page.locator("#renderer-health").is_visible()
         print("User-visible 3D frame health counter passed")
+        assert page.locator("#layer-walk").get_attribute("data-visible") == "true"
+        assert page.locator("#layer-rail").get_attribute("data-visible") == "false"
+        page.locator("#layer-rail").check()
+        assert page.locator("#layer-rail").get_attribute("data-visible") == "true"
+        page.locator("#layer-rail").uncheck()
+        assert page.locator("#layer-rail").get_attribute("data-visible") == "false"
+        page.locator("#layer-walk").uncheck()
+        assert page.locator("#layer-walk").get_attribute("data-visible") == "false"
+        page.locator("#layer-walk").check()
+        page.locator("#stats-toggle").click()
+        assert page.locator("#stats-toggle").get_attribute("aria-pressed") == "true"
+        assert page.locator("#stats-panel").is_visible()
+        page.wait_for_function(
+            "() => Number(document.querySelector('#status')?.getAttribute('data-gpu-mesh-bytes')) > 0",
+            timeout=10000,
+        )
+        page.wait_for_function(
+            "() => document.querySelector('#stats-gpu-buffers')?.textContent.includes('MiB')",
+            timeout=6000,
+        )
+        assert float(page.locator("#status").get_attribute("data-triangles-drawn")) > 1000
+        assert "N/A" in page.locator("#stats-panel").inner_text()
+        print("Real GPU mesh/frame telemetry and toggleable overlays passed")
+        before_frames=int(page.locator("#status").get_attribute("data-frame-count"))
+        page.wait_for_timeout(6000)
+        after_frames=int(page.locator("#status").get_attribute("data-frame-count"))
+        assert after_frames > before_frames+8, (
+            f"Renderer stopped during soak: {before_frames} -> {after_frames}"
+        )
+        assert not errors, errors
+        print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
         print("PAGE ERRORS:", errors)
