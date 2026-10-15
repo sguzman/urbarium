@@ -189,7 +189,10 @@ with sync_playwright() as p:
         )
         zoomed=float(minimap.get_attribute("data-map-width-m"))
         page.locator("#map-zoom-out").click()
-        assert float(minimap.get_attribute("data-map-width-m")) > zoomed
+        page.wait_for_function(
+            "(before) => Number(document.querySelector('#minimap-canvas')?.dataset.mapWidthM) > before",
+            arg=zoomed, timeout=6000,
+        )
         player_x=float(minimap.get_attribute("data-player-x"))
         camera_x=float(page.locator("#status").get_attribute("data-camera-x"))
         assert abs(player_x-camera_x) < 2.0, (player_x,camera_x)
