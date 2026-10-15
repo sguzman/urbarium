@@ -1,0 +1,4 @@
+/target/
+/data/raw/
+/data/processed/
+.DS_Store
