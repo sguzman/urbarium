@@ -388,10 +388,13 @@ impl Graphics {
         }).create_view(&wgpu::TextureViewDescriptor::default())
     }
     fn resize(&mut self, size: PhysicalSize<u32>) {
+        if self.config.width==size.width.max(1) &&
+            self.config.height==size.height.max(1) {return;}
         self.config.width = size.width.max(1);
         self.config.height = size.height.max(1);
         self.surface.configure(&self.device, &self.config);
         self.depth=Self::depth_view(&self.device,self.config.width,self.config.height);
+        expose_surface_size(self.config.width,self.config.height);
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
@@ -494,6 +497,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let size=window.inner_size();
     let mut config=surface.get_default_config(&adapter,size.width.max(1),size.height.max(1))
         .ok_or("No compatible GPU surface configuration")?;
+    expose_surface_size(config.width,config.height);
     config.present_mode=wgpu::PresentMode::Fifo;
     surface.configure(&device,&config);
     let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
@@ -583,7 +587,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }
 
-enum AppEvent { Ready(Graphics), Error(String), PointerLock(bool) }
+enum AppEvent { Ready(Graphics), Error(String), PointerLock(bool), ViewportResize(PhysicalSize<u32>) }
 enum Stage { Boot, Ready(Graphics), Error(String) }
 struct App {
     state:Stage,
@@ -610,9 +614,15 @@ impl App {
 impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self,event_loop:&ActiveEventLoop) {
         if self.window.is_some() {return;}
+        // Never use the old hard-coded 1280x800 on the web: the resulting
+        // canvas/WebGL drawing buffer was smaller than the browser viewport.
+        #[cfg(target_arch="wasm32")]
+        let initial_size=browser_viewport_size();
+        #[cfg(not(target_arch="wasm32"))]
+        let initial_size=PhysicalSize::new(1280,800);
         let mut attrs=Window::default_attributes()
             .with_title("Urbarium | Downtown Los Angeles")
-            .with_inner_size(PhysicalSize::new(1280,800));
+            .with_inner_size(initial_size);
         #[cfg(target_arch="wasm32")]
         {
             use winit::platform::web::WindowAttributesExtWebSys;
@@ -625,6 +635,7 @@ impl ApplicationHandler<AppEvent> for App {
             use winit::platform::web::WindowExtWebSys;
             if let Some(canvas)=window.canvas() {canvas.set_tab_index(0);}
             install_pointerlockchange(self_proxy(event_loop));
+            install_viewport_resize(self_proxy(event_loop));
         }
         self.window=Some(window.clone());
         // Initialization is asynchronous on WebGPU browsers.
@@ -645,6 +656,14 @@ impl ApplicationHandler<AppEvent> for App {
             AppEvent::PointerLock(locked)=>{
                 self.pointer_locked=locked;
                 show_mouse_state(locked);
+            }
+            AppEvent::ViewportResize(size)=>{
+                if let Some(window)=&self.window {
+                    let _=window.request_inner_size(size);
+                }
+                if let Stage::Ready(gfx)=&mut self.state {
+                    gfx.resize(size);
+                }
             }
         }
     }
@@ -744,6 +763,42 @@ impl ApplicationHandler<AppEvent> for App {
     fn about_to_wait(&mut self,_event_loop:&ActiveEventLoop) {
         if let Stage::Ready(gfx)=&self.state {gfx.window.request_redraw();}
     }
+}
+
+#[cfg(target_arch="wasm32")]
+fn browser_viewport_size() -> PhysicalSize<u32> {
+    if let Some(win)=web_sys::window() {
+        let dpr=win.device_pixel_ratio().clamp(1.0,2.0);
+        let width=win.inner_width().ok().and_then(|v|v.as_f64()).unwrap_or(1280.0);
+        let height=win.inner_height().ok().and_then(|v|v.as_f64()).unwrap_or(800.0);
+        return PhysicalSize::new(
+            (width*dpr).round().clamp(1.0,8192.0) as u32,
+            (height*dpr).round().clamp(1.0,8192.0) as u32);
+    }
+    PhysicalSize::new(1280,800)
+}
+
+#[cfg(target_arch="wasm32")]
+fn install_viewport_resize(proxy:EventLoopProxy<AppEvent>) {
+    use wasm_bindgen::{closure::Closure,JsCast};
+    let Some(win)=web_sys::window() else {return};
+    let callback=Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+        let _=proxy.send_event(AppEvent::ViewportResize(browser_viewport_size()));
+    });
+    let _=win.add_event_listener_with_callback("resize",callback.as_ref().unchecked_ref());
+    callback.forget();
+}
+
+fn expose_surface_size(width:u32,height:u32) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-surface-width",&width.to_string());
+            let _=el.set_attribute("data-surface-height",&height.to_string());
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(width,height);
 }
 
 #[cfg(target_arch="wasm32")]
