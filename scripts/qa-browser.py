@@ -156,7 +156,7 @@ with sync_playwright() as p:
             timeout=10000,
         )
         before_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
-        page.mouse.move(590,420,steps=5)
+        page.mouse.move(790,500,steps=5)
         page.wait_for_timeout(300)
         after_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
         assert after_yaw > before_yaw+0.03, (
