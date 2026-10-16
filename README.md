@@ -243,13 +243,16 @@ for the height decoder.
 
 ## Persistent geography cache and refresh
 
-Urbarium now stores the *successfully downloaded* Downtown LA city and
-elevation JSON in browser CacheStorage on the first visit. A cache hit is
-returned before Rust starts parsing and meshing, so refreshing the page does
-**not** redownload both geographic assets. Cached data survives normal page
-reloads, browser restarts and application redeploys (subject to the browser's
-storage eviction policies). The minimap still consumes the Rust viewer's
-validated shared scene; it does not download a second copy.
+Urbarium caches *successfully downloaded* city and elevation JSON with
+individual, immutable SHA-256 fingerprints of the **actual generated asset
+bytes**. The release workflow stamps those fingerprints into the page before
+the WASM build. A cache hit only counts when the exact fingerprint matches;
+any older URL-only response from the previous cache implementation is
+**never reused**. Matching files survive app updates/reloads without a second
+geographic download. When actual geography changes, only the changed asset
+is fetched once under a fingerprinted request URL. Older copies are then
+evicted from CacheStorage. The minimap consumes the viewer's loaded scene
+instead of fetching geographic data a second time.
 
 Application scripts, Rust WASM and the page are **not** pinned in this
 geography cache, so deploying a viewer update still loads current code.
@@ -270,10 +273,12 @@ hardware-specific crashes have been resolved. The old meaningless "cache ready" 
 been removed.
 Use **Refresh geography** in the HUD when explicitly wanting new downloaded
 city/terrain data. Clearing site data also clears the geographic cache.
-Future geographic region/schema releases must change the cache namespace;
-the default remains stable so merely updating the viewer never forces an
-expensive redownload. Browser cache availability is best-effort, not a promise
-of permanent offline storage.
+Geographic content changes automatically invalidate only their own old
+cache keys; updating Rust/WASM without changing geographic bytes does not.
+The cache namespace can stay stable even as the importer evolves. Missing
+release fingerprints fail safely by **bypassing persistent cache** instead
+of returning stale, potentially incompatible scene data. Browser storage
+remains best-effort, not a guarantee of permanent offline access.
 
 ## Browser stability and pedestrian overlap handling
 
@@ -284,6 +289,13 @@ to approximately 1.8 million pixels even on HiDPI monitors; the CSS canvas
 still fills the viewport. This limits color/depth attachment pressure but
 **does not establish that user-specific Edge crashes are solved**. Chromium
 automated testing cannot replicate every user hardware/driver combination.
+A lightweight local heartbeat now retains the last backend, startup phase,
+frame count, framebuffer size, bridge count, asset fingerprints and recent
+script error. If Edge or its GPU process terminates without a normal
+page-hide event, the next viewer launch displays a **possible unexpected
+termination** under Stats, with a **Copy diagnostics** control. It cannot
+differentiate every browser crash from a forced close and is not a crash
+prevention mechanism. No telemetry is sent to a server.
 
 Source footpaths are thin centerline ribbons, not surveyed sidewalk polygons.
 The importer now removes pedestrian mesh triangles intersecting a buffered

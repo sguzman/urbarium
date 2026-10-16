@@ -40,6 +40,18 @@ with sync_playwright() as p:
     page.on("response", lambda r: print("HTTP ERROR:", r.status, r.url)
             if r.status >= 400 else None)
     qa_mode = "webgl2" if force_webgl else "webgpu"
+    # Reproduce the user's real regression: browser storage contains
+    # valid-looking but pre-bridge geography from an older deployment.
+    # The new build MUST ignore it and fetch the fingerprinted assets once.
+    page.goto("http://127.0.0.1:8010/assets/landmarks.json",
+              wait_until="domcontentloaded")
+    page.evaluate("""async () => {
+        const store=await caches.open("urbarium-geography-downtown-la-v1");
+        for(const name of ["downtown-la.json","downtown-la-terrain.json"]){
+            await store.put("/assets/"+name,new Response('{"stale":true}',{
+                headers:{"content-type":"application/json"}}));
+        }
+    }""")
     page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}", wait_until="domcontentloaded")
     page.wait_for_function(
         "(mode) => document.querySelector('#renderer-select')?.value === mode",
@@ -305,11 +317,26 @@ with sync_playwright() as p:
         # without any second HTTP transfer to this flaky-network-sensitive app.
         saved=page.evaluate("""async () => {
             const store=await caches.open("urbarium-geography-downtown-la-v1");
-            const city=await store.match("./assets/downtown-la.json");
-            const dem=await store.match("./assets/downtown-la-terrain.json");
-            return [Boolean(city),Boolean(dem)];
+            const versions=window.__urbariumGeoCache.versions;
+            const lookup=async filename=>{
+                const url=new URL("./assets/"+filename,location.href);
+                url.searchParams.set("urbarium_sha256",versions[filename]);
+                return Boolean(await store.match(url.href));
+            };
+            const stale=await store.match("./assets/downtown-la.json");
+            const staleTerrain=await store.match("./assets/downtown-la-terrain.json");
+            return {city:await lookup("downtown-la.json"),
+                    terrain:await lookup("downtown-la-terrain.json"),
+                    stale:!!stale,staleTerrain:!!staleTerrain,
+                    versions};
         }""")
-        assert saved == [True, True], f"Geography not persisted on first visit: {saved}"
+        assert saved["city"] and saved["terrain"],(
+            f"Fingerprint-keyed geography missing on first visit: {saved}")
+        assert not saved["stale"] and not saved["staleTerrain"],(
+            f"Old URL-only cached geography not evicted: {saved}")
+        assert all(len(v)==64 for v in saved["versions"].values()),saved
+        assert int(page.locator("#status").get_attribute("data-elevated-road-spans"))>0,(
+            "Cached pre-bridge geography was erroneously reused")
         before=len([u for u in requests if "/assets/downtown-la" in u])
         page.evaluate("""async () => {
             const responses=await Promise.all([
@@ -320,7 +347,7 @@ with sync_playwright() as p:
         }""")
         after=len([u for u in requests if "/assets/downtown-la" in u])
         assert after==before, "Cached geography caused redundant network requests"
-        print("Geography CacheStorage persisted and reused both assets without HTTP")
+        print("Versioned CacheStorage ignored stale pre-bridge data and reused SHA-matched assets without HTTP")
         cache_state=page.evaluate("() => window.__urbariumGeoCache")
         assert cache_state["networkRequests"]==2,cache_state
         assert cache_state["cacheHits"]>=2,cache_state

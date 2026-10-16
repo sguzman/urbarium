@@ -24,8 +24,11 @@
     })();
   </script>
   <title>Urbarium · Downtown Los Angeles</title>
-  <!-- Install persistent geo fetch interception before the WASM bootloader. -->
-  <script src="./data-cache.js"></script>
+  <!-- Release build stamps SHA256 of generated city + terrain before Trunk.
+       This prevents an older cache entry from hiding new bridge geometry. -->
+  <script>window.__urbariumGeographyVersions = null;</script>
+  <!-- Install version-aware geographic fetch interception before WASM boot. -->
+  <script src="./data-cache.js?v=content-hash-v2"></script>
   <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="0">
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/landmarks.json" data-target-path="assets">
@@ -240,11 +243,14 @@
       <dt>System CPU utilization</dt><dd>N/A · browser restricted</dd>
       <dt>GPU utilization / VRAM</dt><dd>N/A · browser restricted</dd>
       <dt>GPU frame time</dt><dd>N/A · query unsupported</dd>
+      <dt>Previous session</dt><dd id="previous-session">No earlier session</dd>
     </dl>
     <p class="stats-note">CPU-side frame work excludes asynchronous GPU time.
       Mesh buffers exclude browser, texture and driver allocations.
       JS heap is shown only if the browser exposes it.</p>
     <div id="stats-last-error" aria-live="polite"></div>
+    <button id="copy-viewer-diagnostics" type="button"
+      title="Copy safe rendering and geographic cache diagnostics">Copy diagnostics</button>
   </section>
   <aside class="minimap" aria-label="Downtown Los Angeles minimap">
     <div class="map-title"><span>DOWNTOWN LA</span><small>N ↑ · Pilot area</small></div>
@@ -451,6 +457,58 @@
         "Geography: "+(window.__urbariumCacheState||"awaiting first asset request");
       const bootInfo=document.getElementById("boot-stage");
       const bootStart=performance.now();
+      const runKey="urbarium-renderer-last-session-v1";
+      let mostRecentError="";
+      let previousRun=null;
+      try{previousRun=JSON.parse(localStorage.getItem(runKey)||"null");}catch(_){}
+      const prior=document.getElementById("previous-session");
+      if(previousRun && Date.now()-previousRun.at<7*86400000){
+        const disposition=previousRun.cleanClose?"Previously closed normally":
+          "Possible unexpected termination (browser crash or forced close)";
+        prior.textContent=disposition+" · "+(previousRun.backend||"unknown GPU")+
+          " · "+(previousRun.stage||"unknown phase")+
+          " · "+(previousRun.frames||0)+" frames"+
+          (previousRun.error?" · "+previousRun.error:"");
+      }
+      function buildRunReport(cleanClose=false){
+        return {
+          at:Date.now(),cleanClose,
+          backend:status?.dataset.gpuBackend||"not initialized",
+          stage:status?.dataset.renderStage||"boot",
+          frames:Number(status?.dataset.frameCount||0),
+          bridges:Number(status?.dataset.elevatedRoadSpans||0),
+          surface:[status?.dataset.surfaceWidth,status?.dataset.surfaceHeight],
+          meshBytes:Number(status?.dataset.gpuMeshBytes||0),
+          geoVersions:window.__urbariumGeographyVersions||{},
+          geo:window.__urbariumGeoCache?.assets||{},
+          error:mostRecentError.slice(0,400)
+        };
+      }
+      const persistRun=clean=>{
+        try{localStorage.setItem(runKey,JSON.stringify(buildRunReport(clean)));}catch(_){}
+      };
+      // A renderer-process crash cannot execute a callback; the last
+      // heartbeat survives it and is surfaced on the next page visit.
+      setInterval(()=>persistRun(false),4000);
+      window.addEventListener("pagehide",()=>persistRun(true));
+      window.addEventListener("error",e=>{
+        mostRecentError=String(e.message||e.error||"browser error");
+      });
+      window.addEventListener("unhandledrejection",e=>{
+        mostRecentError=String(e.reason||"rejected promise");
+      });
+      document.getElementById("copy-viewer-diagnostics").addEventListener("click",async()=>{
+        const info=JSON.stringify({
+          current:buildRunReport(false),previous:previousRun
+        },null,2);
+        const button=document.getElementById("copy-viewer-diagnostics");
+        try{
+          await navigator.clipboard.writeText(info);
+          button.textContent="Diagnostics copied";
+        }catch(_){
+          button.textContent="Clipboard unavailable";
+        }
+      });
       const phases={
         "city-fetch":"Loading city data","city-decoding":"Decoding city data",
         "terrain-fetch":"Loading terrain","terrain-decoding":"Decoding terrain",

@@ -1,6 +1,6 @@
-/* Preserve the existing cache namespace across viewer redeploys. Never
- * invalidate geographic bytes just because the WASM/HTML changed.
- * This layer also exposes true per-asset cache hits versus network requests.
+/* Cache by the build's actual geographic asset SHA-256, not by URL alone.
+ * Old cache entries are never mistaken for a freshly processed city.
+ * Identical geographic bytes survive application/WASM deployments unchanged.
  */
 (() => {
   "use strict";
@@ -8,10 +8,14 @@
   const assetNames=new Map([
     ["downtown-la.json","City"],["downtown-la-terrain.json","Terrain"]
   ]);
+  // Stamped into HTML at release build time using actual city/terrain bytes.
+  // A missing stamp deliberately bypasses persistent caching rather than
+  // returning unverified stale geography from a previous application release.
+  const versions=window.__urbariumGeographyVersions||{};
   const nativeFetch=window.fetch.bind(window);
   const inFlight=new Map();
   const states=Object.create(null);
-  const telemetry={assets:states,networkRequests:0,cacheHits:0};
+  const telemetry={assets:states,networkRequests:0,cacheHits:0,versions};
   window.__urbariumGeoCache=telemetry;
   const eligible=req=>{
     const url=new URL(req.url);
@@ -21,15 +25,27 @@
       url.pathname.slice(folder.pathname.length).indexOf("/")===-1 &&
       assetNames.has(url.pathname.slice(folder.pathname.length));
   };
+  const versionOf=req=>{
+    const file=new URL(req.url).pathname.split("/").pop();
+    const sha=versions[file];
+    return typeof sha==="string" && /^[0-9a-f]{64}$/.test(sha) ? sha : null;
+  };
+  const keyedRequest=(req,sha)=>{
+    const url=new URL(req.url);
+    url.searchParams.set("urbarium_sha256",sha);
+    return new Request(url,req);
+  };
   function emit(request,state,bytes=null,error=null){
     const filename=new URL(request.url).pathname.split("/").pop();
     const label=assetNames.get(filename);
-    states[label]={state,bytes,error,time:performance.now()};
+    states[label]={state,bytes,error,time:performance.now(),
+      version:versionOf(request)?.slice(0,12)||"unverified"};
     const snapshot=Object.values(states);
     const text=snapshot.map(item=>{
       const entry=Object.entries(states).find(([,value])=>value===item);
       return entry[0]+": "+item.state+
-        (item.bytes>0?" ("+(item.bytes/1048576).toFixed(2)+" MB)":"");
+        (item.bytes>0?" ("+(item.bytes/1048576).toFixed(2)+" MB)":"")+
+        " ["+item.version+"]";
     }).join(" · ");
     window.__urbariumCacheState=text||"checking";
     document.getElementById("geodata-cache-state")?.replaceChildren(
@@ -40,15 +56,23 @@
     }));
   }
   async function load(req){
+    const sha=versionOf(req);
+    if(!sha) {
+      emit(req,"UNVERIFIED: fetching from network (no asset fingerprint)");
+      telemetry.networkRequests++;
+      return nativeFetch(req,{cache:"no-cache"});
+    }
+    const key=keyedRequest(req,sha);
     let cache;
     try {cache=await caches.open(name);}
     catch(error){
       emit(req,"browser cache unavailable",null,String(error));
       telemetry.networkRequests++;
-      return nativeFetch(req);
+      return nativeFetch(key);
     }
     try{
-      const saved=await cache.match(req,{ignoreSearch:true});
+      // Strict match: never use an older URL-only cached city from v1.
+      const saved=await cache.match(key);
       if(saved){
         telemetry.cacheHits++;
         emit(req,"CACHE HIT",Number(saved.headers.get("content-length"))||null);
@@ -59,10 +83,17 @@
     }
     emit(req,"NETWORK DOWNLOAD");
     telemetry.networkRequests++;
-    const response=await nativeFetch(req);
+    // Versioned request URL bypasses browser HTTP caches for older geography.
+    const response=await nativeFetch(key);
     if(response.ok){
       try{
-        await cache.put(req,response.clone());
+        await cache.put(key,response.clone());
+        // Bound CacheStorage size: keep only current revision per asset.
+        const oldKeys=await cache.keys();
+        for(const old of oldKeys){
+          if(new URL(old.url).pathname===new URL(key.url).pathname &&
+             old.url!==key.url)await cache.delete(old);
+        }
         emit(req,"downloaded + saved",
           Number(response.headers.get("content-length"))||null);
       }catch(error){
@@ -75,7 +106,8 @@
     return response;
   }
   window.fetch=(input,init)=>{
-    const req=new Request(input,init);
+    let req;
+    try{req=new Request(input,init);}catch(_){return nativeFetch(input,init);}
     if(!eligible(req)||req.cache==="no-store")return nativeFetch(input,init);
     if(inFlight.has(req.url))return inFlight.get(req.url).then(r=>r.clone());
     const pending=load(req);

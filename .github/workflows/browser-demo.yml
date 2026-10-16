@@ -10,6 +10,7 @@ on:
       - src/bin/viewer.wgsl
       - web/minimap.js
       - web/data-cache.js
+      - scripts/stamp-geography.py
       - web/landmarks.json
       - web/stats.js
       - src/lib.rs
@@ -61,6 +62,8 @@ jobs:
             -o /tmp/trunk.tar.gz
           tar -xzf /tmp/trunk.tar.gz -C /usr/local/bin trunk
           trunk --version
+      - name: Stamp per-asset immutable cache fingerprints
+        run: python3 scripts/stamp-geography.py
       - name: Compile real Rust/WebGPU WASM app
         run: trunk build --release --public-url ./
       - name: Validate static site and scene data
@@ -84,6 +87,15 @@ jobs:
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
           assert "urbarium-geography-downtown-la-v1" in (dist/"data-cache.js").read_text()
+          import hashlib,re
+          page=(dist/"index.html").read_text()
+          hashes=re.search(r'window\.__urbariumGeographyVersions\s*=\s*(\{[^;]+\});',page)
+          assert hashes,"Missing geography content-version stamp in bundled HTML"
+          versions=json.loads(hashes.group(1))
+          for filename in ("downtown-la.json","downtown-la-terrain.json"):
+              digest=hashlib.sha256((dist/"assets"/filename).read_bytes()).hexdigest()
+              assert versions.get(filename)==digest,("Geography manifest mismatch",filename)
+          print("Published cache versions:",{k:v[:12] for k,v in versions.items()})
           landmarks=json.loads((dist/"assets"/"landmarks.json").read_text())
           assert landmarks["region_id"] == city["region"]["id"]
           assert len(landmarks["landmarks"]) == 9
