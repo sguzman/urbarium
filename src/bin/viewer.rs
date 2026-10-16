@@ -693,7 +693,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     terrain.validate(&city.region)?;
     set_terrain_size(terrain.heights_m.len());
     let (vertices,indices,batches)=combined_city(&city,&terrain)?;
-    let bridge_overlook=bridge_overlook(&city,&terrain);
+    let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
+    let bridge_overlook=bridge_overlook(&city,&terrain,&collision);
     set_browser_stage("gpu-init");
     info("Geography ready; initializing WebGPU or WebGL2...");
     let instance=wgpu::util::new_instance_with_webgpu_detection(
@@ -722,7 +723,6 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     expose_surface_size(config.width,config.height);
     config.present_mode=wgpu::PresentMode::Fifo;
     surface.configure(&device,&config);
-    let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
     set_collision_count(collision.obstacle_count());
     let camera=Camera::spawn_at_street(&city,&collision,&terrain);
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1056,36 +1056,55 @@ fn browser_inspect_overpass_request()->u32 {
 }
 // An inspection camera proves the visible deck elevation at a source-tagged
 // location. It does not imply walkable bridge collision or surveyed altitude.
-fn bridge_overlook(city:&City,terrain:&TerrainGrid)->Option<Camera> {
-    let mut best:Option<(&urbarium::Street,Point,Point,f64)>=None;
+fn bridge_overlook(city:&City,terrain:&TerrainGrid,collision:&CollisionWorld)->Option<Camera>{
+    let [west,south,east,north]=city.region.bbox;
+    let sw=city.region.project(west,south);
+    let ne=city.region.project(east,north);
+    let mut candidates=Vec::new();
     for street in &city.streets{
         let is_bridge=street.tags.get("bridge").is_some_and(|v|v=="yes") ||
             street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
                 .is_some_and(|n|n>0);
-        if !is_bridge || street.tags.get("tunnel").is_some_and(|v|v=="yes"){continue;}
+        if !is_bridge||street.tags.get("tunnel").is_some_and(|v|v=="yes"){continue;}
         for pair in street.path.windows(2){
-            let len=(pair[1].x-pair[0].x).hypot(pair[1].z-pair[0].z);
-            if len>best.as_ref().map_or(0.0,|b|b.3){
-                best=Some((street,pair[0],pair[1],len));
-            }
+            let length=(pair[1].x-pair[0].x).hypot(pair[1].z-pair[0].z);
+            if length<4.0 {continue;}
+            let mid=Point{x:(pair[0].x+pair[1].x)*0.5,
+                          z:(pair[0].z+pair[1].z)*0.5};
+            let margin=(mid.x-sw.x).min(ne.x-mid.x)
+                .min(mid.z-sw.z).min(ne.z-mid.z);
+            let score=length.min(130.0)+margin.clamp(0.0,180.0)*0.10;
+            candidates.push((score,pair[0],pair[1],street,mid,length));
         }
     }
-    let (street,a,b,len)=best?;
-    if len<1.0 {return None;}
-    let mid=Point{x:(a.x+b.x)*0.5,z:(a.z+b.z)*0.5};
-    let perp=Point{x:-(b.z-a.z)/len,z:(b.x-a.x)/len};
-    let side=24.0;
-    let x=mid.x+perp.x*side;
-    let z=mid.z+perp.z*side;
-    let ground=terrain.sample_surface(&city.region,x,z);
-    let level=street.tags.get("layer")
-        .and_then(|v|v.parse::<f32>().ok()).unwrap_or(1.0).clamp(1.0,3.0);
-    let deck_y=terrain.sample_surface(&city.region,mid.x,mid.z)+5.8*level+0.24;
-    let position=Vec3::new(x as f32,ground+2.8,z as f32);
-    let yaw=((mid.x-x) as f32).atan2((mid.z-z) as f32);
-    let pitch=((deck_y-position.y)/side as f32).atan();
-    Some(Camera{position,yaw,pitch,eye_clearance:2.8,
-        speed:3.4,fast_mode:false})
+    candidates.sort_by(|a,b|b.0.total_cmp(&a.0));
+    for (_,a,b,street,mid,len) in candidates{
+        let normal=Point{x:-(b.z-a.z)/len,z:(b.x-a.x)/len};
+        let level=street.tags.get("layer")
+            .and_then(|v|v.parse::<f32>().ok()).unwrap_or(1.0).clamp(1.0,3.0);
+        let deck_y=terrain.sample_surface(&city.region,mid.x,mid.z)+
+            5.8*level+0.24;
+        // A high three-quarter view shows both the deck and the terrain
+        // beneath it. The earlier eye-level perch could show only flat
+        // concrete or no city geometry at all in software Chromium.
+        for side in [1.0,-1.0]{
+            let distance=72.0;
+            let x=mid.x+normal.x*distance*side;
+            let z=mid.z+normal.z*distance*side;
+            if x<sw.x+8.0||x>ne.x-8.0||z<sw.z+8.0||z>ne.z-8.0 {continue;}
+            let ground=terrain.sample_surface(&city.region,x,z);
+            let eye=ground+66.0;
+            if collision.blocked(x,z,eye as f64,0.5){continue;}
+            let yaw=((mid.x-x) as f32).atan2((mid.z-z) as f32);
+            let horizontal=(mid.x-x).hypot(mid.z-z) as f32;
+            let pitch=((deck_y-eye)/horizontal.max(0.1)).atan();
+            return Some(Camera{
+                position:Vec3::new(x as f32,eye,z as f32),
+                yaw,pitch,eye_clearance:66.0,speed:3.4,fast_mode:false,
+            });
+        }
+    }
+    None
 }
 #[cfg(target_arch="wasm32")]
 fn browser_viewport_size() -> PhysicalSize<u32> {

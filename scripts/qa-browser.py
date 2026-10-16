@@ -601,7 +601,28 @@ with sync_playwright() as p:
         after_inspection=page.locator("#status").get_attribute("data-camera-pose")
         assert after_inspection != before_inspection
         assert page.locator("#status").get_attribute("data-inspect-overpass-request")=="1"
-        print("Overpass inspector relocated the 3D camera to mapped elevated deck")
+        # A frame counter is not proof that the target is visible. Older
+        # builds produced a flat gray screenshot after this jump. Wait for
+        # two presentations and inspect pixels in the unobstructed canvas.
+        rendered_before=int(page.locator("#status").get_attribute("data-frame-count"))
+        page.wait_for_function(
+            "(n) => Number(document.querySelector('#status')?.dataset.frameCount) >= n+2",
+            arg=rendered_before,timeout=12000)
+        page.wait_for_timeout(200)
+        with Image.open(BytesIO(canvas.screenshot())) as im:
+            im=im.convert("RGB")
+            width,height=im.size
+            sample_colors=set()
+            for iy in range(50,90,3):
+                for ix in range(52,65,2):
+                    sample_colors.add(im.getpixel((
+                        min(width-1,int(ix*width/100)),
+                        min(height-1,int(iy*height/100))
+                    )))
+        print("Overpass overview distinct unobstructed canvas colors:",len(sample_colors))
+        assert len(sample_colors)>=15,(
+            "Overpass inspector produced flat/no-scene rendering",len(sample_colors))
+        print("Overpass inspector relocated the 3D camera to visible terrain and road deck")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
