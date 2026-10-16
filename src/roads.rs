@@ -446,7 +446,13 @@ fn at_region_edge(city:&City,p:Point)->bool {
     (p.x-southwest.x).abs()<1.8 || (p.x-northeast.x).abs()<1.8 ||
     (p.z-southwest.z).abs()<1.8 || (p.z-northeast.z).abs()<1.8
 }
-pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
+pub fn mesh_streets(city:&City)->Result<(RoadScene,RoadReport),String> {
+    mesh_streets_with_bridges(city,true)
+}
+/// Fast normal-view mode skips generating every approximate raised mesh.
+/// Source bridge spans are kept as metadata for the terrain-level ribbons.
+pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
+    ->Result<(RoadScene,RoadReport),String> {
     let mut scene=RoadScene::default();
     let mut report=RoadReport {source_segments:city.streets.len(),..Default::default()};
     for street in &city.streets {
@@ -525,7 +531,9 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
     add_junction_patches(city,&mut scene,&mut report)?;
     let omitted=remove_pedestrian_asphalt_overlap(city,&mut scene);
     report.pedestrian_overlap_triangles_removed=omitted;
-    crate::road_grade::build_bridge_layers(&mut scene,|_,_|0.0)?;
+    if detailed_bridges {
+        crate::road_grade::build_bridge_layers(&mut scene,|_,_|0.0)?;
+    }
     report.total_vertices=scene.layers.values().map(|l| l.vertices.len()).sum();
     report.total_triangles=scene.layers.values().map(|l| l.indices.len()/3).sum();
     Ok((scene,report))

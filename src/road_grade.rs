@@ -61,6 +61,33 @@ fn box_pier(mesh:&mut Mesh,x:f32,z:f32,bottom:f32,top:f32){
 ///
 /// Source paths have X east / Z north in meters. The 5.8m tier clearance is
 /// a *visual heuristic*; it must never be confused with a measured clearance.
+/// Retire unfinished elevated geometry in the normal viewer while preserving
+/// the actual source centerlines as ordinary terrain-draped road surfaces.
+/// No bridge deck, supports, barriers or GPU bridge batches are allocated.
+/// The experimental preview retains the separate grade mesh pipeline.
+pub fn flatten_bridge_spans(scene:&mut RoadScene)->Result<(),String>{
+    for kind in [
+        SurfaceKind::ElevatedRoad,SurfaceKind::BridgeFascia,
+        SurfaceKind::BridgeSupports,SurfaceKind::BridgeRails,
+        SurfaceKind::BridgeStripe,
+    ]{
+        scene.layers.remove(&kind);
+    }
+    for span in &scene.bridge_spans {
+        let Some(strip)=ribbon(&span.path,span.width_m,0.24)? else{continue;};
+        let motorway=span.kind.starts_with("motorway")||
+            span.kind.starts_with("trunk");
+        let kind=if motorway{SurfaceKind::Motorway}else{SurfaceKind::Road};
+        if motorway {
+            let paint=motorway_edge_stripes(&strip,0.035);
+            append(scene.layers.entry(SurfaceKind::MotorwayStripe)
+                .or_default(),paint)?;
+        }
+        append(scene.layers.entry(kind).or_default(),strip)?;
+    }
+    Ok(())
+}
+
 const APPROACH_M:f64=65.0;
 const MATCH_RADIUS_M:f64=1.6;
 
@@ -289,6 +316,23 @@ mod tests {
             provenance:vec![],streets:roads,buildings:vec![],
         };
         crate::roads::mesh_streets(&city).unwrap().0
+    }
+    #[test]
+    fn retired_bridge_mode_keeps_centerline_without_raised_deck(){
+        let mut scene=scene(vec![
+            tagged("motorway",&[("bridge","yes"),("layer","1")]),
+        ]);
+        assert!(!scene.bridge_spans.is_empty());
+        flatten_bridge_spans(&mut scene).unwrap();
+        for kind in [SurfaceKind::ElevatedRoad,SurfaceKind::BridgeFascia,
+            SurfaceKind::BridgeSupports,SurfaceKind::BridgeRails,
+            SurfaceKind::BridgeStripe] {
+            assert!(!scene.layers.contains_key(&kind));
+        }
+        let mesh=&scene.layers[&SurfaceKind::Motorway];
+        assert!(!mesh.indices.is_empty());
+        assert!(mesh.vertices.iter().all(|v|(v.position[1]-0.24).abs()<0.001));
+        assert!(!scene.layers[&SurfaceKind::MotorwayStripe].indices.is_empty());
     }
     #[test]
     fn tagged_bridge_has_real_deck_thickness_barriers_and_piers(){

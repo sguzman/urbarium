@@ -14,6 +14,9 @@
       document.documentElement.dataset.rendererChoice = mode;
       document.documentElement.dataset.safeGpu =
         new URLSearchParams(location.search).get("safe") === "1" ? "true" : "false";
+      // Explicit opt-in, never remembered as the default release view.
+      document.documentElement.dataset.bridgePreview =
+        new URLSearchParams(location.search).get("bridges") === "1" ? "true" : "false";
       if (mode === "webgl2") {
         try {
           Object.defineProperty(navigator, "gpu", {
@@ -95,6 +98,13 @@
       background:#203642;color:#e8f5ff;border:1px solid #577688;
       border-radius:5px;padding:4px 8px;}
     #safe-gpu-toggle[aria-pressed="true"] {border-color:#bbd8dc;background:#295149;}
+    #bridge-preview-toggle {pointer-events:auto;cursor:pointer;
+      background:#203847;color:#eaf3f8;border:1px solid #547081;
+      border-radius:5px;padding:4px 8px;}
+    #bridge-preview-toggle[aria-pressed="true"] {
+      background:#594026;border-color:#d6a269;color:#ffe8c5;
+    }
+    #inspect-overpass[hidden] {display:none;}
     .renderer-control {pointer-events:auto;display:inline-flex;align-items:center;
       gap:8px;color:#c1d8e3;margin:4px 0;font-size:12px;}
     .renderer-control select {background:#203642;color:#e8f5ff;
@@ -208,8 +218,11 @@
     <p id="renderer-health" role="status">Loading the Rust viewer...</p>
     <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
     <div class="scene-controls">
-      <button id="inspect-overpass" type="button" disabled title="Move the camera to a mapped elevated road and view its height from street level">Inspect overpass (loading)</button>
-      <span class="scene-note">Bridge heights are visual estimates, not surveyed.</span>
+      <button id="bridge-preview-toggle" type="button" aria-pressed="false"
+        title="Reload with experimental elevated freeway meshes. No change to cached geography.">Experimental 3D freeways: off</button>
+      <button id="inspect-overpass" type="button" disabled hidden
+        title="Inspect the experimental bridge reconstruction">Inspect overpass (preview only)</button>
+      <span id="bridge-preview-note" class="scene-note">Unfinished elevated geometry retired. Real road centerlines remain visible at terrain level.</span>
     </div>
     <div class="debug-controls">
       <button id="stats-toggle" type="button" aria-controls="stats-panel"
@@ -447,7 +460,23 @@
         if(skyMode==="live")syncLaClock();
       });
       resumeLive();
-      document.getElementById("inspect-overpass").addEventListener("click",()=>{
+      const bridgePreview=document.documentElement.dataset.bridgePreview==="true";
+      const bridgeButton=document.getElementById("bridge-preview-toggle");
+      const bridgeNote=document.getElementById("bridge-preview-note");
+      const inspect=document.getElementById("inspect-overpass");
+      bridgeButton.setAttribute("aria-pressed",String(bridgePreview));
+      bridgeButton.textContent="Experimental 3D freeways: "+(bridgePreview?"on":"off");
+      bridgeNote.textContent=bridgePreview
+        ? "Unfinished prototype: incomplete road topology and estimated bridge heights."
+        : "Unfinished raised geometry retired; terrain-level roads remain visible.";
+      inspect.hidden=!bridgePreview;
+      bridgeButton.addEventListener("click",()=>{
+        const url=new URL(location.href);
+        if(bridgePreview)url.searchParams.delete("bridges");
+        else url.searchParams.set("bridges","1");
+        location.assign(url.href);
+      });
+      inspect.addEventListener("click",()=>{
         const status=document.getElementById("status");
         const count=Number(status.dataset.inspectOverpassRequest||0);
         status.dataset.inspectOverpassRequest=String(count+1);

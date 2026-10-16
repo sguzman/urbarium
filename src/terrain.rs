@@ -120,6 +120,15 @@ impl TerrainGrid {
     /// At-grade ribbons follow actual DEM triangles; bridges are regenerated
     /// independently from source-qualified spans above that same datum.
     pub fn drape_roads(&self,region:&Region,roads:&mut RoadScene)->Result<(),String> {
+        self.drape_roads_with_preview(region,roads,true)
+    }
+    /// Normal browser mode omits unfinished raised road geometry and draws
+    /// source centerlines as terrain-level road ribbons instead.
+    pub fn drape_roads_with_preview(&self,region:&Region,roads:&mut RoadScene,
+        bridge_preview:bool)->Result<(),String> {
+        if !bridge_preview {
+            crate::road_grade::flatten_bridge_spans(roads)?;
+        }
         for (kind,mesh) in roads.layers.iter_mut() {
             if matches!(kind,SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
                 SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails|
@@ -129,7 +138,10 @@ impl TerrainGrid {
                     region,vertex.position[0] as f64,vertex.position[2] as f64);
             }
         }
-        crate::road_grade::build_bridge_layers(roads,|x,z|self.sample_surface(region,x,z))
+        if bridge_preview {
+            crate::road_grade::build_bridge_layers(roads,|x,z|
+                self.sample_surface(region,x,z))
+        }else{Ok(())}
     }
 
     /// Keep each building's foundation and roof horizontal by applying one

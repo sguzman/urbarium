@@ -10,7 +10,7 @@ use web_time::Instant;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use urbarium::geometry::{mesh_building, HeightPolicy, Mesh, Vertex};
-use urbarium::roads::{mesh_streets, SurfaceKind};
+use urbarium::roads::{mesh_streets_with_bridges, SurfaceKind};
 use urbarium::{Building, City, Point};
 use urbarium::collision::CollisionWorld;
 use urbarium::terrain::TerrainGrid;
@@ -257,15 +257,16 @@ fn landmark_disc(terrain:&TerrainGrid,region:&Region,p:Point,radius:f64)->Mesh {
     }
     mesh
 }
-fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String> {
+fn combined_city(city:&City,terrain:&TerrainGrid,bridge_preview:bool)
+    ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String> {
     let catalog:LandmarkCatalog=serde_json::from_str(include_str!("../../web/landmarks.json"))
         .map_err(|e|format!("bundled landmark catalog: {e}"))?;
     if catalog.region_id!=city.region.id {
         return Err("landmark catalog must match the current region".into());
     }
     let (buildings,building_report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
-    let (mut roads,road_report)=mesh_streets(city)?;
-    terrain.drape_roads(&city.region,&mut roads)?;
+    let (mut roads,road_report)=mesh_streets_with_bridges(city,bridge_preview)?;
+    terrain.drape_roads_with_preview(&city.region,&mut roads,bridge_preview)?;
     if building_report.buildings_meshed == 0 || building_report.buildings_skipped > 0 {
         return Err(format!("city has {} buildings meshed, {} skipped",
             building_report.buildings_meshed, building_report.buildings_skipped));
@@ -285,12 +286,20 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
     let ground=terrain.mesh(&city.region)?;
     add(&ground,[0.39,0.44,0.42],SceneLayer::Ground)?;
     add(&buildings,[0.71,0.76,0.81],SceneLayer::Buildings)?;
+    let bridge_triangles=roads.layers.iter().filter(|(kind,_)|
+        matches!(kind,SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
+            SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails|
+            SurfaceKind::BridgeStripe))
+        .map(|(_,mesh)|mesh.indices.len()/3).sum();
+    set_bridge_mesh_triangles(bridge_triangles);
     for (kind,mesh) in roads.layers {
         let (layer,color)=match kind {
             SurfaceKind::Road => (SceneLayer::Road,[0.24,0.26,0.29]),
             SurfaceKind::Motorway => (SceneLayer::Road,[0.14,0.19,0.23]),
-            SurfaceKind::MotorwayStripe|SurfaceKind::BridgeStripe =>
+            SurfaceKind::MotorwayStripe =>
                 (SceneLayer::Road,[0.91,0.89,0.77]),
+            SurfaceKind::BridgeStripe =>
+                (SceneLayer::ElevatedRoad,[0.91,0.89,0.77]),
             SurfaceKind::ElevatedRoad => (SceneLayer::ElevatedRoad,[0.26,0.29,0.32]),
             SurfaceKind::BridgeFascia => (SceneLayer::BridgeStructure,[0.48,0.51,0.52]),
             SurfaceKind::BridgeSupports => (SceneLayer::BridgeStructure,[0.61,0.63,0.62]),
@@ -398,14 +407,34 @@ async fn fetch_city() -> Result<City, String> {
 }
 
 #[cfg(target_arch="wasm32")]
+fn set_bridge_mesh_triangles(count:usize) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()){
+        if let Some(el)=doc.get_element_by_id("status"){
+            let _=el.set_attribute("data-bridge-mesh-triangles",&count.to_string());
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_bridge_mesh_triangles(_:usize) {}
+
+#[cfg(target_arch="wasm32")]
 fn set_elevated_span_count(count:usize) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
             let _=el.set_attribute("data-elevated-road-spans",&count.to_string());
         }
         if let Some(button)=doc.get_element_by_id("inspect-overpass") {
-            button.set_text_content(Some(&format!("Inspect overpass ({count})")));
-            if count>0 {let _=button.remove_attribute("disabled");}
+            let active=doc.get_element_by_id("status")
+                .and_then(|el|el.get_attribute("data-bridge-preview-active"))
+                .as_deref()==Some("true");
+            button.set_text_content(Some(if active {
+                &format!("Inspect prototype overpass ({count})")
+            }else{"Inspect overpass (preview only)"}));
+            if active&&count>0 {
+                let _=button.remove_attribute("disabled");
+            }else{
+                let _=button.set_attribute("disabled","");
+            }
         }
     }
 }
@@ -717,9 +746,13 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     info("Generating 3D terrain, buildings and streets...");
     terrain.validate(&city.region)?;
     set_terrain_size(terrain.heights_m.len());
-    let (vertices,indices,batches)=combined_city(&city,&terrain)?;
+    let bridge_preview=browser_bridge_preview();
+    set_bridge_preview_state(bridge_preview);
+    let (vertices,indices,batches)=combined_city(&city,&terrain,bridge_preview)?;
     let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
-    let bridge_overlook=bridge_overlook(&city,&terrain,&collision);
+    let bridge_overlook=if bridge_preview {
+        bridge_overlook(&city,&terrain,&collision)
+    }else{None};
     set_browser_stage("gpu-init");
     info("Geography ready; initializing WebGPU or WebGL2...");
     let instance=wgpu::util::new_instance_with_webgpu_detection(
@@ -1084,6 +1117,27 @@ impl ApplicationHandler<AppEvent> for App {
     }
 }
 
+fn browser_bridge_preview()->bool {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        return doc.document_element()
+            .and_then(|el|el.get_attribute("data-bridge-preview"))
+            .as_deref()==Some("true");
+    }
+    // Native and offline exports retain explicit detailed-bridge behavior.
+    false
+}
+fn set_bridge_preview_state(preview:bool){
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()){
+        if let Some(el)=doc.get_element_by_id("status"){
+            let _=el.set_attribute("data-bridge-preview-active",
+                if preview{"true"}else{"false"});
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=preview;
+}
 fn browser_safe_gpu()->bool {
     #[cfg(target_arch="wasm32")]
     return web_sys::window().and_then(|w|w.document())

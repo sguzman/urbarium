@@ -52,7 +52,10 @@ with sync_playwright() as p:
                 headers:{"content-type":"application/json"}}));
         }
     }""")
-    page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}", wait_until="domcontentloaded")
+    # WebGPU validates the retired default; WebGL2 covers opt-in prototype.
+    bridge_preview=force_webgl
+    suffix="&bridges=1" if bridge_preview else ""
+    page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}", wait_until="domcontentloaded")
     page.wait_for_function(
         "(mode) => document.querySelector('#renderer-select')?.value === mode",
         arg=qa_mode, timeout=8000
@@ -126,7 +129,21 @@ with sync_playwright() as p:
         assert elevated_attr is not None,"Missing source-grade bridge diagnostics"
         elevated=int(elevated_attr)
         assert 0<elevated<=1600,(
-            "Downtown LA pilot must visibly contain real source-tagged elevated bridges",elevated)
+            "Bridge source metadata must remain available in either viewing mode",elevated)
+        assert page.locator("#status").get_attribute(
+            "data-bridge-preview-active")==str(bridge_preview).lower()
+        bridge_triangles=int(page.locator("#status").get_attribute(
+            "data-bridge-mesh-triangles") or "-1")
+        assert (bridge_triangles>0)==bridge_preview,(
+            "Retired default must allocate zero experimental bridge triangles",
+            bridge_preview,bridge_triangles)
+        toggle=page.locator("#bridge-preview-toggle")
+        assert toggle.get_attribute("aria-pressed")==str(bridge_preview).lower()
+        assert page.locator("#inspect-overpass").is_visible()==bridge_preview
+        if not bridge_preview:
+            assert "retired" in page.locator("#bridge-preview-note").inner_text()
+            assert page.locator("#inspect-overpass").is_disabled()
+        print("Bridge preview flag/mesh triangle allocation:",bridge_preview,bridge_triangles)
         eye_height=float(page.locator("#status").get_attribute("data-eye-clearance"))
         assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
         canvas.click(position={"x": 500, "y": 420})
@@ -589,43 +606,44 @@ with sync_playwright() as p:
             f"Renderer stopped during soak: {before_frames} -> {after_frames}"
         )
         assert not errors, errors
-        # Inspect a real bridge AFTER camera-motion and pointer-lock
-        # baseline checks; teleportation must not change their assumptions.
-        assert page.locator("#inspect-overpass").is_enabled()
-        assert f"({elevated})" in page.locator("#inspect-overpass").inner_text()
-        before_inspection=page.locator("#status").get_attribute("data-camera-pose")
-        page.locator("#inspect-overpass").click()
-        page.wait_for_function(
-            """(old) => document.querySelector('#status')?.dataset.cameraPose !== old""",
-            arg=before_inspection, timeout=10000)
-        after_inspection=page.locator("#status").get_attribute("data-camera-pose")
-        assert after_inspection != before_inspection
-        assert page.locator("#status").get_attribute("data-inspect-overpass-request")=="1"
-        # A frame counter is not proof that the target is visible. Older
-        # builds produced a flat gray screenshot after this jump. Wait for
-        # two presentations and inspect pixels in the unobstructed canvas.
-        rendered_before=int(page.locator("#status").get_attribute("data-frame-count"))
-        page.wait_for_function(
-            "(n) => Number(document.querySelector('#status')?.dataset.frameCount) >= n+2",
-            arg=rendered_before,timeout=12000)
-        page.wait_for_timeout(200)
-        with Image.open(BytesIO(canvas.screenshot())) as im:
-            im=im.convert("RGB")
-            width,height=im.size
-            sample_colors=set()
-            for iy in range(50,90,3):
-                for ix in range(52,65,2):
-                    sample_colors.add(im.getpixel((
-                        min(width-1,int(ix*width/100)),
-                        min(height-1,int(iy*height/100))
-                    )))
-        print("Overpass overview distinct unobstructed canvas colors:",len(sample_colors))
-        # The actual low-poly city has a small palette. The old broken
-        # inspector rendered one uniform color; the corrected screenshot
-        # has visibly distinct terrain, streets and building surfaces.
-        assert len(sample_colors)>=5,(
-            "Overpass inspector produced flat/no-scene rendering",len(sample_colors))
-        print("Overpass inspector relocated the 3D camera to visible terrain and road deck")
+        if bridge_preview:
+            # Inspect a real bridge AFTER camera-motion and pointer-lock
+            # baseline checks; teleportation must not change their assumptions.
+            assert page.locator("#inspect-overpass").is_enabled()
+            assert f"({elevated})" in page.locator("#inspect-overpass").inner_text()
+            before_inspection=page.locator("#status").get_attribute("data-camera-pose")
+            page.locator("#inspect-overpass").click()
+            page.wait_for_function(
+                """(old) => document.querySelector('#status')?.dataset.cameraPose !== old""",
+                arg=before_inspection, timeout=10000)
+            after_inspection=page.locator("#status").get_attribute("data-camera-pose")
+            assert after_inspection != before_inspection
+            assert page.locator("#status").get_attribute("data-inspect-overpass-request")=="1"
+            # A frame counter is not proof that the target is visible. Older
+            # builds produced a flat gray screenshot after this jump. Wait for
+            # two presentations and inspect pixels in the unobstructed canvas.
+            rendered_before=int(page.locator("#status").get_attribute("data-frame-count"))
+            page.wait_for_function(
+                "(n) => Number(document.querySelector('#status')?.dataset.frameCount) >= n+2",
+                arg=rendered_before,timeout=12000)
+            page.wait_for_timeout(200)
+            with Image.open(BytesIO(canvas.screenshot())) as im:
+                im=im.convert("RGB")
+                width,height=im.size
+                sample_colors=set()
+                for iy in range(50,90,3):
+                    for ix in range(52,65,2):
+                        sample_colors.add(im.getpixel((
+                            min(width-1,int(ix*width/100)),
+                            min(height-1,int(iy*height/100))
+                        )))
+            print("Overpass overview distinct unobstructed canvas colors:",len(sample_colors))
+            # The actual low-poly city has a small palette. The old broken
+            # inspector rendered one uniform color; the corrected screenshot
+            # has visibly distinct terrain, streets and building surfaces.
+            assert len(sample_colors)>=5,(
+                "Overpass inspector produced flat/no-scene rendering",len(sample_colors))
+            print("Overpass inspector relocated the 3D camera to visible terrain and road deck")
         # Exercise the diagnostic path without actually killing the graphics
         # process. Verify crash info is persisted locally and conservative
         # GPU mode changes both rendering resolution and URL configuration.

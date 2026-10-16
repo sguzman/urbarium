@@ -20,6 +20,25 @@
 
 ## P1 — Geographic fidelity
 
+**Current release gate:** experimental 3D freeway geometry is intentionally
+**retired from the default browser viewer**. Default retains source road
+centerlines as terrain-level reference, without bridge slabs or GPU bridge
+batches. The prior model remains accessible only through explicit
+`?bridges=1` preview for diagnosis. It must not return by default before
+the connected-corridor topology, continuity, visual QA and performance
+criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
+
+- [x] Retire disconnected raised-road fragments from the normal scene and
+      replace bridge-tagged gaps with regular draped road strips and markings.
+- [x] Gate expensive bridge geometry generation/upload behind an explicit,
+      non-persistent, user-visible experimental preview switch.
+- [ ] Acquire corridor-sized source transportation data beyond the pilot and
+      report connectivity/missing-source endpoints.
+- [ ] Build verified connector topology + elevation profiles for freeways;
+      review actual interchange screenshots before restoring raised road
+      geometry to the default view.
+
+
 - [ ] Ingest versioned Overture building and building-part datasets with tiled streaming.
 - [ ] Evaluate 2020/2023 LA County GIS outlines, units, coverage, terms, and permitted redistribution.
 - [ ] Merge/conflict resolution keyed by source feature IDs, with geometry overlays and QA reports.

@@ -123,8 +123,9 @@
       });
       bc.stroke();
     }
-    // Show where source-qualified elevated roads actually are. These are
-    // not everywhere on the city map, so do not imply every motorway is raised.
+    // Experimental bridge geometry is invisible by default. Cyan source-
+    // flagged sections only appear when the explicit prototype is enabled.
+    if(document.documentElement.dataset.bridgePreview==="true"){
     bc.save();
     bc.lineWidth=3.0;
     bc.lineCap="round";
@@ -142,6 +143,7 @@
       bc.stroke();
     }
     bc.restore();
+    }
     bc.strokeStyle="#81979b";
     bc.lineWidth=1;
     bc.strokeRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);

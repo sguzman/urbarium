@@ -332,49 +332,38 @@ buildings not among them are not architectural recreations.
 External heritage descriptions and Wikipedia/Wikidata identifiers require
 independent source matching and provenance, not guesses.
 
-The road renderer now includes a first real 3D **source-qualified
-bridge/overpass pass**. A road is elevated only where its imported attributes
-explicitly specify `bridge=yes` or a positive stacking layer; being called
-`motorway` alone never causes it to float. Such tagged streets leave the
-at-grade road layer and receive a separate 3D deck, a thickened concrete slab
-and soffit, side barriers and illustrative support piers. The deck follows
-the DEM as a visual height reference, separate from ground-intersection
-patches. The mesh also exports in portable GLB/OBJ with named materials.
+### Freeway reconstruction reset (October 2026)
 
-**Important limitation:** Overture `level_rules` provide *relative Z-order*,
-not measured meters. Deck height uses approximately 5.8 m of *visual*
-clearance per level (capped at 3), and the side barriers and pier locations
-are not surveyed or engineered. The importer preserves scoped
-`road_flags`, `level_rules` and `width_rules`, and now splits
-**partial-segment bridge and level ranges along the original centerline
-before clipping**. This gives bridge-only sections their own 3D decks
-without elevating the rest of the road. Height remains a visual
-approximation. The renderer now finds genuine shared-endpoint connections
-between the elevated source sections and adjacent at-grade roads with
-compatible headings. It draws gradual ~65 m visual approach ramps along
-those real road centerlines, keeping same-level bridge-to-bridge joins
-elevated. When an interior endpoint has no trustworthy road connection,
-it tapers within the tagged section rather than terminating in a vertical
-cliff; endpoints exactly at the city boundary remain elevated.
-This does **not** invent roads at arbitrary crossings or outside the
-source geometry. Motorway-class surfaces also have a distinct darker
-material and light edge paint, making the non-elevated freeway carriageways
-visible instead of indistinguishable from city streets.
+**The unfinished elevated freeway reconstruction is retired from the default
+browser scene.** Its fragmented decks, fake clearances and loose supports were
+an eyesore and did not form coherent freeway corridors. Normal startup draws
+the actual acquired centerlines, including bridge-tagged sections, as dark
+terrain-draped motorway/road ribbons with existing edge markings. This is
+a **2.5D geographic reference**, not a claim that elevated freeways have been
+accurately rebuilt. Ground-level substitutes may intersect crossing roads;
+they are intentionally less misleading than floating bridge fragments.
 
-**Coverage limit:** the current Downtown LA acquisition box is
-approximately 1.5 × 1.2 km and contains only 27 motorway-class road
-sections (October 16 source report). Some highways genuinely continue
-*outside* this pilot, so a complete surrounding freeway network requires
-a later geographic expansion. The source's bridge/level flags are not
-surveyed 3D coordinates; ramps, retaining walls, deck collisions,
-multi-level continuity at complex interchanges and real road topology
-remain approximations or unfinished. **Inspect overpass (N)** jumps the camera to a real
-source-tagged elevated section and faces its deck from a nearby overlook, so
-the user can inspect the 3D height without manually discovering it.
-The minimap draws source-tagged elevated road sections in cyan; ordinary
-motorways are not falsely shown as bridges. The named-road exporter reports the number of
-source-qualified bridge spans so a geography release without any evidence
-does not silently create fake freeways.
+The default Rust/WASM viewer now **does not generate or upload experimental
+raised-road decks, fascia, rails, pier columns or bridge edge stripes**. The
+renderer reports zero bridge mesh triangles; geographic bridge metadata and
+the existing content-fingerprinted city/DEM cache remain unchanged.
+
+For development and comparison only, choose **Experimental 3D freeways: on**
+(or append `?bridges=1`). This reloads the renderer with the old preliminary
+bridge model, highlights source bridge segments in cyan on the minimap, and
+enables **Inspect prototype overpass**. Turning the preview off removes the
+query parameter and returns to the simpler default. This preference is
+deliberately **not saved across ordinary launches**. The opt-in preview
+is unfinished and may be visually incorrect. Flat centerline and elevated
+preview modes have separate end-to-end tests.
+
+Overture's `level_rules` are a **relative Z-order**, not measured road-deck
+elevations. The pilot acquisition is just ~1.5 × 1.2 km and cannot represent
+complete nearby freeway interchanges. Rebuilding freeways requires a
+connected corridor graph, verified crossing order and bridge coverage,
+continuous longitudinal grade profiles, bounds-aware geometry and browser
+screenshot validation before the feature returns to the default scene.
+See [Freeway reconstruction plan](docs/FREEWAY_RECONSTRUCTION.md).
 
 ## Landmark categories and time-of-day sky
 
