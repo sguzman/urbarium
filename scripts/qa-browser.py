@@ -667,8 +667,20 @@ with sync_playwright() as p:
                 const d=document.querySelector('#status').dataset;
                 return [Number(d.surfaceWidth),Number(d.surfaceHeight)];
             }""")
-            assert dims[0]*dims[1]<=660000,(
-                "Conservative GPU must cap color/depth framebuffer pixels",dims)
+            page.wait_for_function("""() => {
+                const d=document.querySelector('#status').dataset;
+                const canvas=document.querySelector('canvas:not(#minimap-canvas):not(#webgpu-control)');
+                const w=Number(d.surfaceWidth),h=Number(d.surfaceHeight);
+                return w*h>0 && w*h<=660000 &&
+                    canvas?.width===w && canvas?.height===h;
+            }""",timeout=15000)
+            dims=page.evaluate("""() => {
+                const d=document.querySelector('#status').dataset;
+                const c=document.querySelector('canvas:not(#minimap-canvas):not(#webgpu-control)');
+                return [Number(d.surfaceWidth),Number(d.surfaceHeight),c.width,c.height];
+            }""")
+            assert dims[0]*dims[1]<=660000 and dims[:2]==dims[2:],(
+                "Conservative mode must cap actual canvas AND depth backing pixels",dims)
             assert "safe=1" in page.url
             print("GPU fault persisted locally; conservative 30fps/640k-pixel restart succeeded",dims)
         print("6-second continuous rendering stability smoke test passed")

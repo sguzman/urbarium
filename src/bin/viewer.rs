@@ -625,6 +625,7 @@ impl Graphics {
         }).create_view(&wgpu::TextureViewDescriptor::default())
     }
     fn reconfigure_surface(&mut self, size:PhysicalSize<u32>) {
+        let size=limit_backing_size(size);
         self.config.width=size.width.max(1);
         self.config.height=size.height.max(1);
         self.surface.configure(&self.device,&self.config);
@@ -632,6 +633,7 @@ impl Graphics {
         expose_surface_size(self.config.width,self.config.height);
     }
     fn resize(&mut self,size:PhysicalSize<u32>) {
+        let size=limit_backing_size(size);
         if self.config.width==size.width.max(1) &&
             self.config.height==size.height.max(1) {return;}
         self.reconfigure_surface(size);
@@ -790,7 +792,11 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         let faults=Arc::clone(&gpu_fault);
         move |error|faults.record(format!("uncaptured GPU error: {error}"))
     }));
-    let size=window.inner_size();
+    let requested=window.inner_size();
+    let size=limit_backing_size(requested);
+    if size!=requested {
+        let _=window.request_inner_size(size);
+    }
     let mut config=surface.get_default_config(&adapter,size.width.max(1),size.height.max(1))
         .ok_or("No compatible GPU surface configuration")?;
     expose_surface_size(config.width,config.height);
@@ -1003,7 +1009,16 @@ impl ApplicationHandler<AppEvent> for App {
         match event {
             WindowEvent::CloseRequested=>event_loop.exit(),
             WindowEvent::Resized(size)=>{
-                if let Stage::Ready(gfx)=&mut self.state {gfx.resize(size);}
+                // winit may emit an unbounded CSS pixel size after our
+                // viewport resize callback. Limit BOTH the actual canvas
+                // backing pixels and the wgpu surface on every path.
+                let limited=limit_backing_size(size);
+                if limited!=size {
+                    if let Some(window)=&self.window {
+                        let _=window.request_inner_size(limited);
+                    }
+                }
+                if let Stage::Ready(gfx)=&mut self.state {gfx.resize(limited);}
             },
             WindowEvent::Focused(false)=>{
                 self.keys.clear();
@@ -1139,6 +1154,21 @@ fn set_bridge_preview_state(preview:bool){
     #[cfg(not(target_arch="wasm32"))]
     let _=preview;
 }
+fn limit_backing_size(size:PhysicalSize<u32>)->PhysicalSize<u32>{
+    #[cfg(target_arch="wasm32")]
+    {
+        let pixels=size.width.max(1) as u64*size.height.max(1) as u64;
+        let budget=if browser_safe_gpu(){640_000u64}else{1_800_000u64};
+        if pixels>budget {
+            let scale=(budget as f64/pixels as f64).sqrt();
+            return PhysicalSize::new(
+                ((size.width as f64*scale).floor() as u32).max(1),
+                ((size.height as f64*scale).floor() as u32).max(1),
+            );
+        }
+    }
+    size
+}
 fn browser_safe_gpu()->bool {
     #[cfg(target_arch="wasm32")]
     return web_sys::window().and_then(|w|w.document())
@@ -1248,7 +1278,7 @@ fn browser_viewport_size() -> PhysicalSize<u32> {
         // CSS viewport remains full-width; only drawing resolution scales.
         let pixel_budget=if browser_safe_gpu(){640_000.0}else{1_800_000.0};
         let max_scale=(pixel_budget/(width.max(1.0)*height.max(1.0))).sqrt();
-        let dpr=win.device_pixel_ratio().min(2.0).min(max_scale).max(0.45);
+        let dpr=win.device_pixel_ratio().min(2.0).min(max_scale).max(0.05);
         return PhysicalSize::new(
             (width*dpr).round().clamp(1.0,8192.0) as u32,
             (height*dpr).round().clamp(1.0,8192.0) as u32);
