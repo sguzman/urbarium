@@ -312,7 +312,8 @@ mod tests {
         let roads=scene(vec![tagged("motorway",&[])]);
         assert_eq!(roads.bridge_spans.len(),0);
         assert!(!roads.layers.contains_key(&SurfaceKind::ElevatedRoad));
-        assert!(roads.layers.contains_key(&SurfaceKind::Road));
+        assert!(roads.layers.contains_key(&SurfaceKind::Motorway));
+        assert!(roads.layers.contains_key(&SurfaceKind::MotorwayStripe));
     }
     #[test]
     fn terrain_sampler_drives_deck_and_support_ground_levels(){

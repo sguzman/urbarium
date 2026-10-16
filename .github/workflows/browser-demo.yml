@@ -16,6 +16,7 @@ on:
       - src/lib.rs
       - src/geometry.rs
       - src/roads.rs
+      - src/road_grade.rs
       - src/collision.rs
       - src/terrain.rs
       - scripts/fetch-terrain.py
