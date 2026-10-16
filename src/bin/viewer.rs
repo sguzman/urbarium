@@ -427,9 +427,10 @@ fn set_elevated_span_count(count:usize) {
             let active=doc.get_element_by_id("status")
                 .and_then(|el|el.get_attribute("data-bridge-preview-active"))
                 .as_deref()==Some("true");
-            button.set_text_content(Some(if active {
-                &format!("Inspect prototype overpass ({count})")
-            }else{"Inspect overpass (preview only)"}));
+            let label=if active {
+                format!("Inspect prototype overpass ({count})")
+            }else{"Inspect overpass (preview only)".to_owned()};
+            button.set_text_content(Some(&label));
             if active&&count>0 {
                 let _=button.remove_attribute("disabled");
             }else{
