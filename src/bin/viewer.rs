@@ -286,6 +286,9 @@ fn combined_city(city:&City, terrain:&TerrainGrid) -> Result<(Vec<GpuVertex>,Vec
     for (kind,mesh) in roads.layers {
         let (layer,color)=match kind {
             SurfaceKind::Road => (SceneLayer::Road,[0.24,0.26,0.29]),
+            SurfaceKind::Motorway => (SceneLayer::Road,[0.14,0.19,0.23]),
+            SurfaceKind::MotorwayStripe|SurfaceKind::BridgeStripe =>
+                (SceneLayer::Road,[0.91,0.89,0.77]),
             SurfaceKind::ElevatedRoad => (SceneLayer::ElevatedRoad,[0.26,0.29,0.32]),
             SurfaceKind::BridgeFascia => (SceneLayer::BridgeStructure,[0.48,0.51,0.52]),
             SurfaceKind::BridgeSupports => (SceneLayer::BridgeStructure,[0.61,0.63,0.62]),

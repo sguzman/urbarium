@@ -12,6 +12,9 @@ use std::io::{self, Write};
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceKind {
     Road,
+    Motorway,
+    MotorwayStripe,
+    BridgeStripe,
     ElevatedRoad,
     BridgeFascia,
     BridgeSupports,
@@ -24,6 +27,9 @@ impl SurfaceKind {
     fn material(self) -> &'static str {
         match self {
             Self::Road => "road_asphalt",
+            Self::Motorway => "motorway_asphalt",
+            Self::MotorwayStripe => "motorway_edge_markings",
+            Self::BridgeStripe => "bridge_edge_markings",
             Self::ElevatedRoad => "bridge_deck",
             Self::BridgeFascia => "bridge_concrete",
             Self::BridgeSupports => "bridge_supports",
@@ -39,6 +45,7 @@ impl SurfaceKind {
 pub struct RoadScene {
     pub layers: BTreeMap<SurfaceKind, Mesh>,
     pub bridge_spans: Vec<BridgeSpan>,
+    pub approach_roads: Vec<RoadApproach>,
 }
 #[derive(Clone, Debug)]
 pub struct BridgeSpan {
@@ -46,6 +53,17 @@ pub struct BridgeSpan {
     pub width_m:f64,
     pub relative_level:u8,
     pub source_id:String,
+    pub kind:String,
+    pub clipped_start:bool,
+    pub clipped_end:bool,
+}
+/// At-grade centerlines eligible for ramp approaches at real shared ends.
+/// Roads crossing in 2D without matching endpoints must never be connected.
+#[derive(Clone,Debug)]
+pub struct RoadApproach {
+    pub path:Vec<Point>,
+    pub kind:String,
+    pub width_m:f64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -55,6 +73,7 @@ pub struct RoadReport {
     pub segments_skipped: usize,
     pub segments_degenerate: usize,
     pub elevated_spans: usize,
+    pub motorway_sections: usize,
     pub pedestrian_overlap_triangles_removed:usize,
     /// Filled at-grade T/cross intersections inferred from shared road endpoints.
     pub junction_patches: usize,
@@ -68,7 +87,7 @@ pub struct RoadReport {
 fn surface_class(street: &Street) -> Option<(SurfaceKind, f64)> {
     let classification = street.kind.as_str();
     let (kind, default_width): (SurfaceKind, f64) = match classification {
-        "motorway" | "motorway_link" | "trunk" | "trunk_link" => (SurfaceKind::Road, 12.0),
+        "motorway" | "motorway_link" | "trunk" | "trunk_link" => (SurfaceKind::Motorway, 12.0),
         "primary" | "primary_link" | "secondary" | "secondary_link" => (SurfaceKind::Road, 9.0),
         "tertiary" | "tertiary_link" | "unclassified" => (SurfaceKind::Road, 7.0),
         "residential" | "living_street" => (SurfaceKind::Road, 6.5),
@@ -85,7 +104,7 @@ fn surface_class(street: &Street) -> Option<(SurfaceKind, f64)> {
     let width = street.tags.get("width")
         .and_then(|v| parse_width(v))
         .or_else(|| {
-            if kind != SurfaceKind::Road { return None; }
+            if kind != SurfaceKind::Road && kind != SurfaceKind::Motorway { return None; }
             street.tags.get("lanes")
                 .and_then(|v| v.parse::<u32>().ok())
                 .filter(|n| (1..=12).contains(n))
@@ -120,6 +139,39 @@ fn direction(a: Point, b: Point) -> Option<[f64;2]> {
 /// widths. Otherwise a 50m road triangle cuts directly through relief.
 pub const MAX_RIBBON_STEP_M:f64=3.0;
 pub(crate) const RIBBON_CROSS_STEPS:usize=4;
+/// Thin edge-line ribbons copied from either terrain-draped motorway
+/// ribbons or true elevated decks. Two longitudinal boundary stripes make
+/// existing motorway carriageways legible without inventing lane counts.
+pub(crate) fn motorway_edge_stripes(road:&Mesh,bias:f32)->Mesh {
+    let stride=RIBBON_CROSS_STEPS+1;
+    let rows=road.vertices.len()/stride;
+    let mut mesh=Mesh::default();
+    if rows<2{return mesh;}
+    for i in 0..rows-1{
+        let at=i*stride;let next=(i+1)*stride;
+        for (outer,inner) in [(0,1),(stride-1,stride-2)]{
+            let stripe=|row:usize,ratio:f32| {
+                let a=road.vertices[row+outer].position;
+                let b=road.vertices[row+inner].position;
+                let t=ratio;
+                Vertex {
+                    position:[a[0]+(b[0]-a[0])*t,
+                              a[1]+(b[1]-a[1])*t+bias,
+                              a[2]+(b[2]-a[2])*t],
+                    normal:[0.,1.,0.],
+                }
+            };
+            let base=mesh.vertices.len() as u32;
+            mesh.vertices.extend([
+                stripe(at,0.12),stripe(at,0.20),
+                stripe(next,0.12),stripe(next,0.20),
+            ]);
+            mesh.indices.extend([base,base+2,base+1,
+                                 base+1,base+2,base+3]);
+        }
+    }
+    mesh
+}
 pub(crate) fn ribbon(path:&[Point],width:f64,height:f32)->Result<Option<Mesh>,String>{
     let mut source=Vec::<Point>::new();
     for &point in path {
@@ -198,7 +250,8 @@ fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport
     let mut groups:Vec<Vec<RoadEnd>>=Vec::new();
     let mut cells:BTreeMap<(i64,i64),Vec<usize>>=BTreeMap::new();
     for street in &city.streets {
-        let Some((SurfaceKind::Road,width))=surface_class(street) else {continue};
+        let Some((kind,width))=surface_class(street) else {continue};
+        if !matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway){continue;}
         if street.path.len()<2
             || street.tags.get("bridge").is_some_and(|v|v!="no")
             || street.tags.get("tunnel").is_some_and(|v|v!="no")
@@ -325,7 +378,8 @@ fn junction_hull(mut points:Vec<(f64,f64)>) -> Vec<(f64,f64)> {
 // The spatial hash avoids a streets × pedestrian-triangles full scan.
 const OVERLAP_CELL_M:f64=24.0;
 fn at_grade_motor_road(street:&Street)->bool {
-    surface_class(street).is_some_and(|(kind,_)|kind==SurfaceKind::Road)
+    surface_class(street).is_some_and(|(kind,_)|
+        matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway))
         && !street.tags.get("bridge").is_some_and(|v|v!="no")
         && !street.tags.get("tunnel").is_some_and(|v|v!="no")
         && !street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
@@ -385,6 +439,13 @@ fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene)->usize {
     omitted
 }
 
+fn at_region_edge(city:&City,p:Point)->bool {
+    let [w,s,e,n]=city.region.bbox;
+    let southwest=city.region.project(w,s);
+    let northeast=city.region.project(e,n);
+    (p.x-southwest.x).abs()<1.8 || (p.x-northeast.x).abs()<1.8 ||
+    (p.z-southwest.z).abs()<1.8 || (p.z-northeast.z).abs()<1.8
+}
 pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
     let mut scene=RoadScene::default();
     let mut report=RoadReport {source_segments:city.streets.len(),..Default::default()};
@@ -401,7 +462,8 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
         // pedestrian < road. No arbitrary rail-over-road patches when
         // actual bridge decks or crossing surveys are missing.
         let height=match kind {
-            SurfaceKind::Road=>0.24,
+            SurfaceKind::Road|SurfaceKind::Motorway=>0.24,
+            SurfaceKind::MotorwayStripe|SurfaceKind::BridgeStripe=>0.28,
             SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
             SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails=>0.24,
             SurfaceKind::Walk=>0.09,
@@ -413,25 +475,42 @@ pub fn mesh_streets(city: &City) -> Result<(RoadScene, RoadReport), String> {
         // solely because they are classed as motorway.
         let positive_layer=street.tags.get("layer")
             .and_then(|s|s.parse::<i32>().ok()).is_some_and(|n|n>0);
-        let is_bridge=kind==SurfaceKind::Road &&
+        let is_bridge=matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway) &&
             street.tags.get("tunnel").is_none_or(|s|s=="no") &&
             (street.tags.get("bridge").is_some_and(|s|s=="yes")||positive_layer);
+        if kind==SurfaceKind::Motorway {report.motorway_sections+=1;}
         if is_bridge && street.path.len()>=2 {
             let level=street.tags.get("layer")
                 .and_then(|s|s.parse::<i32>().ok()).unwrap_or(1).clamp(1,3) as u8;
             scene.bridge_spans.push(BridgeSpan {
                 path:street.path.clone(),width_m:width,relative_level:level,
-                source_id:street.source_id.clone(),
+                source_id:street.source_id.clone(),kind:street.kind.clone(),
+                clipped_start:at_region_edge(city,street.path[0]),
+                clipped_end:at_region_edge(city,*street.path.last().unwrap()),
             });
             report.elevated_spans+=1;
             report.segments_meshed+=1;
             *report.by_surface.entry("elevated_bridge".into()).or_insert(0)+=1;
             continue;
         }
+        if matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway) &&
+            street.path.len()>=2 &&
+            !street.tags.get("tunnel").is_some_and(|s|s=="yes") {
+            scene.approach_roads.push(RoadApproach{
+                path:street.path.clone(),kind:street.kind.clone(),width_m:width,
+            });
+        }
         let Some(strip)=ribbon(&street.path,width,height)? else {
             report.segments_degenerate+=1;
             continue;
         };
+        if kind==SurfaceKind::Motorway {
+            let paint=motorway_edge_stripes(&strip,0.035);
+            let stripes=scene.layers.entry(SurfaceKind::MotorwayStripe).or_default();
+            let stripe_offset=stripes.vertices.len() as u32;
+            stripes.indices.extend(paint.indices.into_iter().map(|i|i+stripe_offset));
+            stripes.vertices.extend(paint.vertices);
+        }
         let layer=scene.layers.entry(kind).or_default();
         let offset=u32::try_from(layer.vertices.len())
             .map_err(|_| "road layer exceeds 32-bit indices")?;
@@ -486,6 +565,9 @@ pub fn write_road_mtl(mut out: impl Write) -> io::Result<()> {
     writeln!(out,"# Neutral debug materials, not a measured surface color")?;
     for (name,color) in [
         ("road_asphalt",[0.24,0.26,0.29]),
+        ("motorway_asphalt",[0.14,0.19,0.23]),
+        ("motorway_edge_markings",[0.91,0.89,0.77]),
+        ("bridge_edge_markings",[0.91,0.89,0.77]),
         ("bridge_deck",[0.27,0.30,0.34]),
         ("bridge_concrete",[0.50,0.53,0.54]),
         ("bridge_supports",[0.61,0.62,0.60]),
@@ -632,6 +714,17 @@ mod tests {
         assert!(scene.layers.contains_key(&SurfaceKind::ElevatedRoad));
     }
 
+    #[test]
+    fn motorway_is_continuous_asphalt_with_edge_markings_even_when_not_elevated() {
+        let (scene,report)=mesh_streets(&city(vec![
+            street("motorway",&[[0.,0.],[0.,75.]]),
+        ])).unwrap();
+        assert_eq!(report.motorway_sections,1);
+        assert_eq!(report.elevated_spans,0);
+        assert!(scene.layers[&SurfaceKind::Motorway].indices.len()>100);
+        assert!(scene.layers[&SurfaceKind::MotorwayStripe].indices.len()>100);
+        assert!(!scene.layers.contains_key(&SurfaceKind::ElevatedRoad));
+    }
     #[test]
     fn obj_groups_and_materials_are_present() {
         let (scene,_)=mesh_streets(&city(vec![

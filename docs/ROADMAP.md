@@ -32,7 +32,9 @@
 - [x] Split centerlines at source-scoped bridge/level transitions **before geographic clipping**, assigning separate ground/bridge tags per section.
 - [ ] Recover Overture connector-aware vertical continuity and crossing rules; validate bridge spans against source geometry and ramp gradients.
 - [x] Generate initial source-qualified elevated freeway/bridge decks with genuine vertical mesh geometry, slab soffits/fascia, side barriers and approximate support columns; default render layers remain separate from at-grade junctions.
-- [ ] Join elevated segment profiles across real Overture connector topology and model true source-scoped bridge transitions, ramps, underpasses, engineering clearances and collisions (never infer surveyed altitude solely from Z-order).
+- [x] Improve road continuity within the pilot: only source-matched at-grade end connections receive smooth visual approaches; keep same-level bridge joins elevated and boundary clips open. Distinguish all motorway-class carriageways and paint edge markings.
+- [ ] Join freeway ramps across verified Overture connector graph, add physically realistic longitudinal bridge elevation profiles, pier placement, median/guardrails, lane counts, multi-level interchange geometry, tunnels, surveyed clearances, and deck collision.
+- [ ] Extend geography beyond the 1.5 × 1.2 km Downtown pilot when ready to show highways entering/leaving the slice rather than terminating at dataset boundary.
 - [ ] Add optional named building discovery from Overture's source names/heights, with careful label density and independently matched provenance for notable buildings.
 - [ ] Hand-authored corrections for standout landmarks only when primary data cannot represent them.
 

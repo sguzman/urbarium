@@ -122,7 +122,8 @@ impl TerrainGrid {
     pub fn drape_roads(&self,region:&Region,roads:&mut RoadScene)->Result<(),String> {
         for (kind,mesh) in roads.layers.iter_mut() {
             if matches!(kind,SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
-                SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails){continue;}
+                SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails|
+                SurfaceKind::BridgeStripe){continue;}
             for vertex in &mut mesh.vertices {
                 vertex.position[1]+=self.sample_surface(
                     region,vertex.position[0] as f64,vertex.position[2] as f64);

@@ -61,6 +61,9 @@ pub fn write_glb(mut out: impl Write, city: &City, buildings: &Mesh, roads: &Roa
     for (surface, mesh) in &roads.layers {
         let (name,color)=match surface {
             SurfaceKind::Road=>("Roads (approximate width)",[0.22,0.24,0.27,1.0]),
+            SurfaceKind::Motorway=>("Motorway carriageways",[0.14,0.19,0.23,1.0]),
+            SurfaceKind::MotorwayStripe=>("Motorway edge paint",[0.91,0.89,0.77,1.0]),
+            SurfaceKind::BridgeStripe=>("Elevated road edge paint",[0.91,0.89,0.77,1.0]),
             SurfaceKind::ElevatedRoad=>("Source-tagged bridge decks (visual clearance)",[0.28,0.31,0.35,1.0]),
             SurfaceKind::BridgeFascia=>("Bridge fascia and soffits",[0.48,0.51,0.52,1.0]),
             SurfaceKind::BridgeSupports=>("Approximate bridge pier columns",[0.61,0.63,0.62,1.0]),

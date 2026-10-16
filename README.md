@@ -338,10 +338,26 @@ are not surveyed or engineered. The importer preserves scoped
 **partial-segment bridge and level ranges along the original centerline
 before clipping**. This gives bridge-only sections their own 3D decks
 without elevating the rest of the road. Height remains a visual
-approximation; the newly split parts are not yet connected by smooth
-vertical ramp profiles. True level-continuous freeway ramps, terrain
-cutouts, retaining walls, bridge deck collision and real connector topology
-remain unfinished. **Inspect overpass (N)** jumps the camera to a real
+approximation. The renderer now finds genuine shared-endpoint connections
+between the elevated source sections and adjacent at-grade roads with
+compatible headings. It draws gradual ~65 m visual approach ramps along
+those real road centerlines, keeping same-level bridge-to-bridge joins
+elevated. When an interior endpoint has no trustworthy road connection,
+it tapers within the tagged section rather than terminating in a vertical
+cliff; endpoints exactly at the city boundary remain elevated.
+This does **not** invent roads at arbitrary crossings or outside the
+source geometry. Motorway-class surfaces also have a distinct darker
+material and light edge paint, making the non-elevated freeway carriageways
+visible instead of indistinguishable from city streets.
+
+**Coverage limit:** the current Downtown LA acquisition box is
+approximately 1.5 × 1.2 km and contains only 27 motorway-class road
+sections (October 16 source report). Some highways genuinely continue
+*outside* this pilot, so a complete surrounding freeway network requires
+a later geographic expansion. The source's bridge/level flags are not
+surveyed 3D coordinates; ramps, retaining walls, deck collisions,
+multi-level continuity at complex interchanges and real road topology
+remain approximations or unfinished. **Inspect overpass (N)** jumps the camera to a real
 source-tagged elevated section and faces its deck from a nearby overlook, so
 the user can inspect the 3D height without manually discovering it.
 The minimap draws source-tagged elevated road sections in cyan; ordinary
