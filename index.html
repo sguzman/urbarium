@@ -133,8 +133,11 @@
     .world-landmark {border:2px solid var(--lm-color,#cda85d);
       box-shadow:0 0 0 1px #000d,0 2px 10px #000b,0 0 9px color-mix(in srgb,var(--lm-color,#cda85d) 36%,transparent);}
     .world-landmark::after {border-top-color:var(--lm-color,#ffd77d);}
-    .scene-controls {pointer-events:auto;display:flex;flex-wrap:wrap;
+    .scene-controls {pointer-events:none;display:flex;flex-wrap:wrap;
       gap:8px 16px;align-items:center;margin:7px 0 2px;font-size:12px;}
+    .scene-controls button,.scene-controls input,.scene-controls label {
+      pointer-events:auto;
+    }
     .scene-controls label {display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
     .scene-controls input[type=checkbox] {accent-color:#8fc2cf;}
     #time-of-day {width:128px;accent-color:#9bc9db;cursor:pointer;}

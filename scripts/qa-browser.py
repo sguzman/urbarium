@@ -146,7 +146,7 @@ with sync_playwright() as p:
         print("Bridge preview flag/mesh triangle allocation:",bridge_preview,bridge_triangles)
         eye_height=float(page.locator("#status").get_attribute("data-eye-clearance"))
         assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
-        canvas.click(position={"x": 500, "y": 420})
+        canvas.click(position={"x": 700, "y": 500})
         page.wait_for_function(
             "() => document.pointerLockElement === document.querySelector('canvas:not(#minimap-canvas)')",
             timeout=12000,
