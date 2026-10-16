@@ -291,11 +291,22 @@ still fills the viewport. This limits color/depth attachment pressure but
 automated testing cannot replicate every user hardware/driver combination.
 A lightweight local heartbeat now retains the last backend, startup phase,
 frame count, framebuffer size, bridge count, asset fingerprints and recent
-script error. If Edge or its GPU process terminates without a normal
-page-hide event, the next viewer launch displays a **possible unexpected
-termination** under Stats, with a **Copy diagnostics** control. It cannot
-differentiate every browser crash from a forced close and is not a crash
-prevention mechanism. No telemetry is sent to a server.
+script error. The renderer now also installs wgpu callbacks for **device
+loss and uncaptured GPU errors**, which are reflected in the local diagnostics
+when delivered; frame submission stops when the device is lost. A WebGL
+context-loss event is likewise recorded immediately in local storage. If
+Edge or its GPU process terminates without a normal page-hide event, the
+next viewer launch displays a **possible unexpected termination** under
+Stats, with a **Copy diagnostics** control. It cannot differentiate every
+browser crash from a forced close, and cannot capture errors when the entire
+process dies before delivering a callback. No telemetry is sent to a server.
+
+**Conservative GPU** can be enabled from the viewer. It reloads only the
+viewer using a 640k-pixel drawing buffer and an approximately 30-FPS frame
+cap, retaining the content-hash geographic cache. This is a diagnostic
+A/B test and possible GPU-pressure workaround, **not a confirmed Edge crash
+fix**. The next requested evidence after a crash is: reopen the page,
+expand Stats, select Copy diagnostics, and share the resulting report.
 
 Source footpaths are thin centerline ribbons, not surveyed sidewalk polygons.
 The importer now removes pedestrian mesh triangles intersecting a buffered

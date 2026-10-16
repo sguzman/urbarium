@@ -626,6 +626,33 @@ with sync_playwright() as p:
         assert len(sample_colors)>=5,(
             "Overpass inspector produced flat/no-scene rendering",len(sample_colors))
         print("Overpass inspector relocated the 3D camera to visible terrain and road deck")
+        # Exercise the diagnostic path without actually killing the graphics
+        # process. Verify crash info is persisted locally and conservative
+        # GPU mode changes both rendering resolution and URL configuration.
+        if force_webgl:
+            assert page.locator("#safe-gpu-toggle").get_attribute("aria-pressed")=="false"
+            page.evaluate("""() => document.dispatchEvent(
+                new Event('webglcontextlost',{bubbles:true,cancelable:true})
+            )""")
+            report=page.evaluate("""() => JSON.parse(
+                localStorage.getItem('urbarium-renderer-last-session-v1'))""")
+            assert report["gpuDeviceLost"]=="true",report
+            assert "WebGL context lost" in report["gpuFault"],report
+            page.locator("#safe-gpu-toggle").click()
+            page.wait_for_function(
+                "() => document.documentElement.dataset.safeGpu === 'true'",
+                timeout=10000)
+            page.wait_for_function(
+                "() => Number(document.querySelector('#status')?.dataset.frameCount)>3",
+                timeout=30000)
+            dims=page.evaluate("""() => {
+                const d=document.querySelector('#status').dataset;
+                return [Number(d.surfaceWidth),Number(d.surfaceHeight)];
+            }""")
+            assert dims[0]*dims[1]<=660000,(
+                "Conservative GPU must cap color/depth framebuffer pixels",dims)
+            assert "safe=1" in page.url
+            print("GPU fault persisted locally; conservative 30fps/640k-pixel restart succeeded",dims)
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:

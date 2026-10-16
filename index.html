@@ -12,6 +12,8 @@
       const requested = new URLSearchParams(location.search).get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
+      document.documentElement.dataset.safeGpu =
+        new URLSearchParams(location.search).get("safe") === "1" ? "true" : "false";
       if (mode === "webgl2") {
         try {
           Object.defineProperty(navigator, "gpu", {
@@ -193,10 +195,12 @@
     <label class="renderer-control" for="renderer-select">
       Graphics
       <select id="renderer-select" aria-label="Graphics renderer">
-        <option value="webgl2">WebGL2 · stable</option>
+        <option value="webgl2">WebGL2 · compatibility</option>
         <option value="webgpu">WebGPU · experimental</option>
       </select>
     </label>
+    <button id="safe-gpu-toggle" type="button" aria-pressed="false"
+      title="Restart using a capped 640k-pixel framebuffer and at most 30 rendered frames per second">Conservative GPU: off</button>
     <p id="renderer-health" role="status">Loading the Rust viewer...</p>
     <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
     <div class="scene-controls">
@@ -474,6 +478,13 @@
         return {
           at:Date.now(),cleanClose,
           backend:status?.dataset.gpuBackend||"not initialized",
+          requestedRenderer:mode,
+          conservativeGpu:safeMode,
+          gpuDeviceLost:status?.dataset.gpuDeviceLost||"unknown",
+          gpuFault:status?.dataset.gpuFault||"",
+          frameIntervalMs:status?.dataset.frameMs||"",
+          cpuFrameMs:status?.dataset.cpuFrameMs||"",
+          browser: navigator.userAgent.slice(0,250),
           stage:status?.dataset.renderStage||"boot",
           frames:Number(status?.dataset.frameCount||0),
           bridges:Number(status?.dataset.elevatedRoadSpans||0),
@@ -514,7 +525,8 @@
         "terrain-fetch":"Loading terrain","terrain-decoding":"Decoding terrain",
         "geometry-build":"Generating 3D city geometry","gpu-init":"Initializing GPU",
         "graphics-received":"Preparing first GPU frame",
-        "first-present":"3D rendered"
+        "first-present":"3D rendered",
+        "device-lost":"Graphics device lost — copy diagnostics"
       };
       function recordStartupError(error){
         const description=String(error?.message||error||"unknown startup error").slice(0,210);
@@ -527,10 +539,20 @@
       window.addEventListener("unhandledrejection",event=>recordStartupError(event.reason));
       document.addEventListener("webglcontextlost",event=>{
         const message="WebGL context lost; 3D renderer may require a reload";
+        mostRecentError=message;
+        status.dataset.gpuDeviceLost="true";
+        status.dataset.gpuFault=message;
+        persistRun(false);
         bootInfo.textContent=message;
         bootInfo.classList.add("error");
         health.textContent=message;
         health.classList.add("warn");
+      },true);
+      document.addEventListener("webglcontextrestored",()=>{
+        mostRecentError="WebGL context restored after loss";
+        status.dataset.gpuFault=mostRecentError;
+        status.dataset.gpuDeviceLost="false";
+        persistRun(false);
       },true);
       window.addEventListener("urbarium-cache-status",event=>{
         // Explicitly separate asset bytes from CPU/GPU startup phases.
@@ -538,6 +560,16 @@
         document.documentElement.dataset.geographyLatest=asset+":"+state;
       });
       menu.value = mode;
+      const safeToggle=document.getElementById("safe-gpu-toggle");
+      const safeMode=document.documentElement.dataset.safeGpu==="true";
+      safeToggle.setAttribute("aria-pressed",String(safeMode));
+      safeToggle.textContent="Conservative GPU: "+(safeMode?"on":"off");
+      safeToggle.addEventListener("click",()=>{
+        const url=new URL(location.href);
+        if(safeMode)url.searchParams.delete("safe");
+        else url.searchParams.set("safe","1");
+        location.assign(url.href);
+      });
       menu.addEventListener("change", () => {
         const url = new URL(location.href);
         url.searchParams.set("renderer", menu.value);
@@ -552,6 +584,17 @@
         const age=Math.floor((now-bootStart)/1000);
         const frames=Number(status?.dataset.frameCount??0);
         const phase=status?.dataset.renderStage||"wasm-start";
+        const fault=status?.dataset.gpuFault;
+        if(fault){
+          mostRecentError=fault;
+          document.getElementById("stats-last-error").textContent=fault;
+          if(status?.dataset.gpuDeviceLost==="true"){
+            health.textContent="Graphics device lost. Open Stats and copy diagnostics.";
+            health.classList.add("warn");
+            bootInfo.classList.add("error");
+            persistRun(false);
+          }
+        }
         bootInfo.dataset.phase=phase;
         if(phase!==lastBootPhase){
           lastBootPhase=phase;
@@ -560,7 +603,10 @@
         if(!bootInfo.classList.contains("error"))
           bootInfo.textContent=(phases[phase]||"Starting application")+" · "+
             age+"s since opening";
-        if(frames>lastFrames){
+        if(status?.dataset.gpuDeviceLost==="true"){
+          health.textContent="Graphics device lost · Copy diagnostics in Stats";
+          health.classList.add("warn");
+        }else if(frames>lastFrames){
           const seconds=Math.max(.001,(now-lastTime)/1000);
           const fps=(frames-lastCount)/seconds;
           health.textContent=`3D renderer active · ${Math.round(fps)} FPS · ${frames} frames`;

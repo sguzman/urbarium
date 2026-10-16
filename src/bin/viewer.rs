@@ -3,6 +3,8 @@
 
 use std::collections::HashSet;
 use std::mem::size_of;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use web_time::Instant;
 
 use bytemuck::{Pod, Zeroable};
@@ -426,6 +428,7 @@ fn set_browser_backend(backend: &str) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
             let _=el.set_attribute("data-gpu-backend",backend);
+            let _=el.set_attribute("data-gpu-device-lost","false");
         }
     }
 }
@@ -535,6 +538,22 @@ fn layer_enabled(id:&str,default:bool)->bool {
     default
 }
 
+/// Captures GPU errors even when they happen asynchronously after a frame.
+#[derive(Default)]
+struct GpuFault {
+    lost: AtomicBool,
+    last_error: Mutex<Option<String>>,
+}
+impl GpuFault {
+    fn record(&self,message:String) {
+        if let Ok(mut value)=self.last_error.lock() {
+            *value=Some(message.chars().take(350).collect());
+        }
+    }
+    fn message(&self)->Option<String> {
+        self.last_error.lock().ok().and_then(|value|value.clone())
+    }
+}
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -558,6 +577,7 @@ struct Graphics {
     gpu_mesh_bytes: usize,
     active_draw_calls:u32,
     active_triangles:u32,
+    gpu_fault: Arc<GpuFault>,
     bridge_overlook:Option<Camera>,
     inspect_request:u32,
 }
@@ -608,6 +628,11 @@ impl Graphics {
             }));
     }
     fn draw(&mut self) -> bool {
+        if self.gpu_fault.lost.load(Ordering::Acquire) {
+            // A lost device cannot recover from surface reconfiguration.
+            // Stop submitting work and retain the actual GPU failure.
+            return false;
+        }
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) |
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -717,6 +742,20 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         trace:Default::default(),
         experimental_features:Default::default(),
     }).await.map_err(|e|format!("Graphics device ({backend}): {e}"))?;
+    let gpu_fault=Arc::new(GpuFault::default());
+    device.set_device_lost_callback({
+        let faults=Arc::clone(&gpu_fault);
+        move |reason,message|{
+            if reason!=wgpu::DeviceLostReason::Destroyed {
+                faults.lost.store(true,Ordering::Release);
+                faults.record(format!("device lost ({reason:?}): {message}"));
+            }
+        }
+    });
+    device.on_uncaptured_error(Arc::new({
+        let faults=Arc::clone(&gpu_fault);
+        move |error|faults.record(format!("uncaptured GPU error: {error}"))
+    }));
     let size=window.inner_size();
     let mut config=surface.get_default_config(&adapter,size.width.max(1),size.height.max(1))
         .ok_or("No compatible GPU surface configuration")?;
@@ -831,6 +870,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
+        gpu_fault,
         bridge_overlook,inspect_request:0,
     };
     info(&format!("Downtown LA ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release"));
@@ -980,10 +1020,23 @@ impl ApplicationHandler<AppEvent> for App {
                 }
             },
             WindowEvent::RedrawRequested=>{
+                if !browser_page_visible(){return;}
+                // A distinct low-workload diagnostic mode lets us isolate
+                // GPU pressure from failures intrinsic to the scene/driver.
+                if browser_safe_gpu() &&
+                    self.last_frame.elapsed().as_secs_f32()<1.0/30.0 {return;}
                 let now=Instant::now();
                 let interval=self.last_frame.elapsed().as_secs_f32();
                 self.last_frame=now;
                 if let Stage::Ready(gfx)=&mut self.state {
+                    if let Some(error)=gfx.gpu_fault.message(){
+                        expose_gpu_fault(
+                            &error,gfx.gpu_fault.lost.load(Ordering::Acquire));
+                    }
+                    if gfx.gpu_fault.lost.load(Ordering::Acquire) {
+                        set_browser_stage("device-lost");
+                        return;
+                    }
                     gfx.update(&self.keys,interval.min(0.08));
                     let rendered=gfx.draw();
                     if rendered && gfx.rendered_frames == 1 {
@@ -1022,11 +1075,36 @@ impl ApplicationHandler<AppEvent> for App {
         // Browser visibility must gate redraw. Running a perpetual Poll event
         // loop in a hidden tab was wasting GPU/CPU and exacerbating instability.
         if browser_page_visible() {
-            if let Stage::Ready(gfx)=&self.state {gfx.window.request_redraw();}
+            if let Stage::Ready(gfx)=&self.state {
+                if !gfx.gpu_fault.lost.load(Ordering::Acquire) {
+                    gfx.window.request_redraw();
+                }
+            }
         }
     }
 }
 
+fn browser_safe_gpu()->bool {
+    #[cfg(target_arch="wasm32")]
+    return web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-safe-gpu"))
+        .is_some_and(|v|v=="true");
+    #[cfg(not(target_arch="wasm32"))]
+    false
+}
+fn expose_gpu_fault(message:&str,lost:bool) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()){
+        if let Some(el)=doc.get_element_by_id("status"){
+            let _=el.set_attribute("data-gpu-fault",message);
+            let _=el.set_attribute("data-gpu-device-lost",
+                if lost{"true"}else{"false"});
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(message,lost);
+}
 fn browser_page_visible()->bool {
     #[cfg(target_arch="wasm32")]
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
@@ -1113,7 +1191,7 @@ fn browser_viewport_size() -> PhysicalSize<u32> {
         let height=win.inner_height().ok().and_then(|v|v.as_f64()).unwrap_or(800.0);
         // Bound framebuffer/depth texture footprint on HiDPI fullscreen Edge.
         // CSS viewport remains full-width; only drawing resolution scales.
-        let pixel_budget=1_800_000.0;
+        let pixel_budget=if browser_safe_gpu(){640_000.0}else{1_800_000.0};
         let max_scale=(pixel_budget/(width.max(1.0)*height.max(1.0))).sqrt();
         let dpr=win.device_pixel_ratio().min(2.0).min(max_scale).max(0.45);
         return PhysicalSize::new(
