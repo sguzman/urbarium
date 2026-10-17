@@ -714,8 +714,11 @@ with sync_playwright() as p:
                 im=im.convert("RGB")
                 width,height=im.size
                 sample_colors=set()
-                for iy in range(50,90,3):
-                    for ix in range(52,65,2):
+                # Sample the full unobstructed 3D canvas, not a thin
+                # vertical strip that can accidentally contain mostly sky
+                # or one building facade after UI/viewport changes.
+                for iy in range(15,90,5):
+                    for ix in range(15,90,5):
                         sample_colors.add(im.getpixel((
                             min(width-1,int(ix*width/100)),
                             min(height-1,int(iy*height/100))
