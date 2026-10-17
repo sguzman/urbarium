@@ -821,6 +821,13 @@ with sync_playwright() as p:
         # Confirm real keyboard flight controls preserve absolute altitude.
         page.locator("#camera-overview").click()
         page.wait_for_function("""() => document.querySelector('#status')?.dataset.cameraMode==='overview'""")
+        # Winit receives keyboard movement only when its canvas has focus.
+        # A click on City overview leaves browser focus on the HTML button.
+        page.locator("canvas:not(#minimap-canvas):not(#webgpu-control)").click(
+            position={"x":700,"y":500})
+        page.wait_for_function("""() => document.pointerLockElement ===
+            document.querySelector('canvas:not(#minimap-canvas):not(#webgpu-control)')""",
+            timeout=12000)
         def joined_pose():
             return [float(v) for v in page.locator("#status").get_attribute("data-camera-pose").split(",")]
         from time import sleep
