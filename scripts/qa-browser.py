@@ -89,6 +89,28 @@ with sync_playwright() as p:
         )
         assert page.locator("#renderer-select").count() == 1
         assert page.locator("#renderer-health").count() == 1
+        # Small, keyboard-accessible tabbed HUD must not restart the app,
+        # navigate, or alter the source geography cache.
+        tab_names=["explore","graphics","details","advanced"]
+        assert page.locator(".hud").bounding_box()["width"]<=355
+        assert page.locator(".hud").get_attribute("data-active-tab")=="explore"
+        before_hud_url=page.url
+        before_hud_frames=int(page.locator("#status").get_attribute("data-frame-count") or 0)
+        before_geo_requests=page.evaluate(
+            "() => window.__urbariumGeoCache?.networkRequests||0")
+        for tab_name in tab_names:
+            page.locator("#hud-tab-"+tab_name).click()
+            assert page.locator(".hud").get_attribute("data-active-tab")==tab_name
+            assert page.locator("#hud-tab-"+tab_name).get_attribute("aria-selected")=="true"
+            assert page.locator("#hud-pane-"+tab_name).is_visible()
+            assert page.locator(".hud-pane:visible").count()==1
+        assert page.url==before_hud_url
+        assert page.evaluate("() => window.__urbariumGeoCache?.networkRequests||0")==before_geo_requests
+        page.wait_for_function("""(before) => Number(
+            document.querySelector("#status")?.dataset.frameCount)>before""",
+            arg=before_hud_frames,timeout=15000)
+        page.locator("#hud-tab-graphics").click()
+        print("Tabbed HUD: 340px cap, exclusive accessible panels, no renderer reload or geography fetch")
         state = page.locator("#status").inner_text()
         print("Browser status:", state)
         selected_backend = page.locator("#status").get_attribute("data-gpu-backend")
@@ -192,6 +214,7 @@ with sync_playwright() as p:
         assert (freeway_triangles>0)==bridge_preview,(
             "Normal view must allocate zero unfinished freeway triangles",
             bridge_preview,freeway_triangles)
+        page.locator("#hud-tab-advanced").click()
         toggle=page.locator("#bridge-preview-toggle")
         assert toggle.get_attribute("aria-pressed")==str(bridge_preview).lower()
         assert page.locator("#inspect-overpass").is_visible()==bridge_preview
@@ -199,6 +222,7 @@ with sync_playwright() as p:
             assert "hidden" in page.locator("#bridge-preview-note").inner_text()
             assert page.locator("#inspect-overpass").is_disabled()
         print("Bridge preview flag/mesh triangle allocation:",bridge_preview,bridge_triangles)
+        page.locator("#hud-tab-explore").click()
         eye_height=float(page.locator("#status").get_attribute("data-eye-clearance"))
         assert 1.65 <= eye_height <= 1.75, f"Expected ~1.7 m eye height, got {eye_height}"
         canvas.click(position={"x": 700, "y": 500})
@@ -424,6 +448,7 @@ with sync_playwright() as p:
         assert cache_state["networkRequests"]==2,cache_state
         assert cache_state["cacheHits"]>=2,cache_state
         assert set(cache_state["assets"])=={"City","Terrain"},cache_state
+        page.locator("#hud-tab-details").click()
         assert page.locator("#geodata-cache-state").inner_text().count("CACHE HIT")==2
         assert page.locator("#boot-stage").count()==1
         page.wait_for_function(
@@ -432,6 +457,7 @@ with sync_playwright() as p:
         )
         assert "3D rendered" in page.locator("#boot-stage").inner_text()
         print("Cache provenance and explicit startup phase remain visible; no false cache-ready claim")
+        page.locator("#hud-tab-explore").click()
 
         palette=page.evaluate("() => window.urbariumLandmarkPalette")
         assert palette.get("park") and palette.get("library") and palette.get("legal")
@@ -640,6 +666,7 @@ with sync_playwright() as p:
         page.locator("#layer-walk").uncheck()
         assert page.locator("#layer-walk").get_attribute("data-visible") == "false"
         page.locator("#layer-walk").check()
+        page.locator("#hud-tab-details").click()
         page.locator("#stats-toggle").click()
         assert page.locator("#stats-toggle").get_attribute("aria-pressed") == "true"
         assert page.locator("#stats-panel").is_visible()
@@ -662,6 +689,7 @@ with sync_playwright() as p:
         )
         assert not errors, errors
         if bridge_preview:
+            page.locator("#hud-tab-advanced").click()
             # Inspect a real bridge AFTER camera-motion and pointer-lock
             # baseline checks; teleportation must not change their assumptions.
             assert page.locator("#inspect-overpass").is_enabled()
@@ -703,6 +731,7 @@ with sync_playwright() as p:
         # process. Verify crash info is persisted locally and conservative
         # GPU mode changes both rendering resolution and URL configuration.
         if force_webgl:
+            page.locator("#hud-tab-graphics").click()
             assert page.locator("#safe-gpu-toggle").get_attribute("aria-pressed")=="false"
             page.evaluate("""() => document.dispatchEvent(
                 new Event('webglcontextlost',{bubbles:true,cancelable:true})
@@ -740,6 +769,7 @@ with sync_playwright() as p:
             print("GPU fault persisted locally; conservative 30fps/640k-pixel restart succeeded",dims)
         # Switch to a high, genuinely navigable city view without replacing
         # source meshes or restarting the browser; restore street-level afterward.
+        page.locator("#hud-tab-explore").click()
         page.locator("#camera-overview").click()
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
@@ -770,6 +800,7 @@ with sync_playwright() as p:
         page.wait_for_function(
             "() => Number(document.querySelector('#status')?.dataset.frameCount||0)>2",
             timeout=15000)
+        page.locator("#hud-tab-details").click()
         with page.expect_download(timeout=15000) as render_event:
             page.locator("#download-render-report").click()
         render_download=render_event.value
@@ -819,6 +850,7 @@ with sync_playwright() as p:
         # Regression: the old joined-world mover compared altitude against
         # a fake 0-m ground level and climbed by terrain height EVERY FRAME.
         # Confirm real keyboard flight controls preserve absolute altitude.
+        page.locator("#hud-tab-explore").click()
         page.locator("#camera-overview").click()
         page.wait_for_function("""() => document.querySelector('#status')?.dataset.cameraMode==='overview'""")
         # Winit receives keyboard movement only when its canvas has focus.
