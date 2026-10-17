@@ -30,6 +30,19 @@ fn vs_main(input: VIn) -> VOut {
     out.category_id = input.category_id;
     return out;
 }
+// Palette values are specified in display sRGB space. A non-sRGB swapchain
+// writes those values directly; an sRGB swapchain performs the final encode
+// in hardware and therefore must receive linear-light fragment values.
+// The transfer should not depend on which browser graphics backend won.
+fn output_display_color(rgb:vec3<f32>) -> vec3<f32> {
+    let encoded=clamp(rgb,vec3<f32>(0.0),vec3<f32>(1.0));
+    if camera.sky.z > 0.5 {
+        let low=encoded/12.92;
+        let high=pow((encoded+vec3<f32>(0.055))/1.055,vec3<f32>(2.4));
+        return select(high,low,encoded<=vec3<f32>(0.04045));
+    }
+    return encoded;
+}
 @fragment
 fn fs_main(input: VOut) -> @location(0) vec4<f32> {
     let light = normalize(vec3<f32>(0.6, 1.0, 0.35));
@@ -41,7 +54,7 @@ fn fs_main(input: VOut) -> @location(0) vec4<f32> {
     let category_visible=id>0u && (u32(camera.sky.y)&(1u<<(id-1u)))!=0u;
     let color=select(input.color,input.category_color,category_visible);
     let gamma = pow(color * shade, vec3<f32>(0.87));
-    return vec4<f32>(gamma, 1.0);
+    return vec4<f32>(output_display_color(gamma), 1.0);
 }
 
 // Actual camera-aware procedural skydome: the ray direction is reconstructed
@@ -93,5 +106,5 @@ fn sky_fs(input:SkyOut) -> @location(0) vec4<f32> {
     color=mix(color,orange,horizon*0.62);
     let sun_disc=smoothstep(0.99965,0.99993,dot(ray,sun))*sunlight;
     color=mix(color,vec3<f32>(1.0,0.90,0.68),sun_disc);
-    return vec4<f32>(color,1.0);
+    return vec4<f32>(output_display_color(color),1.0);
 }

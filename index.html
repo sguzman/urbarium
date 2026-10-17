@@ -17,6 +17,13 @@
       // Explicit opt-in, never remembered as the default release view.
       document.documentElement.dataset.bridgePreview =
         new URLSearchParams(location.search).get("bridges") === "1" ? "true" : "false";
+      // Standard resolution remains the default. Adaptive scaling is opt-in.
+      const quality = new URLSearchParams(location.search).get("quality");
+      document.documentElement.dataset.renderQuality =
+        ["auto","high","balanced","low"].includes(quality) ? quality : "high";
+      document.documentElement.dataset.renderPixelBudget =
+        ({auto:1800000,high:1800000,balanced:1100000,low:640000})[
+          document.documentElement.dataset.renderQuality];
       if (mode === "webgl2") {
         try {
           Object.defineProperty(navigator, "gpu", {
@@ -216,6 +223,14 @@
         <option value="webgpu">WebGPU · experimental</option>
       </select>
     </label>
+    <label class="renderer-control" for="quality-select">Resolution
+      <select id="quality-select" aria-label="Rendering resolution">
+        <option value="high">High · default</option>
+        <option value="balanced">Balanced</option>
+        <option value="low">Low · faster</option>
+        <option value="auto">Adaptive · experimental</option>
+      </select>
+    </label>
     <button id="safe-gpu-toggle" type="button" aria-pressed="false"
       title="Restart using a capped 640k-pixel framebuffer and at most 30 rendered frames per second">Conservative GPU: off</button>
     <p id="renderer-health" role="status">Loading the Rust viewer...</p>
@@ -257,6 +272,11 @@
     <h2>URBARIUM / Performance</h2>
     <dl>
       <dt>Graphics backend</dt><dd id="stats-backend">Waiting...</dd>
+      <dt>GPU adapter</dt><dd id="stats-adapter">Waiting...</dd>
+      <dt>GPU device type</dt><dd id="stats-device-type">Waiting...</dd>
+      <dt>Surface format</dt><dd id="stats-format">Waiting...</dd>
+      <dt>Color output</dt><dd id="stats-color-transfer">Waiting...</dd>
+      <dt>Resolution</dt><dd id="stats-resolution">Waiting...</dd>
       <dt>FPS (presented)</dt><dd id="stats-fps">—</dd>
       <dt>Frame interval</dt><dd id="stats-frame">—</dd>
       <dt>CPU-side frame work</dt><dd id="stats-cpu-frame">—</dd>
@@ -516,6 +536,13 @@
           backend:status?.dataset.gpuBackend||"not initialized",
           requestedRenderer:mode,
           conservativeGpu:safeMode,
+          resolutionMode:document.documentElement.dataset.renderQuality,
+          pixelBudget:Number(document.documentElement.dataset.renderPixelBudget||0),
+          gpuAdapter:status?.dataset.gpuAdapter||"",
+          gpuDeviceType:status?.dataset.gpuDeviceType||"",
+          gpuDriver:status?.dataset.gpuDriver||"",
+          surfaceFormat:status?.dataset.gpuSurfaceFormat||"",
+          colorTransfer:status?.dataset.gpuColorTransfer||"",
           gpuDeviceLost:status?.dataset.gpuDeviceLost||"unknown",
           gpuFault:status?.dataset.gpuFault||"",
           frameIntervalMs:status?.dataset.frameMs||"",
@@ -606,6 +633,46 @@
         else url.searchParams.set("safe","1");
         location.assign(url.href);
       });
+      // Resolution changes are live. They resize the GPU color/depth backing
+      // without reconstructing city meshes or redownloading geography.
+      const qualitySelect=document.getElementById("quality-select");
+      const qualityBudget={high:1800000,balanced:1100000,low:640000};
+      let quality=document.documentElement.dataset.renderQuality||"high";
+      let autoTier=0,badSamples=0,goodSamples=0;
+      qualitySelect.value=quality;
+      function setPixelBudget(budget){
+        const root=document.documentElement;
+        const next=String(budget);
+        if(root.dataset.renderPixelBudget===next)return;
+        root.dataset.renderPixelBudget=next;
+        // Handled by the installed winit browser-resize callback.
+        window.dispatchEvent(new Event("resize"));
+      }
+      qualitySelect.addEventListener("change",()=>{
+        quality=qualitySelect.value;
+        document.documentElement.dataset.renderQuality=quality;
+        autoTier=0;badSamples=0;goodSamples=0;
+        setPixelBudget(quality==="auto"?1800000:qualityBudget[quality]);
+      });
+      let sampleTime=performance.now(),sampleFrames=0;
+      setInterval(()=>{
+        const now=performance.now();
+        const frames=Number(status?.dataset.frameCount||0);
+        const elapsed=(now-sampleTime)/1000;
+        const advanced=frames-sampleFrames;
+        sampleTime=now;sampleFrames=frames;
+        if(quality!=="auto"||safeMode||document.hidden||
+            status?.dataset.renderStage!=="first-present"||
+            elapsed<1||advanced<=0)return;
+        const fps=advanced/elapsed;
+        if(fps<42){badSamples++;goodSamples=0;}
+        else if(fps>56){goodSamples++;badSamples=0;}
+        else {badSamples=0;goodSamples=0;}
+        const budgets=[1800000,1100000,640000];
+        if(badSamples>=3 && autoTier<2){autoTier++;badSamples=0;}
+        else if(goodSamples>=6 && autoTier>0){autoTier--;goodSamples=0;}
+        setPixelBudget(budgets[autoTier]);
+      },2000);
       menu.addEventListener("change", () => {
         const url = new URL(location.href);
         url.searchParams.set("renderer", menu.value);

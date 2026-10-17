@@ -479,6 +479,31 @@ fn set_browser_backend(backend: &str) {
 #[cfg(not(target_arch="wasm32"))]
 fn set_browser_backend(_: &str) {}
 
+fn expose_gpu_details(info:&wgpu::AdapterInfo,format:wgpu::TextureFormat,srgb:bool){
+    #[cfg(target_arch="wasm32")]
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            for (key,value) in [
+                ("data-gpu-adapter",info.name.as_str()),
+                ("data-gpu-driver",info.driver.as_str()),
+                ("data-gpu-device-type",match info.device_type {
+                    wgpu::DeviceType::DiscreteGpu=>"Discrete GPU",
+                    wgpu::DeviceType::IntegratedGpu=>"Integrated GPU",
+                    wgpu::DeviceType::Cpu=>"CPU / software",
+                    wgpu::DeviceType::VirtualGpu=>"Virtual GPU",
+                    _=>"Other / unknown",
+                }),
+            ] {let _=el.set_attribute(key,value);}
+            let _=el.set_attribute("data-gpu-surface-format",&format!("{format:?}"));
+            let _=el.set_attribute("data-gpu-color-transfer",
+                if srgb {"sRGB attachment (automatic encode)"}
+                else {"Unorm attachment (shader-encoded display color)"});
+        }
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(info,format,srgb);
+}
+
 #[cfg(target_arch="wasm32")]
 fn set_browser_stage(stage: &str) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
@@ -604,6 +629,7 @@ struct Graphics {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    surface_is_srgb: bool,
     pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     depth: wgpu::TextureView,
@@ -670,7 +696,8 @@ impl Graphics {
                 options:[
                     1.0,browser_sky_hour(),self.camera.yaw,self.camera.pitch],
                 sky:[self.config.width as f32/self.config.height.max(1) as f32,
-                     browser_category_mask() as f32,0.0,0.0],
+                     browser_category_mask() as f32,
+                     if self.surface_is_srgb {1.0}else{0.0},0.0],
             }));
     }
     fn draw(&mut self) -> bool {
@@ -782,7 +809,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         compatible_surface:Some(&surface),
         apply_limit_buckets:false,
     }).await.map_err(|e|format!("Neither WebGPU nor WebGL2 could initialize: {e}. Check browser WebGL2 support and hardware acceleration."))?;
-    let backend = format!("{:?}",adapter.get_info().backend);
+    let gpu_info=adapter.get_info();
+    let backend = format!("{:?}",gpu_info.backend);
     set_browser_backend(&backend);
     let (device,queue)=adapter.request_device(&wgpu::DeviceDescriptor {
         label:Some("Urbarium device"),
@@ -815,6 +843,12 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         .ok_or("No compatible GPU surface configuration")?;
     expose_surface_size(config.width,config.height);
     config.present_mode=wgpu::PresentMode::Fifo;
+    // sRGB render targets encode linear fragment values automatically.
+    // Non-sRGB targets require already-encoded display values. The shader
+    // explicitly handles both cases, preventing backend-dependent gamma.
+    let surface_is_srgb=matches!(config.format,
+        wgpu::TextureFormat::Bgra8UnormSrgb|wgpu::TextureFormat::Rgba8UnormSrgb);
+    expose_gpu_details(&gpu_info,config.format,surface_is_srgb);
     surface.configure(&device,&config);
     set_collision_count(collision.obstacle_count());
     let camera=Camera::spawn_at_street(&city,&collision,&terrain);
@@ -823,7 +857,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         contents:bytemuck::bytes_of(&CameraUniform {
             view_proj:camera.view_projection(config.width,config.height).to_cols_array_2d(),
             options:[0.0,12.0,camera.yaw,camera.pitch],
-            sky:[config.width as f32/config.height.max(1) as f32,0.0,0.0,0.0],
+            sky:[config.width as f32/config.height.max(1) as f32,0.0,
+                 if surface_is_srgb {1.0}else{0.0},0.0],
         }),
         usage:wgpu::BufferUsages::UNIFORM|wgpu::BufferUsages::COPY_DST,
     });
@@ -920,7 +955,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
         indices.len()*size_of::<u32>();
     let graphics=Graphics {
-        window,surface,device,queue,config,pipeline,sky_pipeline,depth,camera,collision,terrain,region:city.region,
+        window,surface,device,queue,config,surface_is_srgb,pipeline,sky_pipeline,depth,camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
@@ -1168,11 +1203,24 @@ fn set_bridge_preview_state(preview:bool){
     #[cfg(not(target_arch="wasm32"))]
     let _=preview;
 }
+fn active_pixel_budget()->u64 {
+    #[cfg(target_arch="wasm32")]
+    {
+        let desired=web_sys::window().and_then(|w|w.document())
+            .and_then(|d|d.document_element())
+            .and_then(|el|el.get_attribute("data-render-pixel-budget"))
+            .and_then(|value|value.parse::<u64>().ok())
+            .unwrap_or(1_800_000).clamp(400_000,1_800_000);
+        return if browser_safe_gpu(){desired.min(640_000)}else{desired};
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    1_800_000
+}
 fn limit_backing_size(size:PhysicalSize<u32>)->PhysicalSize<u32>{
     #[cfg(target_arch="wasm32")]
     {
         let pixels=size.width.max(1) as u64*size.height.max(1) as u64;
-        let budget=if browser_safe_gpu(){640_000u64}else{1_800_000u64};
+        let budget=active_pixel_budget();
         if pixels>budget {
             let scale=(budget as f64/pixels as f64).sqrt();
             return PhysicalSize::new(
@@ -1290,7 +1338,7 @@ fn browser_viewport_size() -> PhysicalSize<u32> {
         let height=win.inner_height().ok().and_then(|v|v.as_f64()).unwrap_or(800.0);
         // Bound framebuffer/depth texture footprint on HiDPI fullscreen Edge.
         // CSS viewport remains full-width; only drawing resolution scales.
-        let pixel_budget=if browser_safe_gpu(){640_000.0}else{1_800_000.0};
+        let pixel_budget=active_pixel_budget() as f64;
         let max_scale=(pixel_budget/(width.max(1.0)*height.max(1.0))).sqrt();
         let dpr=win.device_pixel_ratio().min(2.0).min(max_scale).max(0.05);
         return PhysicalSize::new(

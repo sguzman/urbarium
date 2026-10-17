@@ -80,6 +80,17 @@ with sync_playwright() as p:
             )
         if "Viewer error" in state:
             raise AssertionError(state)
+        # Capture actual adapter and swapchain transfer. Software-only
+        # CI adapters may be anonymized; empty diagnostics are a regression.
+        gpu_details=page.locator("#status").evaluate("""s => ({
+            adapter:s.dataset.gpuAdapter,device:s.dataset.gpuDeviceType,
+            format:s.dataset.gpuSurfaceFormat,transfer:s.dataset.gpuColorTransfer
+        })""")
+        assert all(gpu_details.values()),gpu_details
+        assert "Unorm" in gpu_details["format"],gpu_details
+        assert ("sRGB attachment" in gpu_details["transfer"]) == (
+            "Srgb" in gpu_details["format"]),gpu_details
+        print("Graphics device, format and transfer:",gpu_details)
         if not force_webgl:
             assert "BrowserWebGpu" in selected_backend, selected_backend
         else:
@@ -102,6 +113,26 @@ with sync_playwright() as p:
                 Number(s.getAttribute('data-surface-width'))===expectedW &&
                 Number(s.getAttribute('data-surface-height'))===expectedH;
         }""",timeout=15000)
+        # Live resolution changes must resize color/depth backing without
+        # recreating the WASM scene or causing another city download.
+        page.locator("#quality-select").select_option("balanced")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status").dataset;
+            const c=document.querySelector("canvas:not(#minimap-canvas)");
+            const w=Number(s.surfaceWidth),h=Number(s.surfaceHeight);
+            return document.documentElement.dataset.renderPixelBudget==="1100000"
+                && w*h>0 && w*h<=1110000 && c.width===w && c.height===h;
+        }""",timeout=15000)
+        page.locator("#quality-select").select_option("high")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status").dataset;
+            const c=document.querySelector("canvas:not(#minimap-canvas)");
+            const w=Number(s.surfaceWidth),h=Number(s.surfaceHeight);
+            return document.documentElement.dataset.renderPixelBudget==="1800000"
+                && w*h>1100000 && c.width===w && c.height===h;
+        }""",timeout=15000)
+        assert page.locator("#quality-select").input_value()=="high"
+        print("Live rendering resolution settings verified")
         print("Fullscreen canvas and backing size verified:",
               canvas.evaluate("(c) => [c.width,c.height,c.getBoundingClientRect().width,c.getBoundingClientRect().height]"))
         page.set_viewport_size({"width":1120,"height":740})

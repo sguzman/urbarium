@@ -88,6 +88,14 @@
     previousTime=now;
     if(panel.hidden) return;
     set("stats-backend",status.getAttribute("data-gpu-backend") || "Loading");
+    set("stats-adapter",status.getAttribute("data-gpu-adapter") || "Unavailable");
+    set("stats-device-type",status.getAttribute("data-gpu-device-type") || "Unavailable");
+    set("stats-format",status.getAttribute("data-gpu-surface-format") || "Unavailable");
+    set("stats-color-transfer",status.getAttribute("data-gpu-color-transfer") || "Unavailable");
+    const quality=document.documentElement.dataset.renderQuality||"high";
+    const size=[num("data-surface-width"),num("data-surface-height")];
+    set("stats-resolution",quality+" · "+(size.every(Number.isFinite)
+      ? size[0]+" × "+size[1]+" px":"Waiting..."));
     set("stats-frame",fmt(num("data-frame-ms"),2)+" ms");
     set("stats-cpu-frame",fmt(num("data-cpu-frame-ms"),2)+" ms");
     set("stats-triangles",Number.isFinite(num("data-triangles-drawn"))

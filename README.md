@@ -301,6 +301,18 @@ Stats, with a **Copy diagnostics** control. It cannot differentiate every
 browser crash from a forced close, and cannot capture errors when the entire
 process dies before delivering a callback. No telemetry is sent to a server.
 
+**Rendering resolution** now offers High (default), Balanced, Low and
+experimental Adaptive. Resolution selection changes the actual GPU framebuffer
+without a page reload or geographic re-download. Adaptive starts at High,
+reduces resolution after sustained frame rates below 42 FPS, and cautiously
+restores it above 56 FPS. This is a frame-interval heuristic, **not measured GPU
+time**, and cannot fix CPU- or driver-bound stalls. The Stats panel reports
+GPU adapter identity (where exposed), device type, selected surface format,
+color transfer and actual output resolution. The WGSL shader now converts
+sRGB display colors to linear light on sRGB attachments, rather than
+accidentally applying a second gamma transfer. Browser and driver color
+management can still differ beyond the shader's control.
+
 **Conservative GPU** can be enabled from the viewer. It reloads only the
 viewer using a 640k-pixel drawing buffer and an approximately 30-FPS frame
 cap, retaining the content-hash geographic cache. This is a diagnostic
