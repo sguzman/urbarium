@@ -411,6 +411,46 @@ fn combined_city(city:&City,terrain:&TerrainGrid,bridge_preview:bool)
     Ok((verts,indices,batches))
 }
 
+// The first frame is genuine geographic terrain plus all street and
+// pedestrian geometry. Buildings are meshed after that first frame, so
+// the GPU is usable while the expensive enrichment is still pending.
+// Uses the exact same road generator as the final mesh, not placeholder
+// raster images or invented street geometry.
+fn coarse_city(city:&City,terrain:&TerrainGrid,bridges:bool)
+    ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String>{
+    let mut vertices=Vec::new();
+    let mut indices=Vec::new();
+    let mut batches=Vec::new();
+    let mut add=|mesh:&Mesh,color:[f32;3],layer:SceneLayer|->Result<(),String>{
+        let start=u32::try_from(indices.len()).map_err(|_|"too many indices")?;
+        append_part(mesh,color,&mut vertices,&mut indices)?;
+        let end=u32::try_from(indices.len()).map_err(|_|"too many indices")?;
+        if end>start{batches.push(DrawBatch{layer,first_index:start,count:end-start});}
+        Ok(())
+    };
+    let ground=terrain.mesh(&city.region)?;
+    add(&ground,[0.39,0.44,0.42],SceneLayer::Ground)?;
+    let (mut roads,_)=mesh_streets_with_bridges(city,bridges)?;
+    terrain.drape_roads_with_preview(&city.region,&mut roads,bridges)?;
+    for (kind,mesh) in roads.layers {
+        let (layer,color)=match kind {
+            SurfaceKind::Road=>(SceneLayer::Road,[0.24,0.26,0.29]),
+            SurfaceKind::Motorway=>(SceneLayer::Road,[0.14,0.19,0.23]),
+            SurfaceKind::MotorwayStripe=>(SceneLayer::Road,[0.91,0.89,0.77]),
+            SurfaceKind::Walk=>(SceneLayer::Walk,[0.60,0.58,0.51]),
+            SurfaceKind::Steps=>(SceneLayer::Steps,[0.74,0.62,0.46]),
+            SurfaceKind::Rail=>(SceneLayer::Rail,[0.40,0.52,0.61]),
+            SurfaceKind::ElevatedRoad=>(SceneLayer::ElevatedRoad,[0.26,0.29,0.32]),
+            SurfaceKind::BridgeFascia=>(SceneLayer::BridgeStructure,[0.48,0.51,0.52]),
+            SurfaceKind::BridgeSupports=>(SceneLayer::BridgeStructure,[0.61,0.63,0.62]),
+            SurfaceKind::BridgeRails=>(SceneLayer::BridgeStructure,[0.76,0.78,0.78]),
+            SurfaceKind::BridgeStripe=>(SceneLayer::ElevatedRoad,[0.91,0.89,0.77]),
+        };
+        add(&mesh,color,layer)?;
+    }
+    Ok((vertices,indices,batches))
+}
+
 fn info(message: &str) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -450,6 +490,25 @@ extern "C" {
     fn publish_city_for_minimap(data:&str);
     fn publish_terrain_for_minimap(data:&str);
     fn fallback_from_software_webgpu();
+}
+
+fn browser_progressive()->bool {
+    #[cfg(target_arch="wasm32")]
+    if let Some(value)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-progressive-preview")) {
+        return value=="true";
+    }
+    false
+}
+fn set_scene_detail(stage:&str) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")) {
+        let _=el.set_attribute("data-scene-detail",stage);
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=stage;
 }
 
 fn browser_joined_world()->bool {
@@ -754,6 +813,16 @@ impl ResidentTile {
 // The first pass deliberately caps residency to the two adjacent city
 // sections. Future geographic streaming will evict these buffers, rather
 // than expanding a monolithic mesh to county scale.
+struct DeferredScene {
+    city:City,
+    terrain:TerrainGrid,
+    bridge_preview:bool,
+    joined:bool,
+}
+type NeighborCpu=(
+    Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>,TerrainGrid,Region,
+    CollisionWorld,urbarium::world::TilePlacement,[f64;4]
+);
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -780,6 +849,8 @@ struct Graphics {
     world_preview:bool,
     primary_bounds:[f64;4],
     neighbor:Option<ResidentTile>,
+    deferred_scene:Option<DeferredScene>,
+    primary_gpu_bytes:usize,
     rendered_frames: u64,
     gpu_mesh_bytes: usize,
     active_draw_calls:u32,
@@ -889,6 +960,41 @@ impl Graphics {
         let y=if was_flying {desired_y.max(ground+1.7)}else{ground+1.7};
         self.camera.position=Vec3::new(x as f32,y,z as f32);
         self.camera.eye_clearance=y-ground;
+    }
+    fn set_primary_mesh(&mut self,vertices:Vec<GpuVertex>,indices:Vec<u32>,batches:Vec<DrawBatch>){
+        let bytes=vertices.len()*size_of::<GpuVertex>()+indices.len()*size_of::<u32>();
+        self.vertices=self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+            label:Some("Enriched primary vertices"),
+            contents:bytemuck::cast_slice(&vertices),usage:wgpu::BufferUsages::VERTEX,
+        });
+        self.indices=self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+            label:Some("Enriched primary indices"),
+            contents:bytemuck::cast_slice(&indices),usage:wgpu::BufferUsages::INDEX,
+        });
+        self.index_count=indices.len() as u32;
+        self.batches=batches;
+        self.gpu_mesh_bytes=self.gpu_mesh_bytes-self.primary_gpu_bytes+bytes;
+        self.primary_gpu_bytes=bytes;
+    }
+    fn set_neighbor(&mut self,source:NeighborCpu){
+        let (vertices,indices,batches,terrain,region,collision,placement,bounds)=source;
+        let bytes=vertices.len()*size_of::<GpuVertex>()+indices.len()*size_of::<u32>();
+        let resident=ResidentTile{
+            vertices:self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                label:Some("Late neighbor vertices"),
+                contents:bytemuck::cast_slice(&vertices),usage:wgpu::BufferUsages::VERTEX,
+            }),
+            indices:self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                label:Some("Late neighbor indices"),
+                contents:bytemuck::cast_slice(&indices),usage:wgpu::BufferUsages::INDEX,
+            }),
+            batches,terrain,region,collision,placement,bounds,bytes,
+        };
+        if let Some(old)=self.neighbor.replace(resident) {
+            self.gpu_mesh_bytes=self.gpu_mesh_bytes.saturating_sub(old.bytes);
+        }
+        self.gpu_mesh_bytes+=bytes;
+        set_world_telemetry(2,0);
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         let (camera_request,overview)=browser_camera_request();
@@ -1048,7 +1154,17 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     set_terrain_size(terrain.heights_m.len());
     let bridge_preview=browser_bridge_preview();
     set_bridge_preview_state(bridge_preview);
-    let (vertices,indices,batches)=combined_city(&city,&terrain,bridge_preview)?;
+    let progressive=browser_progressive();
+    let deferred_scene=if progressive {
+        Some(DeferredScene{city:city.clone(),terrain:terrain.clone(),
+            bridge_preview,joined:browser_joined_world()})
+    }else{None};
+    let (vertices,indices,batches)=if progressive {
+        set_scene_detail("base");
+        coarse_city(&city,&terrain,bridge_preview)?
+    }else {
+        combined_city(&city,&terrain,bridge_preview)?
+    };
     let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
     let primary_bounds={
         let sw=city.region.project(city.region.bbox[0],city.region.bbox[1]);
@@ -1057,7 +1173,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     };
     // Only the opted-in preview loads a second independent dataset. It
     // preserves the same GPU backend and keeps old single-section mode intact.
-    let secondary_source=if browser_joined_world() {
+    let secondary_source=if browser_joined_world()&&!progressive {
         let id=if primary_id=="downtown-la" {"little-tokyo-east"}else{"downtown-la"};
         set_browser_stage("neighbor-fetch");
         info(&format!("Loading neighboring section {id}..."));
@@ -1253,6 +1369,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let index_count=u32::try_from(indices.len()).map_err(|_|"scene has too many indices")?;
     let mut gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
         indices.len()*size_of::<u32>();
+    let primary_gpu_bytes=gpu_mesh_bytes;
     let neighbor=secondary_source.map(|(vertices,indices,batches,terrain,region,collision,placement,bounds)|{
         let bytes=vertices.len()*size_of::<GpuVertex>()+indices.len()*size_of::<u32>();
         gpu_mesh_bytes+=bytes;
@@ -1279,19 +1396,75 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         street_camera:camera.clone(),overview_camera,camera_request:0,
         camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
-        world_preview:neighbor.is_some(),primary_bounds,neighbor,
+        world_preview:browser_joined_world(),primary_bounds,neighbor,
+        deferred_scene,primary_gpu_bytes,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
         gpu_fault,
         bridge_overlook,inspect_request:0,
     };
-    info(&format!("{} ready ({backend}){} — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release",
-        label,if browser_joined_world(){" · Joined 2-section world"}else{""}));
+    if !progressive {set_scene_detail(if browser_joined_world(){"joined"}else{"complete"});}
+    info(&format!("{} ready ({backend}){}{} — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release",
+        label,if browser_joined_world(){" · Joined 2-section world"}else{""},
+        if progressive{" · early terrain and streets"}else{""}));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }
 
-enum AppEvent { Ready(Graphics), Error(String), PointerLock(bool), ViewportResize(PhysicalSize<u32>), VisibilityChanged }
+async fn enrich_scene(job:DeferredScene,proxy:EventLoopProxy<AppEvent>) {
+    // Only starts once the first real frame was submitted. The short timeout
+    // gives the browser a presentation opportunity before synchronous meshing.
+    #[cfg(target_arch="wasm32")]
+    gloo_timers::future::TimeoutFuture::new(160).await;
+    let DeferredScene{city,terrain,bridge_preview,joined}=job;
+    info("Adding full buildings and landmark geometry...");
+    match combined_city(&city,&terrain,bridge_preview) {
+        Ok((vertices,indices,batches))=>{
+            let _=proxy.send_event(AppEvent::PrimaryDetail(vertices,indices,batches));
+        }
+        Err(err)=>{
+            set_scene_detail("error");
+            info(&format!("Base terrain available; building detail failed: {err}"));
+            return;
+        }
+    }
+    if !joined{return;}
+    #[cfg(target_arch="wasm32")]
+    gloo_timers::future::TimeoutFuture::new(160).await;
+    set_scene_detail("neighbor");
+    let other_id=if city.region.id=="downtown-la"{"little-tokyo-east"}else{"downtown-la"};
+    let result:Result<NeighborCpu,String>=async {
+        let other=fetch_city(other_id,false).await?;
+        let ground=fetch_terrain(other_id,false).await?;
+        ground.validate(&other.region)?;
+        let placement=urbarium::world::TilePlacement::between(
+            &city.region,terrain.origin_elevation_m,
+            &other.region,ground.origin_elevation_m);
+        let (mut vertices,indices,batches)=combined_city(&other,&ground,bridge_preview)?;
+        for vertex in &mut vertices {
+            vertex.position=placement.point(
+                vertex.position[0],vertex.position[1],vertex.position[2]);
+        }
+        let bounds=placement.bounds(&other.region);
+        let obstacles=CollisionWorld::from_city_with_terrain(&other,Some(&ground));
+        Ok((vertices,indices,batches,ground,other.region,obstacles,placement,bounds))
+    }.await;
+    match result {
+        Ok(data)=>{let _=proxy.send_event(AppEvent::NeighborDetail(Box::new(data)));}
+        Err(err)=>{
+            set_scene_detail("error");
+            info(&format!("Base city available; adjoining region failed: {err}"));
+        }
+    }
+}
+
+enum AppEvent {
+    Ready(Graphics),
+    PrimaryDetail(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),
+    NeighborDetail(Box<NeighborCpu>),
+    Error(String), PointerLock(bool),
+    ViewportResize(PhysicalSize<u32>), VisibilityChanged
+}
 enum Stage { Boot, Ready(Graphics), Error(String) }
 struct App {
     state:Stage,
@@ -1356,6 +1529,20 @@ impl ApplicationHandler<AppEvent> for App {
                 set_browser_stage("graphics-received");
                 gfx.window.request_redraw();
                 self.state=Stage::Ready(gfx);
+            }
+            AppEvent::PrimaryDetail(vertices,indices,batches)=>{
+                if let Stage::Ready(gfx)=&mut self.state{
+                    gfx.set_primary_mesh(vertices,indices,batches);
+                    set_scene_detail(if gfx.world_preview{"neighbor"}else{"complete"});
+                    gfx.window.request_redraw();
+                }
+            }
+            AppEvent::NeighborDetail(payload)=>{
+                if let Stage::Ready(gfx)=&mut self.state{
+                    gfx.set_neighbor(*payload);
+                    set_scene_detail("joined");
+                    gfx.window.request_redraw();
+                }
             }
             AppEvent::Error(msg)=>{self.state=Stage::Error(msg);}
             AppEvent::PointerLock(locked)=>{
@@ -1463,6 +1650,16 @@ impl ApplicationHandler<AppEvent> for App {
                     let rendered=gfx.draw();
                     if rendered && gfx.rendered_frames == 1 {
                         set_browser_stage("first-present");
+                        // Delay enrichment until a real terrain + road frame
+                        // has been submitted. The old path blocked the first
+                        // frame on two complete sections.
+                        if let Some(job)=gfx.deferred_scene.take(){
+                            let proxy=self_proxy(event_loop);
+                            #[cfg(target_arch="wasm32")]
+                            wasm_bindgen_futures::spawn_local(enrich_scene(job,proxy));
+                            #[cfg(not(target_arch="wasm32"))]
+                            pollster::block_on(enrich_scene(job,proxy));
+                        }
                     }
                     // One compact pose attribute every frame gives the
                     // 2D minimap and world-space landmark labels 60Hz

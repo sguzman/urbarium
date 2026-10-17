@@ -99,6 +99,26 @@ WASM download, and WASM compilation can take time even when bytes were
 previously cached. This should not be confused with repeated downloads of
 unchanged city and DEM JSON files.
 
+## Opt-in progressive first frame (October 17)
+
+The Advanced tab now exposes `Progressive first frame` (`?progressive=1`).
+Rather than blocking GPU initialization until both complete city sections
+have been triangulated, it renders real source-derived **terrain and draped
+streets** first. Only after that first GPU presentation does the browser
+build the full primary buildings, labeled landmarks and final roads, then
+fetch/build the adjoining section when joined mode is enabled. GPU vertex
+and index buffers are swapped on the event loop between frames; the camera
+position and backend do not restart, and the earlier buffers are released.
+The Details panel indicates `base`, `complete`, `neighbor` or `joined`
+enrichment. Standalone non-progressive mode is preserved as fallback and
+remains the default while this path is being verified.
+
+This is real geometry staging, not a screenshot or billboard. The initial
+meshing pass currently repeats the road triangulation in the full pass:
+further optimization can partition by camera-visible chunks and avoid work
+for off-screen buildings. It also cannot eliminate a slow initial WASM
+transfer: no Rust code runs before the WASM module arrives and starts.
+
 ## Status
 
 **Data ingestion and first 3D massing build validated on real Downtown LA data.**

@@ -16,6 +16,7 @@
       const selected=choices.find(section=>section.id===params.get("region"))||choices[0];
       document.documentElement.dataset.activeRegion=selected.id;
       document.documentElement.dataset.worldPreview=params.get("world")==="1"?"true":"false";
+      document.documentElement.dataset.progressivePreview=params.get("progressive")==="1"?"true":"false";
       const requested = params.get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
@@ -368,6 +369,7 @@
       <p id="render-report-status" role="status" class="scene-note">Let the city render for 15 seconds before downloading.</p>
       <p class="hud-field"><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
       <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
+      <p id="scene-detail-stage" role="status">Scene detail: waiting for renderer</p>
       <p id="startup-code-state" class="hud-hint" role="status">WebAssembly load: checking browser timings...</p>
       <p id="geography-request-count" class="hud-hint" role="status">City/terrain network requests this visit: 0</p>
       <div class="hud-field">
@@ -377,6 +379,10 @@
     </section>
     <section id="hud-pane-advanced" class="hud-pane" role="tabpanel"
       aria-labelledby="hud-tab-advanced" hidden>
+      <div class="hud-field">
+        <button id="progressive-preview-toggle" type="button" aria-pressed="false"
+          title="Preview early terrain/streets rendering before full buildings and the adjacent region are ready">Progressive first frame: off</button>
+      </div>
       <div class="hud-field">
         <button id="bridge-preview-toggle" type="button" aria-pressed="false"
           title="Reload with experimental elevated freeway meshes. No change to cached geography.">Experimental 3D freeways: off</button>
@@ -689,6 +695,16 @@
         if(skyMode==="live")syncLaClock();
       });
       resumeLive();
+      const progressivePreview=document.documentElement.dataset.progressivePreview==="true";
+      const progressiveToggle=document.getElementById("progressive-preview-toggle");
+      progressiveToggle.setAttribute("aria-pressed",String(progressivePreview));
+      progressiveToggle.textContent="Progressive first frame: "+(progressivePreview?"on":"off");
+      progressiveToggle.addEventListener("click",()=>{
+        const url=new URL(location.href);
+        if(progressivePreview)url.searchParams.delete("progressive");
+        else url.searchParams.set("progressive","1");
+        location.assign(url.href);
+      });
       const bridgePreview=document.documentElement.dataset.bridgePreview==="true";
       const bridgeButton=document.getElementById("bridge-preview-toggle");
       const bridgeNote=document.getElementById("bridge-preview-note");
@@ -788,6 +804,8 @@
           region:regionId,
           worldPreview:joined,
           activeSections:Number(status?.dataset.worldSections||1),
+          progressivePreview,
+          sceneDetail:status?.dataset.sceneDetail||"unknown",
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
             new URLSearchParams(location.search).get("launch"))
             ?new URLSearchParams(location.search).get("launch"):"normal-browser",
@@ -993,6 +1011,17 @@
           bootInfo.textContent=(phases[phase]||"Preparing 3D viewer")+" · "+
             stageSecs+"s in stage / "+age+"s total";
         updateStartupNetwork();
+        const sceneDetail=status?.dataset.sceneDetail||"waiting";
+        const sceneLabels={
+          waiting:"Scene detail: waiting for first frame",
+          base:"Terrain + streets visible · filling in buildings",
+          complete:"Full current section ready",
+          neighbor:"Full current section ready · loading adjacent region",
+          joined:"Full joined-world scene ready",
+          error:"Scene enrichment failed (basic scene remains visible)"
+        };
+        document.getElementById("scene-detail-stage").textContent=
+          sceneLabels[sceneDetail]||"Scene detail: "+sceneDetail;
         if(status?.dataset.gpuDeviceLost==="true"){
           health.textContent="Graphics device lost · Copy diagnostics in Stats";
           health.classList.add("warn");
