@@ -903,6 +903,30 @@ with sync_playwright() as p:
         print("Joined world WASD height stability and explicit E/Q altitude controls passed",start,mid,back,up,down)
         assert not errors,errors
         print("Joined world preview: 2 independent GPU buffers and visible neighbor draw calls")
+        # Progressive first frame must be actual terrain + street polygons
+        # before buildings and the neighboring city are ready, then upgrade
+        # both GPU meshes without navigation or resetting the camera.
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1&progressive=1",
+                  wait_until="domcontentloaded")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.renderStage==="first-present" &&
+                s.dataset.firstFrameDetail==="base" &&
+                Number(s.dataset.frameCount)>1;
+        }""",timeout=90000)
+        assert page.locator("#progressive-preview-toggle").get_attribute("aria-pressed")=="true"
+        assert "3D rendered" in page.locator("#boot-stage").inner_text()
+        early_url=page.url
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.sceneDetail==="joined" &&
+                Number(s.dataset.worldSections)===2 &&
+                Number(s.dataset.worldSecondaryDrawcalls)>0 &&
+                Number(s.dataset.frameCount)>6;
+        }""",timeout=90000)
+        assert page.url==early_url
+        assert not errors,errors
+        print("Progressive scene: first terrain/streets frame before full city and neighboring tile, then joined-world upgrade passed")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:
