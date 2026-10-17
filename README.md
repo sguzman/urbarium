@@ -221,6 +221,25 @@ The fixed bottom-right **Hide panels / Show panels** button hides the HUD,
 minimap, and credits without pausing the 3D renderer, making visual inspection
 possible even on smaller screens. Browser QA covers these controls.
 
+## October 17 flight altitude and pedestrian asphalt cleanup
+
+Aerial camera motion no longer inherits the terrain's slope. The earlier
+implementation updated eye elevation to `ground(x,z) + eye_clearance` on
+every horizontal movement, so forward travel over a downslope lowered the
+camera and reversing direction raised it. Now walking at 1.7 m continues
+tracking ground while free flight (E/Space to ascend, Q/Ctrl to descend)
+holds absolute world-space altitude across horizontal movement. To avoid
+clipping below the DEM, encountering higher terrain can still raise the
+camera to the 1.7 m safety floor; descent to ground returns to walking.
+
+At-grade pedestrian path cleanup now tests the entire walking triangle
+against buffered driving-road centerline segments, including triangle
+edge crossings and contained short road segments. The old vertex-only
+test missed triangles whose corners were outside asphalt even though their
+faces crossed into it. Elevated roads, tunnels, and default-hidden
+freeways remain excluded from the cutout, avoiding fake holes at flyovers.
+These changes are covered by geometry and camera regression tests.
+
 ## Experimental WebGPU browser viewer
 
 A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.

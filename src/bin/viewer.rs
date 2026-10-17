@@ -169,19 +169,35 @@ impl Camera {
         if delta.length_squared() > 0.0 {
             let boost = if self.fast_mode { 18.0 } else { 1.0 };
             let movement=delta.normalize() * elapsed.min(0.08) * self.speed * boost;
-            self.eye_clearance=(self.eye_clearance+movement.y).max(1.7);
             let start=[self.position.x as f64,self.position.z as f64];
             let end=[start[0]+movement.x as f64,start[1]+movement.z as f64];
             let ground_at=|x:f64,z:f64| -> f32 {
                 terrain.map(|(grid,region)| grid.sample_surface(region,x,z)).unwrap_or(0.0)
             };
-            let eye=ground_at(end[0],end[1])+self.eye_clearance;
+            // Walking follows the DEM at the standard 1.7 m eye clearance.
+            // Once E/Space raises the camera, horizontal motion becomes free
+            // flight at a fixed world-space altitude, even over sloping DEM.
+            // Q/Ctrl lowers it again; reaching the ground resumes walking.
+            // This also fixes city-overview flight turning into a rollercoaster
+            // over terrain ridges and valleys.
+            let flying=self.eye_clearance>1.701 || movement.y>0.0;
+            let intended_y=if flying {
+                self.position.y+movement.y
+            }else{
+                ground_at(end[0],end[1])+1.7
+            };
+            let candidate_eye=intended_y.max(ground_at(end[0],end[1])+1.7);
             let resolved=if let Some(world)=world {
-                world.move_sliding(start,end,eye as f64,0.35)
+                world.move_sliding(start,end,candidate_eye as f64,0.35)
             }else{end};
             self.position.x=resolved[0] as f32;
             self.position.z=resolved[1] as f32;
-            self.position.y=ground_at(resolved[0],resolved[1])+self.eye_clearance;
+            // Safety clearance is a FLOOR, not a directive to follow every
+            // downhill grade while flying. Uphill terrain can lift the camera
+            // to avoid underground motion; descending requires Q/Ctrl.
+            let ground=ground_at(resolved[0],resolved[1]);
+            self.position.y=intended_y.max(ground+1.7);
+            self.eye_clearance=self.position.y-ground;
         }
     }
 }
@@ -1664,6 +1680,66 @@ mod tests {
             fast.position.z*fast.position.z).sqrt();
         assert!(fast_distance>walk_distance*15.0);
         assert_eq!(fast.eye_clearance,1.7);
+    }
+
+    #[test]
+    fn flight_stays_at_absolute_altitude_across_uphill_and_downhill_dem() {
+        let region=Region {
+            id:"slope".into(),name:"Slope".into(),
+            origin:[0.0,0.0],bbox:[-0.01,-0.01,0.01,0.01],
+        };
+        let grid=TerrainGrid {
+            schema_version:1,region_id:region.id.clone(),
+            bbox:region.bbox,width:2,height:2,
+            heights_m:vec![0.0,0.0,100.0,100.0],
+            origin_elevation_m:0.0,source:"synthetic".into(),
+        };
+        let mut camera=Camera::default();
+        camera.yaw=0.0;
+        camera.position.y=grid.sample_surface(&region,0.0,0.0)+100.0;
+        camera.eye_clearance=100.0;
+        let altitude=camera.position.y;
+        let mut keys=HashSet::new();
+        keys.insert(KeyCode::KeyW);
+        for _ in 0..50 {camera.move_by(&keys,0.08,None,Some((&grid,&region)));}
+        assert!(camera.position.z>10.0);
+        assert!((camera.position.y-altitude).abs()<0.001,
+            "horizontal flight must not descend or climb with the terrain");
+        keys.clear();keys.insert(KeyCode::KeyS);
+        for _ in 0..50 {camera.move_by(&keys,0.08,None,Some((&grid,&region)));}
+        assert!((camera.position.y-altitude).abs()<0.001,
+            "return flight must not produce the reverse altitude anomaly");
+    }
+
+    #[test]
+    fn walking_keeps_ground_clearance_and_flight_resumes_walking_on_landing() {
+        let region=Region{
+            id:"slope".into(),name:"Slope".into(),
+            origin:[0.0,0.0],bbox:[-0.01,-0.01,0.01,0.01],
+        };
+        let grid=TerrainGrid{
+            schema_version:1,region_id:region.id.clone(),
+            bbox:region.bbox,width:2,height:2,
+            heights_m:vec![0.0,0.0,100.0,100.0],
+            origin_elevation_m:0.0,source:"synthetic".into(),
+        };
+        let mut camera=Camera::default();
+        camera.yaw=0.0;
+        camera.position.y=grid.sample_surface(&region,0.0,0.0)+1.7;
+        let initial=camera.position.y;
+        let mut keys=HashSet::new();
+        keys.insert(KeyCode::KeyW);
+        for _ in 0..50 {camera.move_by(&keys,0.08,None,Some((&grid,&region)));}
+        assert!(camera.position.y>initial+0.2,
+            "walking must still follow the uphill DEM");
+        assert!((camera.eye_clearance-1.7).abs()<0.001);
+        keys.clear();keys.insert(KeyCode::KeyE);
+        for _ in 0..20 {camera.move_by(&keys,0.08,None,Some((&grid,&region)));}
+        assert!(camera.eye_clearance>2.0);
+        keys.clear();keys.insert(KeyCode::KeyQ);
+        for _ in 0..100 {camera.move_by(&keys,0.08,None,Some((&grid,&region)));}
+        assert!((camera.eye_clearance-1.7).abs()<0.001,
+            "landing must restore the normal walking camera");
     }
 
     #[test]
