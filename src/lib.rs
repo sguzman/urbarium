@@ -8,6 +8,7 @@ pub mod road_grade;
 pub mod gltf;
 pub mod collision;
 pub mod terrain;
+pub mod world;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
