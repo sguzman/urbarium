@@ -26,12 +26,15 @@ pre{background:#172530;border:1px solid #40525a;padding:16px;border-radius:7px;o
 <button id="run-probe" type="button">Run adapter test and download JSON</button>
 <button id="download-again" type="button" disabled>Download report again</button>
 <p id="status" role="status">Ready. Report stays in your browser until you download it. No data is sent to a server.</p>
+<p id="launch-note" hidden>Isolated Vulkan experiment. If this Edge window crashes, close it; your normal Edge profile is unchanged.</p>
 <pre id="output" aria-label="Adapter diagnostics">Select Run adapter test and download JSON.</pre>
 <p><a href="./">Return to Urbarium</a></p>
 <script>
 (() => {
 "use strict";
 const $=id=>document.getElementById(id);
+if(new URLSearchParams(location.search).get("launch")==="isolated-vulkan")
+  $("launch-note").hidden=false;
 let latest=null;
 function errorInfo(e){return {name:String(e?.name||"Error"),message:String(e?.message||e).slice(0,500)};}
 function infoOf(adapter){
@@ -100,6 +103,8 @@ $("run-probe").addEventListener("click",async()=>{
     const report={
       schemaVersion:1,
       application:"urbarium-gpu-adapter-probe",
+      launchVariant:new URLSearchParams(location.search).get("launch")==="isolated-vulkan"
+        ?"isolated-vulkan":"normal-edge",
       timestamp:new Date().toISOString(),
       userAgent:navigator.userAgent,
       platform:navigator.platform,

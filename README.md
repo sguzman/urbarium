@@ -172,6 +172,19 @@ only and may use significant CPU power. Automated browser QA exercises the
 standalone downloadable report and the software-adapter fallback separately.
 A result from software Chromium CI cannot establish real AMD hardware selection.
 
+If the normal Edge probe returns `google/swiftshader`, run the optional
+`bash ~/Downloads/urbarium-edge-vulkan-probe.sh` launcher (download it from
+the repository or the chat artifact). It opens a **separate temporary Edge
+profile**, explicitly enables Chromium Vulkan and keeps the same
+`/dev/dri/renderD128` iGPU render-node override as the normal Edge session.
+It does **not** overwrite flags, settings or the normal user profile. Close
+it immediately if unstable; this is a diagnostic, not a permanent graphics
+configuration. Click **Run adapter test and download JSON** in the opened
+gpu-test page, then upload the report. The report includes
+`launchVariant: isolated-vulkan` to distinguish the environment. This probe
+never starts Urbarium 3D rendering or requests a high-performance adapter
+unless the user explicitly enables that checkbox.
+
 ## Experimental WebGPU browser viewer
 
 A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.
