@@ -511,6 +511,15 @@ fn set_scene_detail(stage:&str) {
     let _=stage;
 }
 
+fn mark_first_frame_detail(){
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")) {
+        let stage=el.get_attribute("data-scene-detail").unwrap_or_else(||"unknown".into());
+        let _=el.set_attribute("data-first-frame-detail",&stage);
+    }
+}
+
 fn browser_joined_world()->bool {
     #[cfg(target_arch="wasm32")]
     if let Some(value)=web_sys::window().and_then(|w|w.document())
@@ -1649,6 +1658,7 @@ impl ApplicationHandler<AppEvent> for App {
                     gfx.update(&self.keys,interval.min(0.08));
                     let rendered=gfx.draw();
                     if rendered && gfx.rendered_frames == 1 {
+                        mark_first_frame_detail();
                         set_browser_stage("first-present");
                         // Delay enrichment until a real terrain + road frame
                         // has been submitted. The old path blocked the first
