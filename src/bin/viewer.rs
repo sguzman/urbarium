@@ -484,7 +484,9 @@ fn expose_gpu_details(info:&wgpu::AdapterInfo,format:wgpu::TextureFormat,srgb:bo
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
             for (key,value) in [
-                ("data-gpu-adapter",info.name.as_str()),
+                ("data-gpu-adapter",if info.name.trim().is_empty() {
+                    "Name hidden by browser"
+                }else{info.name.as_str()}),
                 ("data-gpu-driver",info.driver.as_str()),
                 ("data-gpu-device-type",match info.device_type {
                     wgpu::DeviceType::DiscreteGpu=>"Discrete GPU",
