@@ -59,6 +59,23 @@ geometry, camera traversal and bounded eviction are verified. Large
 building polygons crossing an Overture section boundary can still produce
 overlapping source triangles; proper clipping/stitching remains pending.
 
+## Compact tabbed viewer HUD (October 17)
+
+The main left overlay is now a narrow, scroll-bounded tabbed panel:
+**Explore** (camera, area, joined world, layers, sky), **Graphics**
+(renderer, resolution, GPU safety), **Details** (cache status, loading
+phase, GPU diagnostic report, performance Stats), and **Advanced**
+(experimental freeway geometry). Only one section is visible; tabs use
+proper keyboard-accessible tab/tabpanel roles and preserve their selection
+across same-session reloads. Switching tabs is entirely in-page and does
+not restart WASM, redownload geography or reset the camera.
+
+Existing geography SHA256 cache hit semantics are unchanged. A deployment
+that genuinely changes the Rust/WASM binary can require a new fingerprinted
+WASM download, and WASM compilation can take time even when bytes were
+previously cached. This should not be confused with repeated downloads of
+unchanged city and DEM JSON files.
+
 ## Status
 
 **Data ingestion and first 3D massing build validated on real Downtown LA data.**

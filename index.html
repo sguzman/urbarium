@@ -111,9 +111,43 @@
       color:#f2fbff;background:rgba(20,45,57,.92);font:12px system-ui,sans-serif;}
     body.scene-ui-hidden .hud,body.scene-ui-hidden .minimap,
     body.scene-ui-hidden .footer,body.scene-ui-hidden #stats-panel {display:none!important;}
-    .hud {position:fixed;top:16px;left:18px;z-index:2;padding:12px 16px;
-      background:rgba(8,17,24,.82);border:1px solid #394b55;border-radius:10px;
-      max-width:min(600px, calc(100vw - 68px));pointer-events:none;backdrop-filter:blur(7px);}
+    .hud {position:fixed;top:12px;left:12px;z-index:2;padding:11px 12px;
+      box-sizing:border-box;width:min(340px,calc(100vw - 24px));
+      max-height:min(76vh,520px);overflow-y:auto;overflow-x:hidden;
+      background:rgba(8,17,24,.88);border:1px solid #394b55;border-radius:10px;
+      pointer-events:auto;backdrop-filter:blur(7px);box-shadow:0 5px 18px #0006;}
+    .hud h1{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .hud-summary #status{font-size:11px;line-height:1.35;max-height:2.7em;
+      overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;}
+    .hud-live{display:flex;gap:6px;flex-wrap:wrap;align-items:center;
+      justify-content:space-between;margin:5px 0;font-size:11px;}
+    .hud-live #renderer-health{font-size:11px;white-space:nowrap;
+      overflow:hidden;max-width:100%;text-overflow:ellipsis;}
+    .hud-summary #input-state{font-size:11px;line-height:1.3;margin:2px 0 6px;}
+    .hud-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+      gap:3px;border-bottom:1px solid #46606d;margin:5px -1px 8px;}
+    .hud-tab{pointer-events:auto;min-width:0;padding:8px 2px;
+      background:transparent;border:0;border-bottom:2px solid transparent;
+      color:#b6ced8;font-size:11px;font-weight:650;cursor:pointer;}
+    .hud-tab[aria-selected="true"]{color:#eafdff;border-bottom-color:#9ddbd9;
+      background:rgba(51,100,110,.25);}
+    .hud-tab:focus-visible{outline:2px solid #e7f4ff;outline-offset:-2px;}
+    .hud-pane[hidden]{display:none!important;}
+    .hud-pane{font-size:12px;}
+    .hud-pane .hud-field{margin:5px 0;display:flex;flex-wrap:wrap;
+      align-items:center;gap:8px;}
+    .hud-pane .hud-field p{margin:0;}
+    .hud-pane .renderer-control{margin:2px 0;}
+    .hud-pane #region-select{max-width:235px;}
+    .hud-pane #time-label{font-size:11px;min-width:0;}
+    .hud-inline{margin:4px 0 5px;}
+    .hud-options{font-size:11px;color:#c5d8de;}
+    .hud-options label{pointer-events:auto;cursor:pointer;display:inline-flex;align-items:center;}
+    .hud-options input{accent-color:#8fc2cf;}
+    .hud .hud-hint{font-size:10px;color:#a9bfca;line-height:1.35;margin:7px 0 0;}
+    #geodata-cache-state{overflow-wrap:anywhere;}
+    @media(max-width:650px){.hud{top:8px;left:8px;width:min(326px,calc(100vw - 16px));
+      max-height:58vh;padding:9px;}}
     h1 {margin:0 0 5px;font-size:18px;letter-spacing:.06em;}
     p {margin:3px 0;font-size:12px;line-height:1.5;color:#cad3d8;}
     #status {color:#d4eeb4;}
@@ -242,78 +276,114 @@
 <body>
   <div id="world-landmarks" aria-label="World-anchored Downtown Los Angeles landmark labels"></div>
   <button id="scene-ui-toggle" type="button" aria-pressed="false" title="Hide or restore map and controls without restarting the 3D scene">Hide panels</button>
-  <div class="hud">
-    <h1>URBARIUM <span id="current-region-name" style="color:#b6bbc5">/ Downtown LA</span></h1>
-    <p id="status">Starting Rust / WebGPU viewer...</p>
-    <p id="input-state" data-pointer-locked="false">Click the city to capture mouse</p>
-    <p>Mouse looks · WASD move · Shift toggles fast travel · E/Q fly · Esc releases</p>
-    <p id="speed-state">WALK · 3.4 m/s</p>
-    <div class="scene-controls">
-      <button id="camera-overview" type="button" title="Fly above the city to see buildings and roads without changing the renderer">City overview</button>
-      <button id="camera-street" type="button" title="Return to the original street-level camera">Street view</button>
+  <div class="hud" aria-label="Urbarium controls">
+    <div class="hud-summary">
+      <h1>URBARIUM <span id="current-region-name" style="color:#b6bbc5">/ Downtown LA</span></h1>
+      <p id="status" role="status" title="3D viewer status">Starting Rust / WebGPU viewer...</p>
+      <div class="hud-live">
+        <span id="speed-state">WALK · 3.4 m/s</span>
+        <span id="renderer-health" role="status">Loading renderer...</span>
+      </div>
+      <p id="input-state" data-pointer-locked="false">Click the city to capture mouse</p>
     </div>
-    <label class="renderer-control" for="region-select">
-      Area
-      <select id="region-select" aria-label="Geographic section"></select>
-    </label>
-    <button id="world-preview-toggle" type="button" title="Opt into the first two-section shared-world renderer, with a fixed resident-section limit">Joined world preview: off</button>
-    <span id="region-transition-note" class="scene-note">Default: independent sections. Preview: both sections in one scene with a fixed two-section GPU budget.</span>
-    <label class="renderer-control" for="renderer-select">
-      Graphics
-      <select id="renderer-select" aria-label="Graphics renderer">
-        <option value="webgl2">WebGL2 · compatibility</option>
-        <option value="webgpu">WebGPU · experimental</option>
-      </select>
-    </label>
-    <label class="renderer-control" for="quality-select">Resolution
-      <select id="quality-select" aria-label="Rendering resolution">
-        <option value="high">High · default</option>
-        <option value="balanced">Balanced</option>
-        <option value="low">Low · faster</option>
-        <option value="auto">Adaptive · experimental</option>
-      </select>
-    </label>
-    <button id="safe-gpu-toggle" type="button" aria-pressed="false"
-      title="Restart using a capped 640k-pixel framebuffer and at most 30 rendered frames per second">Conservative GPU: off</button>
-    <p id="renderer-health" role="status">Loading the Rust viewer...</p>
-    <p id="gpu-fallback-message" class="scene-note" role="status" hidden></p>
-    <p><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
-    <button id="download-render-report" type="button"
-      title="Save the current 3D renderer adapter, FPS samples, frame timing and fault state as JSON">Download 3D rendering report</button>
-    <p id="render-report-status" role="status" class="scene-note">For a useful result, let the city render for 15 seconds, then download.</p>
-    <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
-    <div class="scene-controls">
-      <button id="bridge-preview-toggle" type="button" aria-pressed="false"
-        title="Reload with experimental elevated freeway meshes. No change to cached geography.">Experimental 3D freeways: off</button>
-      <button id="inspect-overpass" type="button" disabled hidden
-        title="Inspect the experimental bridge reconstruction">Inspect overpass (preview only)</button>
-      <span id="bridge-preview-note" class="scene-note">Unfinished freeway corridors hidden; ordinary city streets remain visible.</span>
+    <div class="hud-tabs" role="tablist" aria-label="Viewer controls">
+      <button id="hud-tab-explore" class="hud-tab" type="button" role="tab"
+        aria-controls="hud-pane-explore" aria-selected="true" tabindex="0" data-tab="explore">Explore</button>
+      <button id="hud-tab-graphics" class="hud-tab" type="button" role="tab"
+        aria-controls="hud-pane-graphics" aria-selected="false" tabindex="-1" data-tab="graphics">Graphics</button>
+      <button id="hud-tab-details" class="hud-tab" type="button" role="tab"
+        aria-controls="hud-pane-details" aria-selected="false" tabindex="-1" data-tab="details">Details</button>
+      <button id="hud-tab-advanced" class="hud-tab" type="button" role="tab"
+        aria-controls="hud-pane-advanced" aria-selected="false" tabindex="-1" data-tab="advanced">Advanced</button>
     </div>
-    <div class="debug-controls">
-      <button id="stats-toggle" type="button" aria-controls="stats-panel"
-        aria-pressed="false">Stats: off</button>
-      <label title="Display approximate pedestrian paths, not surveyed curbs">
-        <input id="layer-walk" type="checkbox" data-visible="true" checked>
-        Footpaths
-      </label>
-      <label title="Rail levels are not surveyed; keep hidden until needed">
-        <input id="layer-rail" type="checkbox" data-visible="false">
-        Rail
-      </label>
-    </div>
-    <div class="scene-controls">
-      <label for="time-of-day">Sky
-        <input id="time-of-day" type="range" min="0" max="24" step=".25" value="12"
-          data-clock-mode="live" aria-label="Los Angeles time of day; changing the slider pauses live clock">
-      </label>
-      <span id="time-label">LA time...</span>
-      <button id="time-la-now" type="button" aria-pressed="true"
-        title="Resume live Los Angeles time, updated continuously">Live · LA</button>
-    </div>
-    <div class="scene-controls">
-      <span id="geodata-cache-state" role="status">Geography: awaiting first asset request</span>
-      <button id="refresh-geography" type="button" title="Delete saved Downtown LA geography and reload from source">Refresh geography</button>
-    </div>
+    <section id="hud-pane-explore" class="hud-pane" role="tabpanel" aria-labelledby="hud-tab-explore">
+      <div class="scene-controls hud-inline">
+        <button id="camera-overview" type="button" title="Fly above the city to see buildings and roads without changing the renderer">City overview</button>
+        <button id="camera-street" type="button" title="Return to the original street-level camera">Street view</button>
+      </div>
+      <div class="hud-field">
+        <label class="renderer-control" for="region-select">
+          Area
+          <select id="region-select" aria-label="Geographic section"></select>
+        </label>
+      </div>
+      <div class="hud-field">
+        <button id="world-preview-toggle" type="button" title="Opt into the two-section shared-world renderer, with a fixed residency limit">Joined world preview: off</button>
+      </div>
+      <div class="hud-field hud-options">
+        <label title="Display approximate pedestrian paths, not surveyed curbs">
+          <input id="layer-walk" type="checkbox" data-visible="true" checked> Footpaths
+        </label>
+        <label title="Rail levels are not surveyed; keep hidden until needed">
+          <input id="layer-rail" type="checkbox" data-visible="false"> Rail
+        </label>
+      </div>
+      <div class="hud-field scene-controls hud-sky">
+        <label for="time-of-day">Sky
+          <input id="time-of-day" type="range" min="0" max="24" step=".25" value="12"
+            data-clock-mode="live" aria-label="Los Angeles time of day; changing the slider pauses live clock">
+        </label>
+        <span id="time-label">LA time...</span>
+        <button id="time-la-now" type="button" aria-pressed="true"
+          title="Resume live Los Angeles time, updated continuously">Live · LA</button>
+      </div>
+      <p class="hud-hint">WASD move · Shift fast travel · E/Q fly · Esc unlocks mouse</p>
+    </section>
+    <section id="hud-pane-graphics" class="hud-pane" role="tabpanel"
+      aria-labelledby="hud-tab-graphics" hidden>
+      <div class="hud-field">
+        <label class="renderer-control" for="renderer-select">
+          Graphics
+          <select id="renderer-select" aria-label="Graphics renderer">
+            <option value="webgl2">WebGL2 · compatibility</option>
+            <option value="webgpu">WebGPU · experimental</option>
+          </select>
+        </label>
+      </div>
+      <div class="hud-field">
+        <label class="renderer-control" for="quality-select">Resolution
+          <select id="quality-select" aria-label="Rendering resolution">
+            <option value="high">High · default</option>
+            <option value="balanced">Balanced</option>
+            <option value="low">Low · faster</option>
+            <option value="auto">Adaptive · experimental</option>
+          </select>
+        </label>
+      </div>
+      <div class="hud-field">
+        <button id="safe-gpu-toggle" type="button" aria-pressed="false"
+          title="Restart using a capped 640k-pixel framebuffer and at most 30 rendered frames per second">Conservative GPU: off</button>
+      </div>
+      <p id="gpu-fallback-message" class="scene-note" role="status" hidden></p>
+      <p class="hud-hint">Changing the renderer restarts the viewer. Changing resolution is live.</p>
+    </section>
+    <section id="hud-pane-details" class="hud-pane" role="tabpanel"
+      aria-labelledby="hud-tab-details" hidden>
+      <div class="hud-field">
+        <button id="stats-toggle" type="button" aria-controls="stats-panel"
+          aria-pressed="false">Stats: off</button>
+        <button id="download-render-report" type="button"
+          title="Save renderer adapter, FPS, frame timing and fault state as JSON">Download 3D rendering report</button>
+      </div>
+      <p id="render-report-status" role="status" class="scene-note">Let the city render for 15 seconds before downloading.</p>
+      <p class="hud-field"><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
+      <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
+      <div class="hud-field">
+        <p id="geodata-cache-state" role="status">Geography: awaiting first asset request</p>
+        <button id="refresh-geography" type="button" title="Delete cached geography and reload from source">Refresh geography</button>
+      </div>
+    </section>
+    <section id="hud-pane-advanced" class="hud-pane" role="tabpanel"
+      aria-labelledby="hud-tab-advanced" hidden>
+      <div class="hud-field">
+        <button id="bridge-preview-toggle" type="button" aria-pressed="false"
+          title="Reload with experimental elevated freeway meshes. No change to cached geography.">Experimental 3D freeways: off</button>
+        <button id="inspect-overpass" type="button" disabled hidden
+          title="Inspect the experimental bridge reconstruction">Inspect overpass (preview only)</button>
+      </div>
+      <p id="bridge-preview-note" class="scene-note">Unfinished freeway corridors hidden; ordinary city streets remain visible.</p>
+      <p id="region-transition-note" class="hud-hint">Default: independent sections. Joined preview: both sections in a bounded two-section GPU scene.</p>
+    </section>
   </div>
   <section id="stats-panel" aria-label="Renderer diagnostics" hidden>
     <h2>URBARIUM / Performance</h2>
@@ -411,6 +481,40 @@
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");
+      // Pure client-side tabs: never reload the Rust app, GPU or geography.
+      // The same existing controls retain their original IDs and handlers.
+      const tabNames=["explore","graphics","details","advanced"];
+      const selectHudTab=(name,focus=false)=>{
+        if(!tabNames.includes(name))name="explore";
+        for(const tabName of tabNames){
+          const active=tabName===name;
+          const button=document.getElementById("hud-tab-"+tabName);
+          const pane=document.getElementById("hud-pane-"+tabName);
+          button.setAttribute("aria-selected",String(active));
+          button.tabIndex=active?0:-1;
+          pane.hidden=!active;
+        }
+        if(focus)document.getElementById("hud-tab-"+name).focus();
+        document.querySelector(".hud").dataset.activeTab=name;
+        try{sessionStorage.setItem("urbarium-hud-tab-v1",name);}catch(_){}
+      };
+      for(const [index,name] of tabNames.entries()){
+        const tab=document.getElementById("hud-tab-"+name);
+        tab.addEventListener("click",()=>selectHudTab(name));
+        tab.addEventListener("keydown",event=>{
+          if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+          event.preventDefault();
+          let next=index;
+          if(event.key==="ArrowLeft")next=(index+tabNames.length-1)%tabNames.length;
+          if(event.key==="ArrowRight")next=(index+1)%tabNames.length;
+          if(event.key==="Home")next=0;
+          if(event.key==="End")next=tabNames.length-1;
+          selectHudTab(tabNames[next],true);
+        });
+      }
+      let priorTab="explore";
+      try{priorTab=sessionStorage.getItem("urbarium-hud-tab-v1")||"explore";}catch(_){}
+      selectHudTab(priorTab);
       const sceneToggle=document.getElementById("scene-ui-toggle");
       sceneToggle.addEventListener("click",()=>{
         const hidden=document.body.classList.toggle("scene-ui-hidden");
