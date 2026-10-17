@@ -816,6 +816,37 @@ with sync_playwright() as p:
                 Number(s.dataset.frameCount)>3;
         }""",timeout=90000)
         assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
+        # Regression: the old joined-world mover compared altitude against
+        # a fake 0-m ground level and climbed by terrain height EVERY FRAME.
+        # Confirm real keyboard flight controls preserve absolute altitude.
+        page.locator("#camera-overview").click()
+        page.wait_for_function("""() => document.querySelector('#status')?.dataset.cameraMode==='overview'""")
+        def joined_pose():
+            return [float(v) for v in page.locator("#status").get_attribute("data-camera-pose").split(",")]
+        from time import sleep
+        start=joined_pose()
+        page.keyboard.down("w")
+        sleep(1.0)
+        page.keyboard.up("w")
+        mid=joined_pose()
+        assert abs(mid[1]-start[1])<0.2,("Forward flight must hold altitude",start,mid)
+        assert abs(mid[0]-start[0])+abs(mid[2]-start[2])>0.05,("Forward input ignored",start,mid)
+        page.keyboard.down("s")
+        sleep(1.0)
+        page.keyboard.up("s")
+        back=joined_pose()
+        assert abs(back[1]-start[1])<0.2,("Backward flight must hold altitude",start,back)
+        page.keyboard.down("e")
+        sleep(0.4)
+        page.keyboard.up("e")
+        up=joined_pose()
+        assert up[1]>back[1]+0.2,("E must raise the camera",back,up)
+        page.keyboard.down("q")
+        sleep(0.4)
+        page.keyboard.up("q")
+        down=joined_pose()
+        assert down[1]<up[1]-0.2,("Q must lower the camera",up,down)
+        print("Joined world WASD height stability and explicit E/Q altitude controls passed",start,mid,back,up,down)
         assert not errors,errors
         print("Joined world preview: 2 independent GPU buffers and visible neighbor draw calls")
         print("6-second continuous rendering stability smoke test passed")

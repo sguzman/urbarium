@@ -147,8 +147,9 @@ impl Camera {
         self.yaw += dx * 0.0025;
         self.pitch = (self.pitch - dy * 0.0025).clamp(-1.52, 1.52);
     }
-    fn move_by(&mut self, pressed:&HashSet<KeyCode>, elapsed:f32,
-        world:Option<&CollisionWorld>, terrain:Option<(&TerrainGrid,&Region)>) {
+    // Control interpretation must be IDENTICAL in a single section and in
+    // the joined world. Only world-space collision / ground sampling differ.
+    fn control_displacement(&mut self,pressed:&HashSet<KeyCode>,elapsed:f32)->Vec3 {
         let ground_forward = Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos());
         let right = Vec3::new(ground_forward.z, 0.0, -ground_forward.x);
         let mut delta = Vec3::ZERO;
@@ -168,7 +169,13 @@ impl Camera {
         if pressed.contains(&KeyCode::ArrowDown) { self.mouse_look(0.0, 130.0*elapsed); }
         if delta.length_squared() > 0.0 {
             let boost = if self.fast_mode { 18.0 } else { 1.0 };
-            let movement=delta.normalize() * elapsed.min(0.08) * self.speed * boost;
+            delta.normalize() * elapsed.min(0.08) * self.speed * boost
+        }else{Vec3::ZERO}
+    }
+    fn move_by(&mut self, pressed:&HashSet<KeyCode>, elapsed:f32,
+        world:Option<&CollisionWorld>, terrain:Option<(&TerrainGrid,&Region)>) {
+        let movement=self.control_displacement(pressed,elapsed);
+        if movement.length_squared()>0.0 {
             let start=[self.position.x as f64,self.position.z as f64];
             let end=[start[0]+movement.x as f64,start[1]+movement.z as f64];
             let ground_at=|x:f64,z:f64| -> f32 {
@@ -809,34 +816,55 @@ impl Graphics {
         self.reconfigure_surface(size);
     }
     fn move_in_world(&mut self,pressed:&HashSet<KeyCode>,dt:f32) {
-        // One common reference frame for both independent local origins.
-        // Keep the GPU and collision worlds section-local; only camera and
-        // vertex positions inhabit the shared frame.
+        // A second terrain-independent Camera::move_by() used to reset the
+        // camera's eye_clearance relative to y=0 every frame. Subtracting
+        // that clearance from the true one then ADDED the terrain elevation
+        // to camera Y on every movement frame (the reported "rocket up" bug).
+        // Reuse the original control interpretation, but never recompute
+        // clearance in a fictitious zero-height world.
+        let movement=self.camera.control_displacement(pressed,dt);
+        if movement.length_squared()==0.0 {return;}
         let prior=self.camera.position;
-        let clearance=self.camera.eye_clearance;
-        let mut candidate=self.camera.clone();
-        candidate.move_by(pressed,dt,None,None);
-        let mut x=candidate.position.x as f64;
-        let mut z=candidate.position.z as f64;
-        let in_primary=urbarium::world::within(self.primary_bounds,x,z);
-        let in_neighbor=self.neighbor.as_ref().is_some_and(|tile|
-            urbarium::world::within(tile.bounds,x,z));
-        if !in_primary&&!in_neighbor {
-            x=prior.x as f64;z=prior.z as f64;
+        let mut x=prior.x as f64+movement.x as f64;
+        let mut z=prior.z as f64+movement.z as f64;
+        let inside=|x:f64,z:f64| {
+            urbarium::world::within(self.primary_bounds,x,z) ||
+            self.neighbor.as_ref().is_some_and(|tile|
+                urbarium::world::within(tile.bounds,x,z))
+        };
+        let height=|x:f64,z:f64| -> f32 {
+            if urbarium::world::within(self.primary_bounds,x,z) {
+                self.terrain.sample_surface(&self.region,x,z)
+            }else if let Some(tile)=self.neighbor.as_ref().filter(|tile|
+                urbarium::world::within(tile.bounds,x,z)) {
+                tile.height(x,z)
+            }else{
+                self.terrain.sample_surface(&self.region,prior.x as f64,prior.z as f64)
+            }
+        };
+        let was_flying=self.camera.eye_clearance>1.701 || movement.y>0.0;
+        let mut ground=height(x,z);
+        let intended_y=if was_flying {
+            prior.y+movement.y
+        }else {
+            ground+1.7
+        };
+        // Flight is camera-controlled: crossing an uphill terrain ridge
+        // cannot make the avatar rise without E/Space. Stop the horizontal
+        // move at that point instead of automatically lifting the view.
+        if !inside(x,z) || (was_flying && intended_y<ground+1.7 &&
+            (movement.x!=0.0 || movement.z!=0.0)) {
+            x=prior.x as f64;
+            z=prior.z as f64;
+            ground=height(x,z);
         }
-        let ground=if urbarium::world::within(self.primary_bounds,x,z) {
-            self.terrain.sample_surface(&self.region,x,z)
-        }else if let Some(tile)=self.neighbor.as_ref() {
-            tile.height(x,z)
-        }else{self.terrain.sample_surface(&self.region,prior.x as f64,prior.z as f64)};
-        let vertical=candidate.eye_clearance-clearance;
-        let flying=clearance>1.701||
-            pressed.contains(&KeyCode::KeyE)||pressed.contains(&KeyCode::Space);
-        let y=if flying {prior.y+vertical}else{ground+1.7};
-        let y=y.max(ground+1.7);
-        // Within a section, keep the existing accurate building collision.
-        // At a shared tile boundary, let the camera cross instead of
-        // trapping it inside the source-specific CollisionWorld bounds.
+        let desired_y=if was_flying {
+            intended_y.max(ground+1.7)  // Q can't descend below feet-level
+        }else{ground+1.7};
+        // Preserve the existing source-local building collision behavior.
+        // The thin boundary strip is handled by the joined tile extent
+        // instead of treating it as an impassable wall.
+        let in_primary=urbarium::world::within(self.primary_bounds,x,z);
         let collision=if in_primary {Some((&self.collision,None))}
             else {self.neighbor.as_ref().map(|tile|(&tile.collision,Some(tile.placement)))};
         if let Some((world,placement))=collision {
@@ -847,24 +875,20 @@ impl Graphics {
                 z>bounds[1]+margin&&z<bounds[3]-margin;
             let old_in=urbarium::world::within(bounds,prior.x as f64,prior.z as f64);
             if safely_inside&&old_in {
-                let (a,b,local_y)=if let Some(t)=placement {
-                    (t.local(prior.x as f64,prior.z as f64),t.local(x,z),y-t.up_m)
-                }else{([prior.x as f64,prior.z as f64],[x,z],y)};
-                let resolved=world.move_sliding(a,b,local_y as f64,0.35);
+                let (start,end,local_y)=if let Some(t)=placement {
+                    (t.local(prior.x as f64,prior.z as f64),t.local(x,z),desired_y-t.up_m)
+                }else{([prior.x as f64,prior.z as f64],[x,z],desired_y)};
+                let resolved=world.move_sliding(start,end,local_y as f64,0.35);
                 if let Some(t)=placement {
-                    x=t.east_m as f64+(resolved[0]*t.east_scale as f64);
+                    x=t.east_m as f64+resolved[0]*t.east_scale as f64;
                     z=t.north_m as f64+resolved[1];
-                }else {x=resolved[0];z=resolved[1];}
+                }else{x=resolved[0];z=resolved[1];}
             }
         }
-        let ground=if urbarium::world::within(self.primary_bounds,x,z) {
-            self.terrain.sample_surface(&self.region,x,z)
-        }else if let Some(tile)=&self.neighbor {
-            tile.height(x,z)
-        }else{ground};
-        candidate.position=Vec3::new(x as f32,y.max(ground+1.7),z as f32);
-        candidate.eye_clearance=candidate.position.y-ground;
-        self.camera=candidate;
+        ground=height(x,z);
+        let y=if was_flying {desired_y.max(ground+1.7)}else{ground+1.7};
+        self.camera.position=Vec3::new(x as f32,y,z as f32);
+        self.camera.eye_clearance=y-ground;
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         let (camera_request,overview)=browser_camera_request();

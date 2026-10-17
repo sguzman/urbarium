@@ -27,6 +27,18 @@ reference; section-local origins must be transformed to that reference before
 true seamless stitching is introduced. No invented continuity or measured
 bridge elevations are claimed.
 
+## Joined-world camera regression fix (October 17)
+
+Joined-world preview now shares the same WASD/arrow/E/Q control-vector
+interpretation as standalone mode. A terrain-free phantom movement pass was
+incorrectly overwriting eye clearance each frame and adding DEM height
+to altitude repeatedly, launching the camera high above the scene. The
+single-section mover was always correct; the preview now derives altitude
+from its real selected section and holds absolute Y constant in aerial
+movement. Flight into higher terrain blocks the horizontal step instead
+of raising the camera without explicit ascent. Browser QA holds W/S in
+overview mode and asserts no Y drift, then tests explicit E/Q ascent/descent.
+
 ## Joined-world GPU preview (October 17)
 
 The `Joined world preview` toggle (`?world=1`) renders Downtown LA and
