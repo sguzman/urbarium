@@ -89,24 +89,6 @@ with sync_playwright() as p:
         )
         assert page.locator("#renderer-select").count() == 1
         assert page.locator("#renderer-health").count() == 1
-        # The real 3D renderer must download JSON diagnostics, not just copy
-        # them to the clipboard. This includes the backend, frame counters,
-        # crash telemetry and sampled presented frame rate.
-        page.wait_for_function(
-            "() => Number(document.querySelector('#status')?.dataset.frameCount||0)>2",
-            timeout=15000)
-        with page.expect_download(timeout=15000) as render_event:
-            page.locator("#download-render-report").click()
-        render_download=render_event.value
-        assert render_download.suggested_filename.startswith("urbarium-render-report-")
-        with open(render_download.path(),encoding="utf-8") as f:
-            renderer_report=json.load(f)
-        assert renderer_report["schemaVersion"]==1,renderer_report
-        assert renderer_report["current"]["backend"] in ("Gl","BrowserWebGpu"),renderer_report
-        assert renderer_report["current"]["frames"]>2,renderer_report
-        assert renderer_report["current"]["gpuDeviceType"],renderer_report
-        assert isinstance(renderer_report["current"]["fpsSamples"],list),renderer_report
-        print("Actual 3D rendering report downloaded and parsed")
         state = page.locator("#status").inner_text()
         print("Browser status:", state)
         selected_backend = page.locator("#status").get_attribute("data-gpu-backend")
@@ -756,6 +738,24 @@ with sync_playwright() as p:
                 "Conservative mode must cap actual canvas AND depth backing pixels",dims)
             assert "safe=1" in page.url
             print("GPU fault persisted locally; conservative 30fps/640k-pixel restart succeeded",dims)
+        # The real 3D renderer must download JSON diagnostics, not just copy
+        # them to the clipboard. This includes the backend, frame counters,
+        # crash telemetry and sampled presented frame rate.
+        page.wait_for_function(
+            "() => Number(document.querySelector('#status')?.dataset.frameCount||0)>2",
+            timeout=15000)
+        with page.expect_download(timeout=15000) as render_event:
+            page.locator("#download-render-report").click()
+        render_download=render_event.value
+        assert render_download.suggested_filename.startswith("urbarium-render-report-")
+        with open(render_download.path(),encoding="utf-8") as f:
+            renderer_report=json.load(f)
+        assert renderer_report["schemaVersion"]==1,renderer_report
+        assert renderer_report["current"]["backend"] in ("Gl","BrowserWebGpu"),renderer_report
+        assert renderer_report["current"]["frames"]>2,renderer_report
+        assert renderer_report["current"]["gpuDeviceType"],renderer_report
+        assert isinstance(renderer_report["current"]["fpsSamples"],list),renderer_report
+        print("Actual 3D rendering report downloaded and parsed")
         if not force_webgl:
             # Software WebGPU must not become the real production renderer.
             # The SwiftShader-only test browser should fall back to WebGL2.
