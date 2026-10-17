@@ -804,6 +804,20 @@ with sync_playwright() as p:
         assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
         assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
         print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
+        # Real neighboring geometry loaded into a separate GPU buffer under a
+        # strict residency cap, with camera crossing the geographic seam.
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1",
+                  wait_until="domcontentloaded")
+        page.wait_for_function("""() => {
+            const s=document.querySelector('#status');
+            return s?.dataset.renderStage==='first-present' &&
+                Number(s.dataset.worldSections)===2 &&
+                Number(s.dataset.worldSecondaryDrawcalls)>0 &&
+                Number(s.dataset.frameCount)>3;
+        }""",timeout=90000)
+        assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
+        assert not errors,errors
+        print("Joined world preview: 2 independent GPU buffers and visible neighbor draw calls")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:

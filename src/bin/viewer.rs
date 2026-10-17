@@ -445,6 +445,26 @@ extern "C" {
     fn fallback_from_software_webgpu();
 }
 
+fn browser_joined_world()->bool {
+    #[cfg(target_arch="wasm32")]
+    if let Some(value)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-world-preview")) {
+        return value=="true";
+    }
+    false
+}
+fn set_world_telemetry(sections:usize,draws:u32) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")) {
+        let _=el.set_attribute("data-world-sections",&sections.to_string());
+        let _=el.set_attribute("data-world-secondary-drawcalls",&draws.to_string());
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(sections,draws);
+}
+
 fn browser_region_id()->String {
     #[cfg(target_arch="wasm32")]
     if let Some(id)=web_sys::window().and_then(|w|w.document())
@@ -459,11 +479,10 @@ fn browser_region_id()->String {
     "downtown-la".into()
 }
 
-async fn fetch_city() -> Result<City, String> {
+async fn fetch_city(section:&str,publish:bool) -> Result<City, String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let id=browser_region_id();
-        let filename=format!("./assets/{id}.json");
+        let filename=format!("./assets/{section}.json");
         let response = gloo_net::http::Request::get(&filename)
             .send().await.map_err(|e| format!("city fetch: {e}"))?;
         if !response.ok() {
@@ -477,13 +496,15 @@ async fn fetch_city() -> Result<City, String> {
         // The minimap previously repeated this request independently.
         // Share this exact, already validated payload with the browser UI.
         // This prevents a second large fetch from failing on poor networks.
-        publish_city_for_minimap(&data);
+        if publish { publish_city_for_minimap(&data); }
         Ok(city)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let data=std::fs::read_to_string("data/processed/downtown-la.json")
-            .map_err(|e| format!("native viewer requires data/processed/downtown-la.json: {e}"))?;
+        let _=publish;
+        let path=format!("data/processed/{section}.json");
+        let data=std::fs::read_to_string(&path)
+            .map_err(|e| format!("native viewer requires {path}: {e}"))?;
         serde_json::from_str(&data).map_err(|e| format!("city JSON: {e}"))
     }
 }
@@ -606,11 +627,10 @@ fn set_browser_frame_count(count: u64) {
 #[cfg(not(target_arch="wasm32"))]
 fn set_browser_frame_count(_: u64) {}
 
-async fn fetch_terrain() -> Result<TerrainGrid,String> {
+async fn fetch_terrain(section:&str,publish:bool) -> Result<TerrainGrid,String> {
     #[cfg(target_arch="wasm32")]
     {
-        let id=browser_region_id();
-        let filename=format!("./assets/{id}-terrain.json");
+        let filename=format!("./assets/{section}-terrain.json");
         let response=gloo_net::http::Request::get(&filename)
             .send().await.map_err(|e|format!("DEM fetch: {e}"))?;
         if !response.ok(){return Err(format!("DEM returned HTTP {}",response.status()));}
@@ -620,13 +640,15 @@ async fn fetch_terrain() -> Result<TerrainGrid,String> {
         let terrain:TerrainGrid=serde_json::from_str(&data)
             .map_err(|e|format!("DEM JSON: {e}"))?;
         // Share the exact DEM grid as well; labels and scene use one datum.
-        publish_terrain_for_minimap(&data);
+        if publish { publish_terrain_for_minimap(&data); }
         Ok(terrain)
     }
     #[cfg(not(target_arch="wasm32"))]
     {
-        let data=std::fs::read_to_string("data/processed/downtown-la-terrain.json")
-            .map_err(|e|format!("native viewer requires a terrain grid: {e}"))?;
+        let _=publish;
+        let path=format!("data/processed/{section}-terrain.json");
+        let data=std::fs::read_to_string(&path)
+            .map_err(|e|format!("native viewer requires terrain grid {path}: {e}"))?;
         serde_json::from_str(&data).map_err(|e|format!("DEM JSON: {e}"))
     }
 }
@@ -705,6 +727,26 @@ impl GpuFault {
         self.last_error.lock().ok().and_then(|value|value.clone())
     }
 }
+struct ResidentTile {
+    vertices:wgpu::Buffer,
+    indices:wgpu::Buffer,
+    batches:Vec<DrawBatch>,
+    terrain:TerrainGrid,
+    region:Region,
+    collision:CollisionWorld,
+    placement:urbarium::world::TilePlacement,
+    bounds:[f64;4],
+    bytes:usize,
+}
+impl ResidentTile {
+    fn height(&self,x:f64,z:f64)->f32 {
+        let local=self.placement.local(x,z);
+        self.terrain.sample_surface(&self.region,local[0],local[1])+self.placement.up_m
+    }
+}
+// The first pass deliberately caps residency to the two adjacent city
+// sections. Future geographic streaming will evict these buffers, rather
+// than expanding a monolithic mesh to county scale.
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -728,6 +770,9 @@ struct Graphics {
     indices: wgpu::Buffer,
     index_count: u32,
     batches:Vec<DrawBatch>,
+    world_preview:bool,
+    primary_bounds:[f64;4],
+    neighbor:Option<ResidentTile>,
     rendered_frames: u64,
     gpu_mesh_bytes: usize,
     active_draw_calls:u32,
@@ -763,6 +808,64 @@ impl Graphics {
             self.config.height==size.height.max(1) {return;}
         self.reconfigure_surface(size);
     }
+    fn move_in_world(&mut self,pressed:&HashSet<KeyCode>,dt:f32) {
+        // One common reference frame for both independent local origins.
+        // Keep the GPU and collision worlds section-local; only camera and
+        // vertex positions inhabit the shared frame.
+        let prior=self.camera.position;
+        let clearance=self.camera.eye_clearance;
+        let mut candidate=self.camera.clone();
+        candidate.move_by(pressed,dt,None,None);
+        let mut x=candidate.position.x as f64;
+        let mut z=candidate.position.z as f64;
+        let in_primary=urbarium::world::within(self.primary_bounds,x,z);
+        let in_neighbor=self.neighbor.as_ref().is_some_and(|tile|
+            urbarium::world::within(tile.bounds,x,z));
+        if !in_primary&&!in_neighbor {
+            x=prior.x as f64;z=prior.z as f64;
+        }
+        let ground=if urbarium::world::within(self.primary_bounds,x,z) {
+            self.terrain.sample_surface(&self.region,x,z)
+        }else if let Some(tile)=self.neighbor.as_ref() {
+            tile.height(x,z)
+        }else{self.terrain.sample_surface(&self.region,prior.x as f64,prior.z as f64)};
+        let vertical=candidate.eye_clearance-clearance;
+        let flying=clearance>1.701||
+            pressed.contains(&KeyCode::KeyE)||pressed.contains(&KeyCode::Space);
+        let y=if flying {prior.y+vertical}else{ground+1.7};
+        let y=y.max(ground+1.7);
+        // Within a section, keep the existing accurate building collision.
+        // At a shared tile boundary, let the camera cross instead of
+        // trapping it inside the source-specific CollisionWorld bounds.
+        let collision=if in_primary {Some((&self.collision,None))}
+            else {self.neighbor.as_ref().map(|tile|(&tile.collision,Some(tile.placement)))};
+        if let Some((world,placement))=collision {
+            let bounds=if in_primary {self.primary_bounds}
+                else {self.neighbor.as_ref().map(|tile|tile.bounds).unwrap_or(self.primary_bounds)};
+            let margin=0.5;
+            let safely_inside=x>bounds[0]+margin&&x<bounds[2]-margin&&
+                z>bounds[1]+margin&&z<bounds[3]-margin;
+            let old_in=urbarium::world::within(bounds,prior.x as f64,prior.z as f64);
+            if safely_inside&&old_in {
+                let (a,b,local_y)=if let Some(t)=placement {
+                    (t.local(prior.x as f64,prior.z as f64),t.local(x,z),y-t.up_m)
+                }else{([prior.x as f64,prior.z as f64],[x,z],y)};
+                let resolved=world.move_sliding(a,b,local_y as f64,0.35);
+                if let Some(t)=placement {
+                    x=t.east_m as f64+(resolved[0]*t.east_scale as f64);
+                    z=t.north_m as f64+resolved[1];
+                }else {x=resolved[0];z=resolved[1];}
+            }
+        }
+        let ground=if urbarium::world::within(self.primary_bounds,x,z) {
+            self.terrain.sample_surface(&self.region,x,z)
+        }else if let Some(tile)=&self.neighbor {
+            tile.height(x,z)
+        }else{ground};
+        candidate.position=Vec3::new(x as f32,y.max(ground+1.7),z as f32);
+        candidate.eye_clearance=candidate.position.y-ground;
+        self.camera=candidate;
+    }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         let (camera_request,overview)=browser_camera_request();
         if camera_request!=self.camera_request {
@@ -782,7 +885,11 @@ impl Graphics {
                 set_speed_label(false);
             }
         }
-        self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
+        if self.world_preview {
+            self.move_in_world(pressed,dt);
+        }else{
+            self.camera.move_by(pressed,dt,Some(&self.collision),Some((&self.terrain,&self.region)));
+        }
         let vp=self.camera.view_projection(self.config.width,self.config.height);
         self.queue.write_buffer(&self.camera_buffer,0,
             bytemuck::bytes_of(&CameraUniform{
@@ -855,6 +962,28 @@ impl Graphics {
                 drawn_calls+=1;
                 drawn_triangles+=batch.count/3;
             }
+            let mut secondary_draws=0;
+            if let Some(neighbor)=&self.neighbor {
+                let b=neighbor.bounds;
+                let px=(self.camera.position.x as f64).clamp(b[0],b[2]);
+                let pz=(self.camera.position.z as f64).clamp(b[1],b[3]);
+                let dist=(px-self.camera.position.x as f64).hypot(
+                    pz-self.camera.position.z as f64);
+                // Draw-distance culling controls GPU work; only two tile
+                // buffers are resident, regardless of the catalog size.
+                if dist<2400.0 {
+                    pass.set_vertex_buffer(0,neighbor.vertices.slice(..));
+                    pass.set_index_buffer(neighbor.indices.slice(..),wgpu::IndexFormat::Uint32);
+                    for batch in &neighbor.batches {
+                        if !scene_layer_visible(batch.layer) {continue;}
+                        pass.draw_indexed(batch.first_index..batch.first_index+batch.count,0,0..1);
+                        drawn_calls+=1;
+                        secondary_draws+=1;
+                        drawn_triangles+=batch.count/3;
+                    }
+                }
+            }
+            set_world_telemetry(if self.neighbor.is_some(){2}else{1},secondary_draws);
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
@@ -875,11 +1004,12 @@ async fn init_graphics(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) {
 
 async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<(), String> {
     set_browser_stage("city-fetch");
-    info("Loading Downtown LA streets and buildings...");
-    let city=fetch_city().await?;
+    let primary_id=browser_region_id();
+    info(&format!("Loading {primary_id} streets and buildings..."));
+    let city=fetch_city(&primary_id,true).await?;
     set_browser_stage("terrain-fetch");
-    info("Loading Downtown LA elevation grid...");
-    let terrain=fetch_terrain().await?;
+    info(&format!("Loading {primary_id} elevation grid..."));
+    let terrain=fetch_terrain(&primary_id,true).await?;
     #[cfg(target_arch="wasm32")]
     if let Some(el)=web_sys::window().and_then(|w|w.document())
         .and_then(|d|d.get_element_by_id("status")) {
@@ -896,6 +1026,32 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     set_bridge_preview_state(bridge_preview);
     let (vertices,indices,batches)=combined_city(&city,&terrain,bridge_preview)?;
     let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
+    let primary_bounds={
+        let sw=city.region.project(city.region.bbox[0],city.region.bbox[1]);
+        let ne=city.region.project(city.region.bbox[2],city.region.bbox[3]);
+        [sw.x,sw.z,ne.x,ne.z]
+    };
+    // Only the opted-in preview loads a second independent dataset. It
+    // preserves the same GPU backend and keeps old single-section mode intact.
+    let secondary_source=if browser_joined_world() {
+        let id=if primary_id=="downtown-la" {"little-tokyo-east"}else{"downtown-la"};
+        set_browser_stage("neighbor-fetch");
+        info(&format!("Loading neighboring section {id}..."));
+        let other=fetch_city(id,false).await?;
+        let ground=fetch_terrain(id,false).await?;
+        ground.validate(&other.region)?;
+        let placement=urbarium::world::TilePlacement::between(
+            &city.region,terrain.origin_elevation_m,
+            &other.region,ground.origin_elevation_m);
+        let (mut verts,indices,batches)=combined_city(&other,&ground,bridge_preview)?;
+        for vertex in &mut verts {
+            vertex.position=placement.point(
+                vertex.position[0],vertex.position[1],vertex.position[2]);
+        }
+        let bounds=placement.bounds(&other.region);
+        let obstacles=CollisionWorld::from_city_with_terrain(&other,Some(&ground));
+        Some((verts,indices,batches,ground,other.region,obstacles,placement,bounds))
+    }else{None};
     let bridge_overlook=if bridge_preview {
         bridge_overlook(&city,&terrain,&collision)
     }else{None};
@@ -1071,8 +1227,26 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         usage:wgpu::BufferUsages::INDEX,
     });
     let index_count=u32::try_from(indices.len()).map_err(|_|"scene has too many indices")?;
-    let gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
+    let mut gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
         indices.len()*size_of::<u32>();
+    let neighbor=secondary_source.map(|(vertices,indices,batches,terrain,region,collision,placement,bounds)|{
+        let bytes=vertices.len()*size_of::<GpuVertex>()+indices.len()*size_of::<u32>();
+        gpu_mesh_bytes+=bytes;
+        ResidentTile{
+            vertices:device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                label:Some("Neighbor section vertices"),
+                contents:bytemuck::cast_slice(&vertices),
+                usage:wgpu::BufferUsages::VERTEX,
+            }),
+            indices:device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                label:Some("Neighbor section indices"),
+                contents:bytemuck::cast_slice(&indices),
+                usage:wgpu::BufferUsages::INDEX,
+            }),
+            batches,terrain,region,collision,placement,bounds,bytes
+        }
+    });
+    set_world_telemetry(if neighbor.is_some(){2}else{1},0);
     let label=if city.region.id=="downtown-la" {
         "Downtown LA".to_owned()
     }else{city.region.name.clone()};
@@ -1081,12 +1255,14 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         street_camera:camera.clone(),overview_camera,camera_request:0,
         camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
+        world_preview:neighbor.is_some(),primary_bounds,neighbor,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
         gpu_fault,
         bridge_overlook,inspect_request:0,
     };
-    info(&format!("{} ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release",label));
+    info(&format!("{} ready ({backend}){} — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release",
+        label,if browser_joined_world(){" · Joined 2-section world"}else{""}));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }

@@ -27,6 +27,26 @@ reference; section-local origins must be transformed to that reference before
 true seamless stitching is introduced. No invented continuity or measured
 bridge elevations are claimed.
 
+## Joined-world GPU preview (October 17)
+
+The `Joined world preview` toggle (`?world=1`) renders Downtown LA and
+Little Tokyo/northern Arts District together in one WebGPU/WebGL2 scene.
+The second section retains its own indexed GPU vertex/index buffers and
+collision/terrain state. Vertex coordinates are translated to the primary
+region's frame; source DEM absolute elevations correct vertical offsets and
+the longitudinal latitude scale is corrected across section origins.
+The preview has a hard **two-section residency limit**; a distance check
+skips the neighbor's draw calls when it is more than 2.4 km away. It never
+allocates GPU memory for all future catalog entries. Switching the preview
+off restores the previously tested standalone region renderer.
+
+**Not yet** a completed city streaming system: the preview loads both
+sections at startup, keeps both GPU buffers resident, and has no distant
+building LOD or billboard impostors yet. Those will follow after seam
+geometry, camera traversal and bounded eviction are verified. Large
+building polygons crossing an Overture section boundary can still produce
+overlapping source triangles; proper clipping/stitching remains pending.
+
 ## Status
 
 **Data ingestion and first 3D massing build validated on real Downtown LA data.**

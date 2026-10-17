@@ -15,6 +15,7 @@
       const choices=window.__urbariumRegionCatalog?.regions||[{id:"downtown-la",label:"Downtown LA"}];
       const selected=choices.find(section=>section.id===params.get("region"))||choices[0];
       document.documentElement.dataset.activeRegion=selected.id;
+      document.documentElement.dataset.worldPreview=params.get("world")==="1"?"true":"false";
       const requested = params.get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
@@ -120,7 +121,9 @@
     #download-render-report {pointer-events:auto;cursor:pointer;position:relative;
       background:#264956;color:#eefaff;border:1px solid #6999a4;
       border-radius:5px;padding:5px 9px;margin-top:5px;}
-    #region-select {pointer-events:auto;cursor:pointer;}
+    #region-select,#world-preview-toggle {pointer-events:auto;cursor:pointer;}
+    #world-preview-toggle {background:#244554;color:#e5f5ff;border:1px solid #648899;
+      border-radius:5px;padding:5px 9px;}
     #safe-gpu-toggle {pointer-events:auto;cursor:pointer;position:relative;
       background:#203642;color:#e8f5ff;border:1px solid #577688;
       border-radius:5px;padding:4px 8px;}
@@ -253,7 +256,8 @@
       Area
       <select id="region-select" aria-label="Geographic section"></select>
     </label>
-    <span id="region-transition-note" class="scene-note">Sections load separately; seamless boundary travel is in development.</span>
+    <button id="world-preview-toggle" type="button" title="Opt into the first two-section shared-world renderer, with a fixed resident-section limit">Joined world preview: off</button>
+    <span id="region-transition-note" class="scene-note">Default: independent sections. Preview: both sections in one scene with a fixed two-section GPU budget.</span>
     <label class="renderer-control" for="renderer-select">
       Graphics
       <select id="renderer-select" aria-label="Graphics renderer">
@@ -384,7 +388,18 @@
         regionMenu.append(opt);
       }
       regionMenu.value=activeRegion.id;
-      document.getElementById("current-region-name").textContent="/ "+activeRegion.label;
+      const joined=document.documentElement.dataset.worldPreview==="true";
+      const worldToggle=document.getElementById("world-preview-toggle");
+      worldToggle.textContent="Joined world preview: "+(joined?"on":"off");
+      worldToggle.setAttribute("aria-pressed",String(joined));
+      worldToggle.addEventListener("click",()=>{
+        const url=new URL(location.href);
+        if(joined)url.searchParams.delete("world");
+        else url.searchParams.set("world","1");
+        location.assign(url.href);
+      });
+      document.getElementById("current-region-name").textContent="/ "+
+        (joined?"LA · Joined preview":activeRegion.label);
       document.getElementById("minimap-region-name").textContent=activeRegion.label.toUpperCase();
       regionMenu.addEventListener("change",()=>{
         const url=new URL(location.href);
@@ -622,6 +637,8 @@
           backend:status?.dataset.gpuBackend||"not initialized",
           requestedRenderer:mode,
           region:regionId,
+          worldPreview:joined,
+          activeSections:Number(status?.dataset.worldSections||1),
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
             new URLSearchParams(location.search).get("launch"))
             ?new URLSearchParams(location.search).get("launch"):"normal-browser",
