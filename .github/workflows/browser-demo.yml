@@ -26,6 +26,10 @@ on:
       - src/gltf.rs
       - src/main.rs
       - regions/downtown-la.json
+      - regions/little-tokyo-east.json
+      - regions/catalog.json
+      - scripts/build-region-overture.sh
+      - scripts/validate-region-catalog.py
       - scripts/build-downtown-overture.sh
       - Cargo.toml
       - index.html
@@ -59,6 +63,11 @@ jobs:
           mkdir -p web/assets
           cp data/processed/downtown-la.json web/assets/downtown-la.json
           cp data/processed/downtown-la-terrain.json web/assets/downtown-la-terrain.json
+          python3 scripts/validate-region-catalog.py
+          bash scripts/build-region-overture.sh regions/little-tokyo-east.json little-tokyo-east
+          python3 scripts/fetch-terrain.py --region regions/little-tokyo-east.json --out data/processed/little-tokyo-east-terrain.json
+          cp data/processed/little-tokyo-east.json web/assets/little-tokyo-east.json
+          cp data/processed/little-tokyo-east-terrain.json web/assets/little-tokyo-east-terrain.json
       - name: Install pinned Trunk WebAssembly bundler
         run: |
           curl -fLS --retry 2 \
@@ -88,6 +97,13 @@ jobs:
           dist=Path("dist")
           assert (dist/"index.html").is_file()
           assert (dist/"assets"/"downtown-la.json").is_file()
+          assert (dist/"assets"/"little-tokyo-east.json").is_file()
+          east=json.loads((dist/"assets"/"little-tokyo-east.json").read_text())
+          assert east["region"]["id"]=="little-tokyo-east"
+          assert len(east["streets"]) > 100 and len(east["buildings"]) > 50, (len(east["streets"]),len(east["buildings"]))
+          east_terrain=json.loads((dist/"assets"/"little-tokyo-east-terrain.json").read_text())
+          assert east_terrain["region_id"]=="little-tokyo-east"
+          assert east_terrain["width"]*east_terrain["height"]==len(east_terrain["heights_m"])
           city=json.loads((dist/"assets"/"downtown-la.json").read_text())
           assert len(city["streets"]) > 500
           assert len(city["buildings"]) > 300
@@ -107,7 +123,8 @@ jobs:
           hashes=re.search(r'window\.__urbariumGeographyVersions\s*=\s*(\{[^;]+\});',page)
           assert hashes,"Missing geography content-version stamp in bundled HTML"
           versions=json.loads(hashes.group(1))
-          for filename in ("downtown-la.json","downtown-la-terrain.json"):
+          for filename in ("downtown-la.json","downtown-la-terrain.json",
+                           "little-tokyo-east.json","little-tokyo-east-terrain.json"):
               digest=hashlib.sha256((dist/"assets"/filename).read_bytes()).hexdigest()
               assert versions.get(filename)==digest,("Geography manifest mismatch",filename)
           print("Published cache versions:",{k:v[:12] for k,v in versions.items()})
@@ -131,6 +148,8 @@ jobs:
           assert 'landmarks-hide-all' in page and 'time-of-day' in page
           assert 'id="layer-landmarks"' not in page
           assert 'refresh-geography' in page
+          assert 'id="region-select"' in page
+          assert len(json.loads(page.split('window.__urbariumRegionCatalog = ',1)[1].split(';',1)[0])["regions"])==2
           print("Browser package:",len(city["streets"]),"streets;",
                 len(city["buildings"]),"buildings;",
                 wasm[0].stat().st_size,"WASM bytes")
@@ -223,6 +242,9 @@ jobs:
           grep -q 'urbarium-geography-downtown-la-v1' /tmp/urbarium-cache-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/stats.js" -o /tmp/urbarium-stats-live.js
           grep -q 'gpu-mesh-bytes' /tmp/urbarium-stats-live.js
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+            "${PAGE_URL%/}/assets/little-tokyo-east.json" -o /tmp/urbarium-east-live.json
+          python3 -c "import json; c=json.load(open('/tmp/urbarium-east-live.json')); assert len(c['buildings'])>50 and c['region']['id']=='little-tokyo-east'"
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/assets/downtown-la.json" -o /tmp/urbarium-live.json
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/assets/downtown-la-terrain.json" -o /tmp/urbarium-terrain-live.json

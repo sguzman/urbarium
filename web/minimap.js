@@ -503,7 +503,8 @@
     try {
       // Last-resort explicit retry only. Normal startup NEVER makes a
       // second request; Rust owns the initial city fetch.
-      const response=await fetch("./assets/downtown-la.json",{cache:"no-cache"});
+      const id=document.documentElement.dataset.activeRegion||"downtown-la";
+      const response=await fetch("./assets/"+id+".json",{cache:"no-cache"});
       if(!response.ok)throw new Error("City HTTP "+response.status);
       applyCity(await response.json(),"manual-retry");
     }catch(error){

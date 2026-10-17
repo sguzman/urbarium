@@ -790,6 +790,20 @@ with sync_playwright() as p:
                 document.querySelector("#gpu-fallback-message")?.hidden===false &&
                 document.querySelector("#status")?.dataset.gpuBackend==="Gl" """,timeout=60000)
             print("WebGPU CPU adapter automatically fell back to hardware WebGL2 mode")
+        # A second independently packaged section is a real Overture city,
+        # not a fake 2D preview. Exercise its own city/DEM/3D camera.
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&region=little-tokyo-east",
+                  wait_until="domcontentloaded")
+        page.wait_for_function("""() => {
+            const s=document.querySelector('#status');
+            return s?.dataset.renderStage==='first-present' &&
+                s.dataset.regionId==='little-tokyo-east' &&
+                Number(s.dataset.frameCount)>2;
+        }""",timeout=60000)
+        assert page.locator("#region-select").input_value()=="little-tokyo-east"
+        assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
+        assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
+        print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:

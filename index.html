@@ -4,12 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101921">
+  <!-- The build embeds a validated allow-list of independently packaged geographic sections. -->
+  <script>window.__urbariumRegionCatalog = null;</script>
   <!-- Prefer the broadly supported WebGL2 renderer on real user machines.
        Chromium CI tests both; WebGPU remains explicitly opt-in. Set this
        before Trunk starts the WASM module, not after wgpu asks for an adapter. -->
   <script>
     (() => {
-      const requested = new URLSearchParams(location.search).get("renderer");
+      const params=new URLSearchParams(location.search);
+      const choices=window.__urbariumRegionCatalog?.regions||[{id:"downtown-la",label:"Downtown LA"}];
+      const selected=choices.find(section=>section.id===params.get("region"))||choices[0];
+      document.documentElement.dataset.activeRegion=selected.id;
+      const requested = params.get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
       // Test-only opt-in for software Vulkan in automated Chromium QA.
@@ -114,6 +120,7 @@
     #download-render-report {pointer-events:auto;cursor:pointer;position:relative;
       background:#264956;color:#eefaff;border:1px solid #6999a4;
       border-radius:5px;padding:5px 9px;margin-top:5px;}
+    #region-select {pointer-events:auto;cursor:pointer;}
     #safe-gpu-toggle {pointer-events:auto;cursor:pointer;position:relative;
       background:#203642;color:#e8f5ff;border:1px solid #577688;
       border-radius:5px;padding:4px 8px;}
@@ -227,7 +234,7 @@
   <div id="world-landmarks" aria-label="World-anchored Downtown Los Angeles landmark labels"></div>
   <button id="scene-ui-toggle" type="button" aria-pressed="false" title="Hide or restore map and controls without restarting the 3D scene">Hide panels</button>
   <div class="hud">
-    <h1>URBARIUM <span style="color:#b6bbc5">/ Downtown LA</span></h1>
+    <h1>URBARIUM <span id="current-region-name" style="color:#b6bbc5">/ Downtown LA</span></h1>
     <p id="status">Starting Rust / WebGPU viewer...</p>
     <p id="input-state" data-pointer-locked="false">Click the city to capture mouse</p>
     <p>Mouse looks · WASD move · Shift toggles fast travel · E/Q fly · Esc releases</p>
@@ -236,6 +243,11 @@
       <button id="camera-overview" type="button" title="Fly above the city to see buildings and roads without changing the renderer">City overview</button>
       <button id="camera-street" type="button" title="Return to the original street-level camera">Street view</button>
     </div>
+    <label class="renderer-control" for="region-select">
+      Area
+      <select id="region-select" aria-label="Geographic section"></select>
+    </label>
+    <span id="region-transition-note" class="scene-note">Sections load separately; seamless boundary travel is in development.</span>
     <label class="renderer-control" for="renderer-select">
       Graphics
       <select id="renderer-select" aria-label="Graphics renderer">
@@ -322,7 +334,7 @@
       title="Copy safe rendering and geographic cache diagnostics">Copy diagnostics</button>
   </section>
   <aside class="minimap" aria-label="Downtown Los Angeles minimap">
-    <div class="map-title"><span>DOWNTOWN LA</span><small>N ↑ · Pilot area</small></div>
+    <div class="map-title"><span id="minimap-region-name">DOWNTOWN LA</span><small>N ↑ · Section</small></div>
     <canvas id="minimap-canvas" width="260" height="260" role="img"
       aria-label="Local street map with player position and heading"></canvas>
     <div class="map-controls">
@@ -355,6 +367,26 @@
   <script>
     (() => {
       const mode = document.documentElement.dataset.rendererChoice || "webgl2";
+      const regionId=document.documentElement.dataset.activeRegion||"downtown-la";
+      const regionCatalog=window.__urbariumRegionCatalog?.regions||[{id:"downtown-la",label:"Downtown LA"}];
+      const activeRegion=regionCatalog.find(r=>r.id===regionId)||regionCatalog[0];
+      const regionMenu=document.getElementById("region-select");
+      for(const r of regionCatalog){
+        const opt=document.createElement("option");
+        opt.value=r.id;
+        opt.textContent=r.label;
+        regionMenu.append(opt);
+      }
+      regionMenu.value=activeRegion.id;
+      document.getElementById("current-region-name").textContent="/ "+activeRegion.label;
+      document.getElementById("minimap-region-name").textContent=activeRegion.label.toUpperCase();
+      regionMenu.addEventListener("change",()=>{
+        const url=new URL(location.href);
+        if(regionMenu.value==="downtown-la")url.searchParams.delete("region");
+        else url.searchParams.set("region",regionMenu.value);
+        // Do not change GPU backend, quality, or cache configuration.
+        location.assign(url.href);
+      });
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");
@@ -583,6 +615,7 @@
           at:Date.now(),cleanClose,
           backend:status?.dataset.gpuBackend||"not initialized",
           requestedRenderer:mode,
+          region:regionId,
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
             new URLSearchParams(location.search).get("launch"))
             ?new URLSearchParams(location.search).get("launch"):"normal-browser",

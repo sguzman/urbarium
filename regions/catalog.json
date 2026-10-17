@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "world_reference": [
+    -118.25,
+    34.05
+  ],
+  "regions": [
+    {
+      "id": "downtown-la",
+      "label": "Downtown LA",
+      "definition": "regions/downtown-la.json",
+      "bbox": [
+        -118.258,
+        34.045,
+        -118.242,
+        34.056
+      ]
+    },
+    {
+      "id": "little-tokyo-east",
+      "label": "Little Tokyo / Arts District",
+      "definition": "regions/little-tokyo-east.json",
+      "bbox": [
+        -118.242,
+        34.04,
+        -118.226,
+        34.056
+      ]
+    }
+  ]
+}

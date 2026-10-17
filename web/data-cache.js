@@ -4,14 +4,17 @@
  */
 (() => {
   "use strict";
-  const name="urbarium-geography-downtown-la-v1";
-  const assetNames=new Map([
-    ["downtown-la.json","City"],["downtown-la-terrain.json","Terrain"]
-  ]);
+  const name="urbarium-geography-downtown-la-v1"; // Preserve old valid pilot cache entries.
   // Stamped into HTML at release build time using actual city/terrain bytes.
   // A missing stamp deliberately bypasses persistent caching rather than
   // returning unverified stale geography from a previous application release.
   const versions=window.__urbariumGeographyVersions||{};
+  const assetNames=new Map(Object.keys(versions)
+    .filter(f=>/^[a-z0-9-]+\.json$/.test(f))
+    .map(f=>[f,(f.endsWith("-terrain.json")?"Terrain ":"City ")+
+        f.replace(/-terrain\.json$|\.json$/,"")]));
+  // Only versioned geographic files are intercepted. Unlisted paths do
+  // ordinary fetches, preventing unrelated web assets entering CacheStorage.
   const nativeFetch=window.fetch.bind(window);
   const inFlight=new Map();
   const states=Object.create(null);

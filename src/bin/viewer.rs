@@ -310,9 +310,10 @@ fn combined_city(city:&City,terrain:&TerrainGrid,bridge_preview:bool)
     ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String> {
     let catalog:LandmarkCatalog=serde_json::from_str(include_str!("../../web/landmarks.json"))
         .map_err(|e|format!("bundled landmark catalog: {e}"))?;
-    if catalog.region_id!=city.region.id {
-        return Err("landmark catalog must match the current region".into());
-    }
+    // The first section has verified landmark anchors; additional sections
+    // may have none yet. Do not misplace Downtown labels in another region.
+    let mut catalog=catalog;
+    if catalog.region_id!=city.region.id {catalog.landmarks.clear();}
     let (buildings,building_report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
     let (mut roads,road_report)=mesh_streets_with_bridges(city,bridge_preview)?;
     terrain.drape_roads_with_preview(&city.region,&mut roads,bridge_preview)?;
@@ -444,10 +445,26 @@ extern "C" {
     fn fallback_from_software_webgpu();
 }
 
+fn browser_region_id()->String {
+    #[cfg(target_arch="wasm32")]
+    if let Some(id)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|e|e.get_attribute("data-active-region")) {
+        // Restrict paths to safe ASCII identifiers even if the page is modified.
+        if !id.is_empty() && id.len()<80 &&
+            id.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-') {
+            return id;
+        }
+    }
+    "downtown-la".into()
+}
+
 async fn fetch_city() -> Result<City, String> {
     #[cfg(target_arch = "wasm32")]
     {
-        let response = gloo_net::http::Request::get("./assets/downtown-la.json")
+        let id=browser_region_id();
+        let filename=format!("./assets/{id}.json");
+        let response = gloo_net::http::Request::get(&filename)
             .send().await.map_err(|e| format!("city fetch: {e}"))?;
         if !response.ok() {
             return Err(format!("city asset returned HTTP {}",response.status()));
@@ -592,7 +609,9 @@ fn set_browser_frame_count(_: u64) {}
 async fn fetch_terrain() -> Result<TerrainGrid,String> {
     #[cfg(target_arch="wasm32")]
     {
-        let response=gloo_net::http::Request::get("./assets/downtown-la-terrain.json")
+        let id=browser_region_id();
+        let filename=format!("./assets/{id}-terrain.json");
+        let response=gloo_net::http::Request::get(&filename)
             .send().await.map_err(|e|format!("DEM fetch: {e}"))?;
         if !response.ok(){return Err(format!("DEM returned HTTP {}",response.status()));}
         set_browser_stage("terrain-decoding");
@@ -861,9 +880,17 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     set_browser_stage("terrain-fetch");
     info("Loading Downtown LA elevation grid...");
     let terrain=fetch_terrain().await?;
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")) {
+        let _=el.set_attribute("data-region-id",&city.region.id);
+    }
     set_browser_stage("geometry-build");
     info("Generating 3D terrain, buildings and streets...");
     terrain.validate(&city.region)?;
+    if terrain.region_id!=city.region.id{
+        return Err("Selected city section and DEM region IDs do not match".into());
+    }
     set_terrain_size(terrain.heights_m.len());
     let bridge_preview=browser_bridge_preview();
     set_bridge_preview_state(bridge_preview);
@@ -1046,6 +1073,9 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let index_count=u32::try_from(indices.len()).map_err(|_|"scene has too many indices")?;
     let gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
         indices.len()*size_of::<u32>();
+    let label=if city.region.id=="downtown-la" {
+        "Downtown LA".to_owned()
+    }else{city.region.name.clone()};
     let graphics=Graphics {
         window,surface,device,queue,config,surface_is_srgb,pipeline,sky_pipeline,depth,
         street_camera:camera.clone(),overview_camera,camera_request:0,
@@ -1056,7 +1086,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         gpu_fault,
         bridge_overlook,inspect_request:0,
     };
-    info(&format!("Downtown LA ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release"));
+    info(&format!("{} ready ({backend}) — DEM terrain and building walls, WASD walk, Shift run, E/Q fly, Esc release",label));
     proxy.send_event(AppEvent::Ready(graphics))
         .map_err(|_|"Viewer window closed before initialization".to_string())
 }

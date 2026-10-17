@@ -4,6 +4,29 @@
 
 Urbarium is a Rust-first pipeline for geographically faithful, low-poly, walkable cities. The first region is Downtown Los Angeles; the long-term scope includes Los Angeles County and neighboring Southern California counties. The intended interactive runtime is **Rust → WebAssembly → WebGPU**.
 
+## First adjacent section (October 2026)
+
+The pilot can now select **Downtown LA** or an independently generated
+**Little Tokyo / northern Arts District** section from the Area menu. The
+sections share a geographic edge, but are **not yet stitched**: changing
+sections reloads the viewer and releases the previous section's GPU buffers
+instead of rendering both simultaneously. This is intentional while we
+develop section streaming, visible-section culling, and continuous navigation.
+Each source section has its own Overture city JSON, DEM grid, origin and
+content-hash cache key; the existing Downtown LA scene is unchanged. No
+additional GPU or browser launch configuration is needed. The browser preserves
+the renderer and quality choices when selecting an area.
+
+Source region definitions are enumerated in `regions/catalog.json` and
+validated by `scripts/validate-region-catalog.py`. A new region can use
+`bash scripts/build-region-overture.sh regions/NAME.json NAME` followed by
+`python3 scripts/fetch-terrain.py --region regions/NAME.json --out
+data/processed/NAME-terrain.json`. CI acquires and verifies both sections
+from the same source pipeline. The catalog records a common geographic world
+reference; section-local origins must be transformed to that reference before
+true seamless stitching is introduced. No invented continuity or measured
+bridge elevations are claimed.
+
 ## Status
 
 **Data ingestion and first 3D massing build validated on real Downtown LA data.**
