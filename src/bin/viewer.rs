@@ -684,6 +684,11 @@ fn expose_gpu_details(info:&wgpu::AdapterInfo,format:wgpu::TextureFormat,srgb:bo
 fn set_browser_stage(stage: &str) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
+            // Once a real frame was presented, background section fetches
+            // must not regress startup status to terrain/city decoding.
+            // Enrichment belongs in data-scene-detail instead.
+            if el.get_attribute("data-render-stage").as_deref()==Some("first-present")
+                && stage!="device-lost" {return;}
             let _=el.set_attribute("data-render-stage",stage);
         }
     }
