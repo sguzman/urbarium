@@ -1,6 +1,6 @@
 # Freeway reconstruction: evidence and acceptance gate
 
-Status: **prototype retired from default browser view** (2026-10-16).
+Status: **unfinished freeway corridors hidden from default 3D view** (2026-10-17).
 
 ## Why the previous implementation failed
 
@@ -17,13 +17,16 @@ Status: **prototype retired from default browser view** (2026-10-16).
 
 ## Present default
 
-The normal browser viewer keeps buildings, terrain, actual road footprints
-approximated from source centerlines, landmarks, minimap, and caching.
-Bridge-tagged sections appear as ordinary terrain-draped roads. No unfinished
-bridge-only meshes are allocated or drawn. This is **not** a trustworthy
-representation of freeway altitude; it is an intentionally modest
-cartographic fallback. The debug opt-in `?bridges=1` preserves the previous
-experiment, isolated from the default render.
+The normal browser viewer keeps buildings, terrain, ordinary road ribbons,
+non-freeway bridge-tagged sections, landmarks, minimap and caching. **All
+unfinished motorway/trunk freeway and ramp-link geometry is hidden** in the
+normal 3D viewport, including flat asphalt ribbons and markings. Source
+metadata remains available; minimap geography is not erased. No hidden
+freeway junction-patch islands are generated and pedestrian ribbons are not
+clipped around invisible freeway corridors. CI tests that normal mode has
+zero freeway mesh triangles, in addition to zero raised-bridge triangles.
+The debug opt-in `?bridges=1` preserves the old experimental roads and raised
+bridges for comparison. Do not mistake omission for an accurate reconstruction.
 
 ## Next implementation, in dependency order
 

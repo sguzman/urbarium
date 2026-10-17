@@ -334,19 +334,21 @@ independent source matching and provenance, not guesses.
 
 ### Freeway reconstruction reset (October 2026)
 
-**The unfinished elevated freeway reconstruction is retired from the default
-browser scene.** Its fragmented decks, fake clearances and loose supports were
-an eyesore and did not form coherent freeway corridors. Normal startup draws
-the actual acquired centerlines, including bridge-tagged sections, as dark
-terrain-draped motorway/road ribbons with existing edge markings. This is
-a **2.5D geographic reference**, not a claim that elevated freeways have been
-accurately rebuilt. Ground-level substitutes may intersect crossing roads;
-they are intentionally less misleading than floating bridge fragments.
+**The unfinished freeway corridors are hidden from the default 3D browser
+scene**, including the flat motorway/trunk ribbons and edge markings that
+remained after removing the raised bridge prototypes. Source building and
+terrain geometry, pedestrian paths, ordinary streets and non-freeway bridge
+centerlines still render. This is not a geographic claim that freeways are
+absent; their source linework remains in scene metadata and the minimap.
+Both flat and raised freeway experiments are available only in preview mode.
 
-The default Rust/WASM viewer now **does not generate or upload experimental
-raised-road decks, fascia, rails, pier columns or bridge edge stripes**. The
-renderer reports zero bridge mesh triangles; geographic bridge metadata and
-the existing content-fingerprinted city/DEM cache remain unchanged.
+The default Rust/WASM viewer **does not generate or upload** unfinished
+freeway ribbons, edge stripes, freeway junction patches, raised bridge decks,
+fascia, rails or pier columns. The browser QA now requires **zero freeway mesh
+triangles and zero elevated bridge mesh triangles** in normal mode; the opt-in
+preview must generate both. Pedestrian paths are not clipped around hidden
+freeways. Geographic bridge metadata and the content-fingerprinted city/DEM
+cache are retained.
 
 For development and comparison only, choose **Experimental 3D freeways: on**
 (or append `?bridges=1`). This reloads the renderer with the old preliminary
@@ -354,7 +356,7 @@ bridge model, highlights source bridge segments in cyan on the minimap, and
 enables **Inspect prototype overpass**. Turning the preview off removes the
 query parameter and returns to the simpler default. This preference is
 deliberately **not saved across ordinary launches**. The opt-in preview
-is unfinished and may be visually incorrect. Flat centerline and elevated
+is unfinished and may be visually incorrect. Hidden-default and elevated
 preview modes have separate end-to-end tests.
 
 Overture's `level_rules` are a **relative Z-order**, not measured road-deck
