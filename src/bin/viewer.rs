@@ -368,7 +368,7 @@ fn info(message: &str) {
 }
 
 #[cfg(target_arch="wasm32")]
-#[wasm_bindgen::prelude::wasm_bindgen(inline_js = "
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
 export function publish_city_for_minimap(data) {
     window.__urbariumCityJson = data;
     window.dispatchEvent(new Event('urbarium-city-ready'));
@@ -388,7 +388,7 @@ export function fallback_from_software_webgpu() {
     // Replace, rather than adding a broken software-renderer history entry.
     location.replace(url.href);
 }
-")]
+"#)]
 extern "C" {
     fn publish_city_for_minimap(data:&str);
     fn publish_terrain_for_minimap(data:&str);
