@@ -210,12 +210,18 @@
     .named-building-item {padding:5px 0;border-bottom:1px solid #304852;}
     .named-building-item strong {display:block;color:#f2e8c9;font-weight:600;}
     .named-building-item small {display:block;color:#b5cbd2;font-size:10px;}
-    #stats-panel {position:fixed;z-index:5;left:18px;bottom:48px;
-      width:280px;max-width:calc(100vw - 50px);max-height:42vh;overflow:auto;
+    /* Keep diagnostics in the gap between the HUD and minimap on desktop.
+       The old lower-left placement covered report/camera controls whenever
+       the HUD grew (and intercepted clicks), even though they were visible. */
+    #stats-panel {position:fixed;z-index:5;left:auto;right:300px;top:16px;bottom:auto;
+      width:280px;max-width:calc(100vw - 50px);max-height:calc(100vh - 32px);overflow:auto;
       background:rgba(7,16,22,.94);border:1px solid #45606b;
       box-shadow:0 4px 28px #0008;border-radius:10px;padding:12px 14px;
       color:#d9e7ea;font:12px system-ui,sans-serif;pointer-events:auto;}
     #stats-panel[hidden] {display:none;}
+    @media(max-width:1220px) {
+      #stats-panel {top:auto;bottom:44px;right:16px;max-height:35vh;}
+    }
     #stats-panel h2 {font-size:13px;margin:0 0 8px;letter-spacing:.04em;}
     #stats-panel dl {display:grid;grid-template-columns:1fr auto;
       gap:5px 14px;margin:0;font-variant-numeric:tabular-nums;}
