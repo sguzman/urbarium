@@ -368,6 +368,8 @@
       <p id="render-report-status" role="status" class="scene-note">Let the city render for 15 seconds before downloading.</p>
       <p class="hud-field"><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
       <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
+      <p id="startup-code-state" class="hud-hint" role="status">WebAssembly load: checking browser timings...</p>
+      <p id="geography-request-count" class="hud-hint" role="status">City/terrain network requests this visit: 0</p>
       <div class="hud-field">
         <p id="geodata-cache-state" role="status">Geography: awaiting first asset request</p>
         <button id="refresh-geography" type="button" title="Delete cached geography and reload from source">Refresh geography</button>
@@ -721,6 +723,49 @@
         "Geography: "+(window.__urbariumCacheState||"awaiting first asset request");
       const bootInfo=document.getElementById("boot-stage");
       const bootStart=performance.now();
+      // Browser Resource Timing reports the WASM request independently from
+      // our versioned geography CacheStorage requests. transferSize is zero
+      // for a cache hit OR a browser that suppresses transfer reporting.
+      function wasmResourceTiming(){
+        const entries=performance.getEntriesByType("resource").filter(entry=>{
+          try{return new URL(entry.name).pathname.endsWith(".wasm");}
+          catch(_){return false;}
+        });
+        const resource=entries.at(-1);
+        if(!resource)return {finished:false};
+        return {
+          finished:true,
+          durationMs:Math.round(resource.duration),
+          finishedAtMs:Math.round(resource.responseEnd),
+          transferBytes:Math.round(resource.transferSize||0),
+          decodedBytes:Math.round(resource.decodedBodySize||0)
+        };
+      }
+      const phaseTimeline=[{phase:"wasm-start",enteredAtMs:Math.round(bootStart)}];
+      let phaseStartedAt=bootStart;
+      // These counters show which category is downloading. Opening a HUD
+      // tab cannot re-fetch WASM or geography; only app navigation can.
+      function updateStartupNetwork(){
+        const timing=wasmResourceTiming();
+        const code=document.getElementById("startup-code-state");
+        if(timing.finished){
+          const size=timing.decodedBytes>0
+            ?(timing.decodedBytes/1048576).toFixed(2)+" MiB module · ":"";
+          const transfer=timing.transferBytes>0
+            ?(timing.transferBytes/1024).toFixed(0)+" KiB transferred"
+            :"0 reported transfer bytes (cached or unreported)";
+          code.textContent="WASM: "+size+transfer+
+            " · fetch completed "+(timing.finishedAtMs/1000).toFixed(1)+"s after navigation";
+        }else{
+          code.textContent="WASM request: not completed or not exposed by browser timing";
+        }
+        const count=window.__urbariumGeoCache?.networkRequests;
+        document.getElementById("geography-request-count").textContent=
+          "City/terrain network requests this visit: "+
+          (Number.isFinite(count)?count:"unknown");
+        return timing;
+      }
+      updateStartupNetwork();
       const runKey="urbarium-renderer-last-session-v1";
       let fpsSamples=[];
       let mostRecentError="";
@@ -767,6 +812,11 @@
           meshBytes:Number(status?.dataset.gpuMeshBytes||0),
           geoVersions:window.__urbariumGeographyVersions||{},
           geo:window.__urbariumGeoCache?.assets||{},
+          startup:{
+            pageUptimeMs:Math.round(performance.now()),
+            wasmResource:wasmResourceTiming(),
+            phases:phaseTimeline.slice(-32)
+          },
           error:mostRecentError.slice(0,400)
         };
       }
@@ -811,9 +861,13 @@
         }
       });
       const phases={
+        "wasm-start":"Loading / compiling Rust WebAssembly",
         "city-fetch":"Loading city data","city-decoding":"Decoding city data",
         "terrain-fetch":"Loading terrain","terrain-decoding":"Decoding terrain",
-        "geometry-build":"Generating 3D city geometry","gpu-init":"Initializing GPU",
+        "geometry-build":"Generating 3D city geometry",
+        "neighbor-fetch":"Loading / building adjoining city section",
+        "neighbor-geometry":"Generating adjoining 3D geometry",
+        "gpu-init":"Initializing GPU",
         "graphics-received":"Preparing first GPU frame",
         "first-present":"3D rendered",
         "device-lost":"Graphics device lost — copy diagnostics"
@@ -928,11 +982,17 @@
         bootInfo.dataset.phase=phase;
         if(phase!==lastBootPhase){
           lastBootPhase=phase;
+          phaseStartedAt=now;
           bootInfo.dataset.phaseEntered=String(Math.floor(now));
+          const last=phaseTimeline.at(-1);
+          if(!last||last.phase!==phase)
+            phaseTimeline.push({phase,enteredAtMs:Math.round(now)});
         }
+        const stageSecs=Math.floor((now-phaseStartedAt)/1000);
         if(!bootInfo.classList.contains("error"))
-          bootInfo.textContent=(phases[phase]||"Starting application")+" · "+
-            age+"s since opening";
+          bootInfo.textContent=(phases[phase]||"Preparing 3D viewer")+" · "+
+            stageSecs+"s in stage / "+age+"s total";
+        updateStartupNetwork();
         if(status?.dataset.gpuDeviceLost==="true"){
           health.textContent="Graphics device lost · Copy diagnostics in Stats";
           health.classList.add("warn");
