@@ -240,6 +240,9 @@
     <p id="renderer-health" role="status">Loading the Rust viewer...</p>
     <p id="gpu-fallback-message" class="scene-note" role="status" hidden></p>
     <p><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
+    <button id="download-render-report" type="button"
+      title="Save the current 3D renderer adapter, FPS samples, frame timing and fault state as JSON">Download 3D rendering report</button>
+    <p id="render-report-status" role="status" class="scene-note">For a useful result, let the city render for 15 seconds, then download.</p>
     <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
     <div class="scene-controls">
       <button id="bridge-preview-toggle" type="button" aria-pressed="false"
@@ -533,6 +536,7 @@
       const bootInfo=document.getElementById("boot-stage");
       const bootStart=performance.now();
       const runKey="urbarium-renderer-last-session-v1";
+      let fpsSamples=[];
       let mostRecentError="";
       let previousRun=null;
       try{previousRun=JSON.parse(localStorage.getItem(runKey)||"null");}catch(_){}
@@ -550,6 +554,8 @@
           at:Date.now(),cleanClose,
           backend:status?.dataset.gpuBackend||"not initialized",
           requestedRenderer:mode,
+          launchVariant:new URLSearchParams(location.search).get("launch")==="x11-vulkan-render"
+            ?"x11-vulkan-render":"normal-browser",
           conservativeGpu:safeMode,
           resolutionMode:document.documentElement.dataset.renderQuality,
           pixelBudget:Number(document.documentElement.dataset.renderPixelBudget||0),
@@ -562,6 +568,7 @@
           gpuFault:status?.dataset.gpuFault||"",
           frameIntervalMs:status?.dataset.frameMs||"",
           cpuFrameMs:status?.dataset.cpuFrameMs||"",
+          fpsSamples:fpsSamples.slice(-30),
           browser: navigator.userAgent.slice(0,250),
           stage:status?.dataset.renderStage||"boot",
           frames:Number(status?.dataset.frameCount||0),
@@ -585,6 +592,21 @@
       });
       window.addEventListener("unhandledrejection",e=>{
         mostRecentError=String(e.reason||"rejected promise");
+      });
+      document.getElementById("download-render-report").addEventListener("click",()=>{
+        const report={schemaVersion:1,application:"urbarium-3d-renderer-report",
+          capturedAt:new Date().toISOString(),
+          current:buildRunReport(false),previous:previousRun};
+        const blob=new Blob([JSON.stringify(report,null,2)+"\n"],{type:"application/json"});
+        const url=URL.createObjectURL(blob);
+        const link=document.createElement("a");
+        link.href=url;
+        link.download="urbarium-render-report-"+report.capturedAt.replaceAll(":","-")+".json";
+        document.body.append(link);
+        link.click();link.remove();
+        setTimeout(()=>URL.revokeObjectURL(url),30000);
+        document.getElementById("render-report-status").textContent=
+          "Renderer report downloaded. Upload the JSON file to ChatGPT.";
       });
       document.getElementById("copy-viewer-diagnostics").addEventListener("click",async()=>{
         const info=JSON.stringify({
@@ -727,6 +749,10 @@
         }else if(frames>lastFrames){
           const seconds=Math.max(.001,(now-lastTime)/1000);
           const fps=(frames-lastCount)/seconds;
+          if(Number.isFinite(fps) && fps>=0){
+            fpsSamples.push(Number(fps.toFixed(1)));
+            if(fpsSamples.length>60)fpsSamples.shift();
+          }
           health.textContent=`3D renderer active · ${Math.round(fps)} FPS · ${frames} frames`;
           health.classList.remove("warn");
           lastFrames=frames;lastAdvance=now;lastTime=now;lastCount=frames;

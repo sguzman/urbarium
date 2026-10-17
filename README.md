@@ -185,6 +185,27 @@ gpu-test page, then upload the report. The report includes
 never starts Urbarium 3D rendering or requests a high-performance adapter
 unless the user explicitly enables that checkbox.
 
+### Hardware WebGPU rendering diagnostic (isolated X11/Vulkan)
+
+The earlier low-power adapter report identified `google/swiftshader` in
+normal Wayland Edge, while the isolated Vulkan adapter probe identified
+`amd/rdna-2`. The original Wayland Vulkan launch emitted a Chromium warning
+about Vulkan not being compatible with Ozone Wayland. The next experiment
+therefore uses **`--ozone-platform=x11`** in a separate temporary Edge
+profile, relying on XWayland under Hyprland. It keeps the normal AMD render
+node override and **does not** use the NVIDIA RTX 3090 intentionally.
+
+Run the one-time `scripts/edge-vulkan-render.sh` launcher through Jobflick
+(Execarium job, `session: hyprland`, `gpu: inherit`). It opens the **real
+Urbarium 3D viewer** with `renderer=webgpu`, `quality=low`, and
+`launch=x11-vulkan-render`. Wait about 15 seconds, then click **Download 3D
+rendering report** and upload the generated `urbarium-render-report-*.json`.
+The downloaded JSON contains selected adapter, WebGPU device class, frames,
+measured presented FPS samples, errors and resolution; it does not measure
+wall power. If it crashes before a report can download, record that symptom,
+close the separate window, and keep using normal WebGL2. This is a controlled
+hardware rendering experiment, **not** a default Edge setting.
+
 ## Experimental WebGPU browser viewer
 
 A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.

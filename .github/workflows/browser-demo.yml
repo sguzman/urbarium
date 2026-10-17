@@ -11,6 +11,7 @@ on:
       - web/minimap.js
       - web/gpu-test.html
       - scripts/edge-vulkan-probe.sh
+      - scripts/edge-vulkan-render.sh
       - web/data-cache.js
       - scripts/stamp-geography.py
       - web/landmarks.json
@@ -73,6 +74,10 @@ jobs:
           grep -q -- '--user-data-dir=\"\$profile\"' scripts/edge-vulkan-probe.sh
           grep -q -- '--enable-features=Vulkan' scripts/edge-vulkan-probe.sh
           grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-probe.sh
+          bash -n scripts/edge-vulkan-render.sh
+          grep -q -- '--ozone-platform=x11' scripts/edge-vulkan-render.sh
+          grep -q -- '--user-data-dir=\"\$profile\"' scripts/edge-vulkan-render.sh
+          grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-render.sh
       - name: Compile real Rust/WebGPU WASM app
         run: trunk build --release --public-url ./
       - name: Validate static site and scene data
