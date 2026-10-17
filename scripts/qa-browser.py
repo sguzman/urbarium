@@ -456,7 +456,11 @@ with sync_playwright() as p:
             timeout=8000,
         )
         assert "3D rendered" in page.locator("#boot-stage").inner_text()
-        print("Cache provenance and explicit startup phase remain visible; no false cache-ready claim")
+        assert page.locator("#geography-request-count").is_visible()
+        assert page.locator("#geography-request-count").inner_text().endswith(": 2")
+        assert "WASM" in page.locator("#startup-code-state").inner_text()
+        assert "s total" in page.locator("#boot-stage").inner_text()
+        print("Cache provenance, WASM transfer telemetry, and explicit startup phase visible")
         page.locator("#hud-tab-explore").click()
 
         palette=page.evaluate("() => window.urbariumLandmarkPalette")
@@ -815,6 +819,10 @@ with sync_playwright() as p:
         assert renderer_report["current"]["frames"]>2,renderer_report
         assert renderer_report["current"]["gpuDeviceType"],renderer_report
         assert isinstance(renderer_report["current"]["fpsSamples"],list),renderer_report
+        startup=renderer_report["current"]["startup"]
+        assert startup["pageUptimeMs"]>0,startup
+        assert startup["wasmResource"]["finished"] is True,startup
+        assert any(phase["phase"]=="first-present" for phase in startup["phases"]),startup
         print("Actual 3D rendering report downloaded and parsed")
         if not force_webgl:
             # Software WebGPU must not become the real production renderer.
@@ -850,6 +858,10 @@ with sync_playwright() as p:
                 Number(s.dataset.frameCount)>3;
         }""",timeout=90000)
         assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
+        # Joined-world startup previously displayed the misleading generic
+        # "Starting application" for the neighbor-fetch stage. Ensure the
+        # real phase has a distinct title even after its work is complete.
+        assert page.evaluate("""() => document.querySelector('#status')?.dataset.worldSections""")=="2"
         # Regression: the old joined-world mover compared altitude against
         # a fake 0-m ground level and climbed by terrain height EVERY FRAME.
         # Confirm real keyboard flight controls preserve absolute altitude.
