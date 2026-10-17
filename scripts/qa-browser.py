@@ -738,6 +738,32 @@ with sync_playwright() as p:
                 "Conservative mode must cap actual canvas AND depth backing pixels",dims)
             assert "safe=1" in page.url
             print("GPU fault persisted locally; conservative 30fps/640k-pixel restart succeeded",dims)
+        # Switch to a high, genuinely navigable city view without replacing
+        # source meshes or restarting the browser; restore street-level afterward.
+        page.locator("#camera-overview").click()
+        page.wait_for_function("""() => {
+            const s=document.querySelector('#status');
+            return s?.dataset.cameraMode==='overview' &&
+                Number(s.dataset.eyeClearance)>100;
+        }""",timeout=15000)
+        print("City overview camera switched to elevated view")
+        page.locator("#camera-street").click()
+        page.wait_for_function("""() => {
+            const s=document.querySelector('#status');
+            return s?.dataset.cameraMode==='street' &&
+                Number(s.dataset.eyeClearance)<2;
+        }""",timeout=15000)
+        # Hiding UI must not pause drawing, and the restore button must work.
+        const_before=page.locator("#status").get_attribute("data-frame-count")
+        page.locator("#scene-ui-toggle").click()
+        assert page.locator("#scene-ui-toggle").inner_text()=="Show panels"
+        assert not page.locator(".hud").is_visible()
+        page.wait_for_function("""(before) => Number(
+            document.querySelector('#status')?.dataset.frameCount)>Number(before)
+        """,arg=const_before,timeout=15000)
+        page.locator("#scene-ui-toggle").click()
+        assert page.locator(".hud").is_visible()
+        print("City overview and HUD-free view keep renderer running")
         # The real 3D renderer must download JSON diagnostics, not just copy
         # them to the clipboard. This includes the backend, frame counters,
         # crash telemetry and sampled presented frame rate.

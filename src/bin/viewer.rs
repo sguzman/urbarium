@@ -97,6 +97,39 @@ impl Camera {
         camera
     }
 
+    /// Scenic camera inside the real pilot bounds, looking towards its center.
+    /// It changes only the view, not source geometry or road topology.
+    fn city_overview(city:&City,world:&CollisionWorld,terrain:&TerrainGrid)->Self {
+        let [west,south,east,north]=city.region.bbox;
+        let sw=city.region.project(west,south);
+        let ne=city.region.project(east,north);
+        let center=Point{x:(sw.x+ne.x)*0.5,z:(sw.z+ne.z)*0.5};
+        let target_y=terrain.sample_surface(&city.region,center.x,center.z)+35.0;
+        let width=(ne.x-sw.x).abs();
+        let depth=(ne.z-sw.z).abs();
+        for (ox,oz) in [(-0.30,-0.31),(0.30,-0.31),(-0.30,0.31),(0.30,0.31)]{
+            let x=center.x+width*ox;
+            let z=center.z+depth*oz;
+            let clearance=155.0_f32;
+            let eye=terrain.sample_surface(&city.region,x,z)+clearance;
+            if world.blocked(x,z,eye as f64,0.35){continue;}
+            let delta_x=(center.x-x) as f32;
+            let delta_z=(center.z-z) as f32;
+            let horizontal=delta_x.hypot(delta_z);
+            return Self {
+                position:Vec3::new(x as f32,eye,z as f32),
+                yaw:delta_x.atan2(delta_z),
+                pitch:((target_y-eye)/horizontal.max(0.1)).atan(),
+                speed:3.4,eye_clearance:clearance,fast_mode:false,
+            };
+        }
+        let mut camera=Self::spawn_at_street(city,world,terrain);
+        camera.position.y+=155.0;
+        camera.eye_clearance+=155.0;
+        camera.pitch=-0.25;
+        camera
+    }
+
     fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin() * self.pitch.cos(), self.pitch.sin(),
             self.yaw.cos() * self.pitch.cos())
@@ -648,6 +681,9 @@ struct Graphics {
     sky_pipeline: wgpu::RenderPipeline,
     depth: wgpu::TextureView,
     camera: Camera,
+    street_camera: Camera,
+    overview_camera: Camera,
+    camera_request: u32,
     collision: CollisionWorld,
     terrain: TerrainGrid,
     region: Region,
@@ -693,6 +729,15 @@ impl Graphics {
         self.reconfigure_surface(size);
     }
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
+        let (camera_request,overview)=browser_camera_request();
+        if camera_request!=self.camera_request {
+            self.camera_request=camera_request;
+            self.camera=if overview {self.overview_camera.clone()}
+                else {self.street_camera.clone()};
+            self.camera.fast_mode=false;
+            set_speed_label(false);
+            set_camera_mode(if overview {"overview"}else{"street"});
+        }
         let request=browser_inspect_overpass_request();
         if request!=self.inspect_request {
             self.inspect_request=request;
@@ -881,6 +926,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     surface.configure(&device,&config);
     set_collision_count(collision.obstacle_count());
     let camera=Camera::spawn_at_street(&city,&collision,&terrain);
+    let overview_camera=Camera::city_overview(&city,&collision,&terrain);
+    set_camera_mode("street");
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label:Some("Camera uniform"),
         contents:bytemuck::bytes_of(&CameraUniform {
@@ -984,7 +1031,9 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let gpu_mesh_bytes=vertices.len()*size_of::<GpuVertex>()+
         indices.len()*size_of::<u32>();
     let graphics=Graphics {
-        window,surface,device,queue,config,surface_is_srgb,pipeline,sky_pipeline,depth,camera,collision,terrain,region:city.region,
+        window,surface,device,queue,config,surface_is_srgb,pipeline,sky_pipeline,depth,
+        street_camera:camera.clone(),overview_camera,camera_request:0,
+        camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
@@ -1307,6 +1356,27 @@ fn install_visibility_change(proxy:EventLoopProxy<AppEvent>) {
     let _=doc.add_event_listener_with_callback(
         "visibilitychange",callback.as_ref().unchecked_ref());
     callback.forget();
+}
+#[cfg(not(target_arch="wasm32"))]
+fn browser_camera_request()->(u32,bool) {(0,false)}
+#[cfg(target_arch="wasm32")]
+fn browser_camera_request()->(u32,bool) {
+    let el=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status"));
+    let Some(el)=el else {return (0,false)};
+    let number=el.get_attribute("data-camera-request")
+        .and_then(|s|s.parse::<u32>().ok()).unwrap_or(0);
+    let overview=el.get_attribute("data-camera-request-mode").as_deref()==Some("overview");
+    (number,overview)
+}
+fn set_camera_mode(mode:&str){
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")) {
+        let _=el.set_attribute("data-camera-mode",mode);
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=mode;
 }
 #[cfg(not(target_arch="wasm32"))]
 fn browser_inspect_overpass_request()->u32 {0}

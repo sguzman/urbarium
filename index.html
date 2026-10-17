@@ -98,6 +98,12 @@
       .minimap {top:auto;bottom:50px;right:8px;transform:scale(.77);transform-origin:bottom right;}
       .hud {max-width:calc(100vw - 54px);}
     }
+    /* One-button clean view: actual 3D continues animating, no reload. */
+    #scene-ui-toggle {position:fixed;bottom:12px;right:16px;z-index:12;
+      cursor:pointer;border:1px solid #648591;border-radius:7px;padding:7px 11px;
+      color:#f2fbff;background:rgba(20,45,57,.92);font:12px system-ui,sans-serif;}
+    body.scene-ui-hidden .hud,body.scene-ui-hidden .minimap,
+    body.scene-ui-hidden .footer,body.scene-ui-hidden #stats-panel {display:none!important;}
     .hud {position:fixed;top:16px;left:18px;z-index:2;padding:12px 16px;
       background:rgba(8,17,24,.82);border:1px solid #394b55;border-radius:10px;
       max-width:min(600px, calc(100vw - 68px));pointer-events:none;backdrop-filter:blur(7px);}
@@ -152,6 +158,8 @@
     .scene-controls button,.scene-controls input,.scene-controls label {
       pointer-events:auto;
     }
+    #camera-overview,#camera-street {background:#234554;color:#e8f5ff;
+      border:1px solid #5e8595;border-radius:5px;padding:5px 9px;cursor:pointer;}
     .scene-controls label {display:inline-flex;align-items:center;gap:5px;cursor:pointer;}
     .scene-controls input[type=checkbox] {accent-color:#8fc2cf;}
     #time-of-day {width:128px;accent-color:#9bc9db;cursor:pointer;}
@@ -217,6 +225,7 @@
 </head>
 <body>
   <div id="world-landmarks" aria-label="World-anchored Downtown Los Angeles landmark labels"></div>
+  <button id="scene-ui-toggle" type="button" aria-pressed="false" title="Hide or restore map and controls without restarting the 3D scene">Hide panels</button>
   <div class="hud">
     <h1>URBARIUM <span style="color:#b6bbc5">/ Downtown LA</span></h1>
     <p id="status">Starting Rust / WebGPU viewer...</p>
@@ -247,6 +256,10 @@
       title="Save the current 3D renderer adapter, FPS samples, frame timing and fault state as JSON">Download 3D rendering report</button>
     <p id="render-report-status" role="status" class="scene-note">For a useful result, let the city render for 15 seconds, then download.</p>
     <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
+    <div class="scene-controls">
+      <button id="camera-overview" type="button" title="Fly above the city to see buildings and roads without changing the renderer">City overview</button>
+      <button id="camera-street" type="button" title="Return to the original street-level camera">Street view</button>
+    </div>
     <div class="scene-controls">
       <button id="bridge-preview-toggle" type="button" aria-pressed="false"
         title="Reload with experimental elevated freeway meshes. No change to cached geography.">Experimental 3D freeways: off</button>
@@ -345,6 +358,19 @@
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");
+      const sceneToggle=document.getElementById("scene-ui-toggle");
+      sceneToggle.addEventListener("click",()=>{
+        const hidden=document.body.classList.toggle("scene-ui-hidden");
+        sceneToggle.setAttribute("aria-pressed",String(hidden));
+        sceneToggle.textContent=hidden?"Show panels":"Hide panels";
+      });
+      const requestCamera=mode=>{
+        const n=Number(status.dataset.cameraRequest||0);
+        status.dataset.cameraRequest=String(n+1);
+        status.dataset.cameraRequestMode=mode;
+      };
+      document.getElementById("camera-overview").addEventListener("click",()=>requestCamera("overview"));
+      document.getElementById("camera-street").addEventListener("click",()=>requestCamera("street"));
       const fallbackMessage=document.getElementById("gpu-fallback-message");
       try {
         const notice=JSON.parse(sessionStorage.getItem("urbarium-webgpu-fallback-v1")||"null");

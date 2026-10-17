@@ -209,6 +209,18 @@ wall power. If it crashes before a report can download, record that symptom,
 close the separate window, and keep using normal WebGL2. This is a controlled
 hardware rendering experiment, **not** a default Edge setting.
 
+## October 17 city viewing improvements
+
+The initial ground-level camera can place most building geometry outside
+the visible region, especially with the large control overlays open. The live
+viewer now offers **City overview**, which places a camera in the actual pilot
+bounds above the source terrain and faces the map center, and **Street view**,
+which returns to the original 1.7 m road-center spawn. Neither action rebuilds
+meshes, reloads geography, changes the GPU backend, or creates fake buildings.
+The fixed bottom-right **Hide panels / Show panels** button hides the HUD,
+minimap, and credits without pausing the 3D renderer, making visual inspection
+possible even on smaller screens. Browser QA covers these controls.
+
 ## Experimental WebGPU browser viewer
 
 A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.
