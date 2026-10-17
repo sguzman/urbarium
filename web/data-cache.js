@@ -9,9 +9,12 @@
   // A missing stamp deliberately bypasses persistent caching rather than
   // returning unverified stale geography from a previous application release.
   const versions=window.__urbariumGeographyVersions||{};
+  const activeRegion=document.documentElement.dataset.activeRegion||"downtown-la";
   const assetNames=new Map(Object.keys(versions)
     .filter(f=>/^[a-z0-9-]+\.json$/.test(f))
-    .map(f=>[f,(f.endsWith("-terrain.json")?"Terrain ":"City ")+
+    .map(f=>[f,f===activeRegion+".json"?"City":
+      f===activeRegion+"-terrain.json"?"Terrain":
+      (f.endsWith("-terrain.json")?"Terrain ":"City ")+
         f.replace(/-terrain\.json$|\.json$/,"")]));
   // Only versioned geographic files are intercepted. Unlisted paths do
   // ordinary fetches, preventing unrelated web assets entering CacheStorage.
