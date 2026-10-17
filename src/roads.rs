@@ -482,7 +482,7 @@ fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene,
             // asphalt (a common source of stray clipping at shallow angles).
             let mut collide=triangle.iter().any(|&i|hidden[i as usize]);
             if !collide {
-                let tri=triangle.map(|i|{
+                let tri=[triangle[0],triangle[1],triangle[2]].map(|i|{
                     let p=mesh.vertices[i as usize].position;
                     Point{x:p[0] as f64,z:p[2] as f64}
                 });
