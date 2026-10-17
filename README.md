@@ -189,16 +189,19 @@ unless the user explicitly enables that checkbox.
 
 The earlier low-power adapter report identified `google/swiftshader` in
 normal Wayland Edge, while the isolated Vulkan adapter probe identified
-`amd/rdna-2`. The original Wayland Vulkan launch emitted a Chromium warning
-about Vulkan not being compatible with Ozone Wayland. The next experiment
-therefore uses **`--ozone-platform=x11`** in a separate temporary Edge
-profile, relying on XWayland under Hyprland. It keeps the normal AMD render
-node override and **does not** use the NVIDIA RTX 3090 intentionally.
+`amd/rdna-2`. The first attempt at a real X11/XWayland rendering test
+failed before Edge launched, because Jobflick's Hyprland session did not
+provide `DISPLAY`. The fixed launcher therefore uses **`--ozone-platform=wayland`**,
+the same isolated Vulkan adapter-selection path that demonstrably returned
+AMD hardware. Chromium may warn that Vulkan is incompatible with Wayland;
+that remains a real concern, so **actual rendering and errors must be checked**
+before recommending this setup. It keeps the normal AMD render-node override
+and does not intentionally use the NVIDIA RTX 3090.
 
 Run the one-time `scripts/edge-vulkan-render.sh` launcher through Jobflick
 (Execarium job, `session: hyprland`, `gpu: inherit`). It opens the **real
 Urbarium 3D viewer** with `renderer=webgpu`, `quality=low`, and
-`launch=x11-vulkan-render`. Wait about 15 seconds, then click **Download 3D
+`launch=wayland-vulkan-render`. Wait about 15 seconds, then click **Download 3D
 rendering report** and upload the generated `urbarium-render-report-*.json`.
 The downloaded JSON contains selected adapter, WebGPU device class, frames,
 measured presented FPS samples, errors and resolution; it does not measure

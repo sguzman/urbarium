@@ -75,7 +75,7 @@ jobs:
           grep -q -- '--enable-features=Vulkan' scripts/edge-vulkan-probe.sh
           grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-probe.sh
           bash -n scripts/edge-vulkan-render.sh
-          grep -q -- '--ozone-platform=x11' scripts/edge-vulkan-render.sh
+          grep -q -- '--ozone-platform=wayland' scripts/edge-vulkan-render.sh
           grep -q -- '--user-data-dir=\"\$profile\"' scripts/edge-vulkan-render.sh
           grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-render.sh
       - name: Compile real Rust/WebGPU WASM app

@@ -557,8 +557,9 @@
           at:Date.now(),cleanClose,
           backend:status?.dataset.gpuBackend||"not initialized",
           requestedRenderer:mode,
-          launchVariant:new URLSearchParams(location.search).get("launch")==="x11-vulkan-render"
-            ?"x11-vulkan-render":"normal-browser",
+          launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
+            new URLSearchParams(location.search).get("launch"))
+            ?new URLSearchParams(location.search).get("launch"):"normal-browser",
           conservativeGpu:safeMode,
           resolutionMode:document.documentElement.dataset.renderQuality,
           pixelBudget:Number(document.documentElement.dataset.renderPixelBudget||0),
