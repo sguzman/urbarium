@@ -77,7 +77,9 @@ pub fn flatten_bridge_spans(scene:&mut RoadScene)->Result<(),String>{
         let Some(strip)=ribbon(&span.path,span.width_m,0.24)? else{continue;};
         let motorway=span.kind.starts_with("motorway")||
             span.kind.starts_with("trunk");
-        let kind=if motorway{SurfaceKind::Motorway}else{SurfaceKind::Road};
+        // The normal view must not regenerate hidden freeways as flat strips.
+        if motorway {continue;}
+        let kind=SurfaceKind::Road;
         if motorway {
             let paint=motorway_edge_stripes(&strip,0.035);
             append(scene.layers.entry(SurfaceKind::MotorwayStripe)
@@ -318,9 +320,9 @@ mod tests {
         crate::roads::mesh_streets(&city).unwrap().0
     }
     #[test]
-    fn retired_bridge_mode_keeps_centerline_without_raised_deck(){
+    fn retired_bridge_mode_keeps_ordinary_road_without_raised_deck(){
         let mut scene=scene(vec![
-            tagged("motorway",&[("bridge","yes"),("layer","1")]),
+            tagged("primary",&[("bridge","yes"),("layer","1")]),
         ]);
         assert!(!scene.bridge_spans.is_empty());
         flatten_bridge_spans(&mut scene).unwrap();
@@ -329,10 +331,20 @@ mod tests {
             SurfaceKind::BridgeStripe] {
             assert!(!scene.layers.contains_key(&kind));
         }
-        let mesh=&scene.layers[&SurfaceKind::Motorway];
+        let mesh=&scene.layers[&SurfaceKind::Road];
         assert!(!mesh.indices.is_empty());
         assert!(mesh.vertices.iter().all(|v|(v.position[1]-0.24).abs()<0.001));
-        assert!(!scene.layers[&SurfaceKind::MotorwayStripe].indices.is_empty());
+    }
+    #[test]
+    fn retired_bridge_mode_never_restores_flat_motorway_ribbons(){
+        let mut scene=scene(vec![
+            tagged("motorway",&[("bridge","yes"),("layer","1")]),
+        ]);
+        flatten_bridge_spans(&mut scene).unwrap();
+        assert!(scene.layers.get(&SurfaceKind::Motorway)
+            .is_none_or(|m|m.indices.is_empty()));
+        assert!(scene.layers.get(&SurfaceKind::MotorwayStripe)
+            .is_none_or(|m|m.indices.is_empty()));
     }
     #[test]
     fn tagged_bridge_has_real_deck_thickness_barriers_and_piers(){

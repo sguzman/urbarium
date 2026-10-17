@@ -137,11 +137,16 @@ with sync_playwright() as p:
         assert (bridge_triangles>0)==bridge_preview,(
             "Retired default must allocate zero experimental bridge triangles",
             bridge_preview,bridge_triangles)
+        freeway_triangles=int(page.locator("#status").get_attribute(
+            "data-freeway-mesh-triangles") or "-1")
+        assert (freeway_triangles>0)==bridge_preview,(
+            "Normal view must allocate zero unfinished freeway triangles",
+            bridge_preview,freeway_triangles)
         toggle=page.locator("#bridge-preview-toggle")
         assert toggle.get_attribute("aria-pressed")==str(bridge_preview).lower()
         assert page.locator("#inspect-overpass").is_visible()==bridge_preview
         if not bridge_preview:
-            assert "retired" in page.locator("#bridge-preview-note").inner_text()
+            assert "hidden" in page.locator("#bridge-preview-note").inner_text()
             assert page.locator("#inspect-overpass").is_disabled()
         print("Bridge preview flag/mesh triangle allocation:",bridge_preview,bridge_triangles)
         eye_height=float(page.locator("#status").get_attribute("data-eye-clearance"))

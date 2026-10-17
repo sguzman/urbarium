@@ -292,6 +292,10 @@ fn combined_city(city:&City,terrain:&TerrainGrid,bridge_preview:bool)
             SurfaceKind::BridgeStripe))
         .map(|(_,mesh)|mesh.indices.len()/3).sum();
     set_bridge_mesh_triangles(bridge_triangles);
+    let freeway_triangles=roads.layers.iter().filter(|(kind,_)|
+        matches!(kind,SurfaceKind::Motorway|SurfaceKind::MotorwayStripe))
+        .map(|(_,mesh)|mesh.indices.len()/3).sum();
+    set_freeway_mesh_triangles(freeway_triangles);
     for (kind,mesh) in roads.layers {
         let (layer,color)=match kind {
             SurfaceKind::Road => (SceneLayer::Road,[0.24,0.26,0.29]),
@@ -416,6 +420,16 @@ fn set_bridge_mesh_triangles(count:usize) {
 }
 #[cfg(not(target_arch="wasm32"))]
 fn set_bridge_mesh_triangles(_:usize) {}
+#[cfg(target_arch="wasm32")]
+fn set_freeway_mesh_triangles(count:usize) {
+    if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
+        if let Some(el)=doc.get_element_by_id("status") {
+            let _=el.set_attribute("data-freeway-mesh-triangles",&count.to_string());
+        }
+    }
+}
+#[cfg(not(target_arch="wasm32"))]
+fn set_freeway_mesh_triangles(_:usize) {}
 
 #[cfg(target_arch="wasm32")]
 fn set_elevated_span_count(count:usize) {

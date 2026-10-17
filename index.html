@@ -225,7 +225,7 @@
         title="Reload with experimental elevated freeway meshes. No change to cached geography.">Experimental 3D freeways: off</button>
       <button id="inspect-overpass" type="button" disabled hidden
         title="Inspect the experimental bridge reconstruction">Inspect overpass (preview only)</button>
-      <span id="bridge-preview-note" class="scene-note">Unfinished elevated geometry retired. Real road centerlines remain visible at terrain level.</span>
+      <span id="bridge-preview-note" class="scene-note">Unfinished freeway corridors hidden; ordinary city streets remain visible.</span>
     </div>
     <div class="debug-controls">
       <button id="stats-toggle" type="button" aria-controls="stats-panel"
@@ -471,7 +471,7 @@
       bridgeButton.textContent="Experimental 3D freeways: "+(bridgePreview?"on":"off");
       bridgeNote.textContent=bridgePreview
         ? "Unfinished prototype: incomplete road topology and estimated bridge heights."
-        : "Unfinished raised geometry retired; terrain-level roads remain visible.";
+        : "Unfinished freeway corridors hidden; ordinary city streets remain visible.";
       inspect.hidden=!bridgePreview;
       bridgeButton.addEventListener("click",()=>{
         const url=new URL(location.href);

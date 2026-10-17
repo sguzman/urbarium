@@ -246,12 +246,15 @@ struct RoadEnd {
 /// Patches only real mapped *road endpoints* joining at grade. We do not
 /// infer a junction from two centerlines merely crossing in 2D, which might
 /// be an overpass, an underpass, or an unconnected footbridge.
-fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport) -> Result<(),String> {
+fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport,
+    include_freeways:bool) -> Result<(),String> {
     let mut groups:Vec<Vec<RoadEnd>>=Vec::new();
     let mut cells:BTreeMap<(i64,i64),Vec<usize>>=BTreeMap::new();
     for street in &city.streets {
         let Some((kind,width))=surface_class(street) else {continue};
         if !matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway){continue;}
+        // Avoid orphan junction patches in the hidden freeway corridors.
+        if kind==SurfaceKind::Motorway && !include_freeways {continue;}
         if street.path.len()<2
             || street.tags.get("bridge").is_some_and(|v|v!="no")
             || street.tags.get("tunnel").is_some_and(|v|v!="no")
@@ -385,11 +388,15 @@ fn at_grade_motor_road(street:&Street)->bool {
         && !street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
             .is_some_and(|layer|layer!=0)
 }
-fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene)->usize {
+fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene,
+    include_freeways:bool)->usize {
     let mut roads=Vec::<(Point,Point,f64)>::new();
     let mut buckets=BTreeMap::<(i32,i32),Vec<usize>>::new();
     for street in &city.streets {
         if !at_grade_motor_road(street){continue;}
+        // Invisible freeways must not leave invisible gaps in footpaths.
+        if !include_freeways && surface_class(street)
+            .is_some_and(|(kind,_)|kind==SurfaceKind::Motorway) {continue;}
         let Some((_,width))=surface_class(street) else{continue;};
         let reach=width*0.5+2.6;
         for pair in street.path.windows(2) {
@@ -449,8 +456,8 @@ fn at_region_edge(city:&City,p:Point)->bool {
 pub fn mesh_streets(city:&City)->Result<(RoadScene,RoadReport),String> {
     mesh_streets_with_bridges(city,true)
 }
-/// Fast normal-view mode skips generating every approximate raised mesh.
-/// Source bridge spans are kept as metadata for the terrain-level ribbons.
+/// Normal viewer mode hides all unfinished freeway ribbons and raised meshes.
+/// Source bridge spans are retained for diagnostics and explicit preview.
 pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
     ->Result<(RoadScene,RoadReport),String> {
     let mut scene=RoadScene::default();
@@ -499,6 +506,12 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
             *report.by_surface.entry("elevated_bridge".into()).or_insert(0)+=1;
             continue;
         }
+        // Retiring only the raised meshes left ugly clipped at-grade freeway
+        // fragments in the default scene; hide their strips and markings too.
+        if !detailed_bridges && kind==SurfaceKind::Motorway {
+            report.segments_skipped+=1;
+            continue;
+        }
         if matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway) &&
             street.path.len()>=2 &&
             !street.tags.get("tunnel").is_some_and(|s|s=="yes") {
@@ -528,8 +541,8 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
         report.segments_meshed+=1;
         *report.by_surface.entry(kind.material().into()).or_insert(0)+=1;
     }
-    add_junction_patches(city,&mut scene,&mut report)?;
-    let omitted=remove_pedestrian_asphalt_overlap(city,&mut scene);
+    add_junction_patches(city,&mut scene,&mut report,detailed_bridges)?;
+    let omitted=remove_pedestrian_asphalt_overlap(city,&mut scene,detailed_bridges);
     report.pedestrian_overlap_triangles_removed=omitted;
     if detailed_bridges {
         crate::road_grade::build_bridge_layers(&mut scene,|_,_|0.0)?;
@@ -732,6 +745,28 @@ mod tests {
         assert!(scene.layers[&SurfaceKind::Motorway].indices.len()>100);
         assert!(scene.layers[&SurfaceKind::MotorwayStripe].indices.len()>100);
         assert!(!scene.layers.contains_key(&SurfaceKind::ElevatedRoad));
+    }
+    #[test]
+    fn default_view_omits_all_freeway_ribbons_and_markings() {
+        let mut bridge=street("motorway_link",&[[10.,0.],[10.,75.]]);
+        bridge.tags.insert("bridge".into(),"yes".into());
+        let c=city(vec![
+            street("motorway",&[[0.,0.],[0.,75.]]),bridge,
+            street("trunk",&[[20.,0.],[20.,75.]]),
+            street("residential",&[[40.,0.],[40.,75.]]),
+        ]);
+        let (scene,report)=mesh_streets_with_bridges(&c,false).unwrap();
+        assert_eq!(report.motorway_sections,3);
+        assert_eq!(report.elevated_spans,1);
+        assert_eq!(scene.bridge_spans.len(),1);
+        assert!(scene.layers.get(&SurfaceKind::Motorway)
+            .is_none_or(|m|m.indices.is_empty()));
+        assert!(scene.layers.get(&SurfaceKind::MotorwayStripe)
+            .is_none_or(|m|m.indices.is_empty()));
+        assert!(!scene.layers[&SurfaceKind::Road].indices.is_empty());
+        let (preview,_)=mesh_streets_with_bridges(&c,true).unwrap();
+        assert!(!preview.layers[&SurfaceKind::Motorway].indices.is_empty());
+        assert!(!preview.layers[&SurfaceKind::MotorwayStripe].indices.is_empty());
     }
     #[test]
     fn obj_groups_and_materials_are_present() {
