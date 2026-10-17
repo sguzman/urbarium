@@ -232,6 +232,10 @@
     <p id="input-state" data-pointer-locked="false">Click the city to capture mouse</p>
     <p>Mouse looks · WASD move · Shift toggles fast travel · E/Q fly · Esc releases</p>
     <p id="speed-state">WALK · 3.4 m/s</p>
+    <div class="scene-controls">
+      <button id="camera-overview" type="button" title="Fly above the city to see buildings and roads without changing the renderer">City overview</button>
+      <button id="camera-street" type="button" title="Return to the original street-level camera">Street view</button>
+    </div>
     <label class="renderer-control" for="renderer-select">
       Graphics
       <select id="renderer-select" aria-label="Graphics renderer">
@@ -256,10 +260,6 @@
       title="Save the current 3D renderer adapter, FPS samples, frame timing and fault state as JSON">Download 3D rendering report</button>
     <p id="render-report-status" role="status" class="scene-note">For a useful result, let the city render for 15 seconds, then download.</p>
     <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
-    <div class="scene-controls">
-      <button id="camera-overview" type="button" title="Fly above the city to see buildings and roads without changing the renderer">City overview</button>
-      <button id="camera-street" type="button" title="Return to the original street-level camera">Street view</button>
-    </div>
     <div class="scene-controls">
       <button id="bridge-preview-toggle" type="button" aria-pressed="false"
         title="Reload with experimental elevated freeway meshes. No change to cached geography.">Experimental 3D freeways: off</button>
