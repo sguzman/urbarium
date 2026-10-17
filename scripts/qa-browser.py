@@ -54,7 +54,26 @@ with sync_playwright() as p:
     }""")
     # WebGPU validates the retired default; WebGL2 covers opt-in prototype.
     bridge_preview=force_webgl
-    suffix="&bridges=1" if bridge_preview else ""
+    # CI software-Vulkan rendering is an explicit exception, not production default.
+    suffix="&bridges=1" if bridge_preview else "&allow-software=1"
+    # Exercise the small probe independently of the costly city rendering app.
+    probe_page=browser.new_page(accept_downloads=True)
+    probe_page.goto("http://127.0.0.1:8010/gpu-test.html",wait_until="domcontentloaded")
+    with probe_page.expect_download(timeout=30000) as download_event:
+        probe_page.locator("#run-probe").click()
+    probe_download=download_event.value
+    assert probe_download.suggested_filename.startswith("urbarium-gpu-report-"),probe_download.suggested_filename
+    assert probe_download.suggested_filename.endswith(".json")
+    import json
+    with open(probe_download.path(),encoding="utf-8") as f:
+        probe_report=json.load(f)
+    assert probe_report["schemaVersion"]==1,probe_report
+    assert probe_report["webgl2"]["available"] is True,probe_report
+    assert probe_report["webgpu"]["lowPower"]["status"] in (
+        "available","null-adapter","error","unsupported"),probe_report
+    assert "userAgent" in probe_report and "timestamp" in probe_report
+    probe_page.close()
+    print("Standalone GPU diagnostic JSON downloaded and parsed")
     page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}", wait_until="domcontentloaded")
     page.wait_for_function(
         "(mode) => document.querySelector('#renderer-select')?.value === mode",
@@ -719,6 +738,14 @@ with sync_playwright() as p:
                 "Conservative mode must cap actual canvas AND depth backing pixels",dims)
             assert "safe=1" in page.url
             print("GPU fault persisted locally; conservative 30fps/640k-pixel restart succeeded",dims)
+        if not force_webgl:
+            # Software WebGPU must not become the real production renderer.
+            # The SwiftShader-only test browser should fall back to WebGL2.
+            page.goto("http://127.0.0.1:8010/?renderer=webgpu",wait_until="domcontentloaded")
+            page.wait_for_function("""() => location.search.includes("renderer=webgl2") &&
+                document.querySelector("#gpu-fallback-message")?.hidden===false &&
+                document.querySelector("#status")?.dataset.gpuBackend==="Gl" """,timeout=60000)
+            print("WebGPU CPU adapter automatically fell back to hardware WebGL2 mode")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:

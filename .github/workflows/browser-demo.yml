@@ -9,6 +9,7 @@ on:
       - src/bin/viewer.rs
       - src/bin/viewer.wgsl
       - web/minimap.js
+      - web/gpu-test.html
       - web/data-cache.js
       - scripts/stamp-geography.py
       - web/landmarks.json
@@ -86,6 +87,7 @@ jobs:
           js=list(dist.glob("*.js"))
           assert wasm and js,(wasm,js)
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
+          assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
           assert "urbarium-geography-downtown-la-v1" in (dist/"data-cache.js").read_text()
           import hashlib,re
@@ -199,6 +201,9 @@ jobs:
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/minimap.js" -o /tmp/urbarium-minimap-live.js
           grep -q 'data-map-ready' /tmp/urbarium-minimap-live.js
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+            "${PAGE_URL%/}/gpu-test.html" -o /tmp/urbarium-gpu-test-live.html
+          grep -q "Run adapter test and download JSON" /tmp/urbarium-gpu-test-live.html
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/assets/landmarks.json" -o /tmp/urbarium-landmarks-live.json
           python3 -c "import json; assert len(json.load(open('/tmp/urbarium-landmarks-live.json'))['landmarks']) == 9"

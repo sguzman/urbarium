@@ -377,10 +377,22 @@ export function publish_terrain_for_minimap(data) {
     window.__urbariumTerrainJson = data;
     window.dispatchEvent(new Event('urbarium-terrain-ready'));
 }
+export function fallback_from_software_webgpu() {
+    try {sessionStorage.setItem("urbarium-webgpu-fallback-v1",JSON.stringify({
+        time:new Date().toISOString(),reason:"WebGPU selected a CPU / software adapter",
+        requested:"webgpu",selected:"webgl2"
+    }));} catch (_) {}
+    const url=new URL(location.href);
+    url.searchParams.set("renderer","webgl2");
+    url.searchParams.delete("allow-software");
+    // Replace, rather than adding a broken software-renderer history entry.
+    location.replace(url.href);
+}
 ")]
 extern "C" {
     fn publish_city_for_minimap(data:&str);
     fn publish_terrain_for_minimap(data:&str);
+    fn fallback_from_software_webgpu();
 }
 
 async fn fetch_city() -> Result<City, String> {
@@ -805,8 +817,15 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         wgpu::InstanceDescriptor::new_without_display_handle()).await;
     let surface=instance.create_surface(window.clone())
         .map_err(|e|format!("surface: {e}"))?;
+    // Prefer the compositor iGPU in the browser. The RTX 3090 is reserved for
+    // compute/games and must not be woken merely to explore a small map.
+    // Native viewers retain the ordinary high-performance preference.
+    #[cfg(target_arch="wasm32")]
+    let preference=wgpu::PowerPreference::LowPower;
+    #[cfg(not(target_arch="wasm32"))]
+    let preference=wgpu::PowerPreference::HighPerformance;
     let adapter=instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference:wgpu::PowerPreference::HighPerformance,
+        power_preference:preference,
         force_fallback_adapter:false,
         compatible_surface:Some(&surface),
         apply_limit_buckets:false,
@@ -814,6 +833,14 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let gpu_info=adapter.get_info();
     let backend = format!("{:?}",gpu_info.backend);
     set_browser_backend(&backend);
+    #[cfg(target_arch="wasm32")]
+    if backend=="BrowserWebGpu" && gpu_info.device_type==wgpu::DeviceType::Cpu &&
+        !browser_allows_software_webgpu() {
+        set_browser_stage("software-webgpu-fallback");
+        info("WebGPU chose a software adapter; returning to hardware WebGL2");
+        fallback_from_software_webgpu();
+        return Ok(());
+    }
     let (device,queue)=adapter.request_device(&wgpu::DeviceDescriptor {
         label:Some("Urbarium device"),
         required_features:wgpu::Features::empty(),
@@ -1232,6 +1259,15 @@ fn limit_backing_size(size:PhysicalSize<u32>)->PhysicalSize<u32>{
         }
     }
     size
+}
+fn browser_allows_software_webgpu()->bool {
+    #[cfg(target_arch="wasm32")]
+    return web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-allow-software-webgpu"))
+        .as_deref()==Some("true");
+    #[cfg(not(target_arch="wasm32"))]
+    false
 }
 fn browser_safe_gpu()->bool {
     #[cfg(target_arch="wasm32")]

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Urbarium · GPU adapter test</title>
+<style>
+:root{color-scheme:dark;font:15px system-ui,sans-serif}
+body{margin:0;max-width:760px;padding:28px 18px 50px;background:#101921;color:#edf3f7;line-height:1.6}
+a{color:#a9d2e9}
+h1{font-size:24px;margin:0 0 8px}
+p{color:#c9d4dc}
+button{border:1px solid #669aaa;background:#214554;border-radius:6px;padding:10px 15px;color:white;cursor:pointer;font-size:14px}
+button:disabled{opacity:.6;cursor:progress}
+button+button{margin-left:8px}
+label{display:block;margin:16px 0;color:#e5d4ae}
+pre{background:#172530;border:1px solid #40525a;padding:16px;border-radius:7px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;font-size:12px}
+#status{color:#a6ddc9}
+</style>
+</head>
+<body>
+<h1>Urbarium / GPU adapter test</h1>
+<p>This lightweight test checks which GPU backends Edge exposes. It does not load the 3D city, download geographic data or render a continuous animation.</p>
+<p>The default test requests the <strong>low-power WebGPU adapter</strong> and checks WebGL2. This is intended to prefer your integrated AMD GPU rather than waking the RTX 3090. Browser selection is not guaranteed.</p>
+<label><input id="test-high" type="checkbox"> Also request high-performance WebGPU (may activate the discrete GPU)</label>
+<button id="run-probe" type="button">Run adapter test and download JSON</button>
+<button id="download-again" type="button" disabled>Download report again</button>
+<p id="status" role="status">Ready. Report stays in your browser until you download it. No data is sent to a server.</p>
+<pre id="output" aria-label="Adapter diagnostics">Select Run adapter test and download JSON.</pre>
+<p><a href="./">Return to Urbarium</a></p>
+<script>
+(() => {
+"use strict";
+const $=id=>document.getElementById(id);
+let latest=null;
+function errorInfo(e){return {name:String(e?.name||"Error"),message:String(e?.message||e).slice(0,500)};}
+function infoOf(adapter){
+  let inf={};
+  try{
+    const x=adapter.info||{};
+    for(const key of ["vendor","architecture","device","description"]){
+      inf[key]=typeof x[key]==="string"?x[key]:"";
+    }
+  }catch(e){inf.infoError=errorInfo(e);}
+  const fallback=typeof adapter.isFallbackAdapter==="boolean"
+    ?adapter.isFallbackAdapter:null;
+  let limits={};
+  try{
+    for(const key of ["maxTextureDimension2D","maxBindGroups","maxBufferSize"]){
+      const val=adapter.limits?.[key];
+      if(typeof val==="number"&&Number.isFinite(val))limits[key]=val;
+    }
+  }catch(e){limits={error:errorInfo(e)};}
+  return {status:"available",isFallbackAdapter:fallback,info:inf,
+    limits,featureCount:adapter.features?.size??null};
+}
+async function webgpuProbe(powerPreference){
+  if(!navigator.gpu?.requestAdapter)return {status:"unsupported"};
+  try{
+    // Never request a fallback adapter or instantiate a GPUDevice.
+    const adapter=await navigator.gpu.requestAdapter({
+      powerPreference,forceFallbackAdapter:false
+    });
+    return adapter?infoOf(adapter):{status:"null-adapter"};
+  }catch(e){return {status:"error",error:errorInfo(e)};}
+}
+function webglProbe(){
+  const canvas=document.createElement("canvas");
+  canvas.width=1;canvas.height=1;
+  try{
+    const gl=canvas.getContext("webgl2",{antialias:false,alpha:false});
+    if(!gl)return {available:false};
+    const debug=gl.getExtension("WEBGL_debug_renderer_info");
+    const result={available:true,
+      version:String(gl.getParameter(gl.VERSION)||""),
+      vendor:String(gl.getParameter(gl.VENDOR)||""),
+      renderer:String(gl.getParameter(gl.RENDERER)||""),
+      unmaskedVendor:debug?String(gl.getParameter(debug.UNMASKED_VENDOR_WEBGL)||""):null,
+      unmaskedRenderer:debug?String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)||""):null};
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return result;
+  }catch(e){return {available:false,error:errorInfo(e)};}
+}
+function downloadReport(){
+  if(!latest)return;
+  const text=JSON.stringify(latest,null,2)+"\n";
+  const blob=new Blob([text],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download="urbarium-gpu-report-"+latest.timestamp.replaceAll(":","-")+".json";
+  document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+}
+$("download-again").addEventListener("click",downloadReport);
+$("run-probe").addEventListener("click",async()=>{
+  const btn=$("run-probe");
+  btn.disabled=true;
+  $("status").textContent="Checking the adapters. No 3D scene is running...";
+  try{
+    const report={
+      schemaVersion:1,
+      application:"urbarium-gpu-adapter-probe",
+      timestamp:new Date().toISOString(),
+      userAgent:navigator.userAgent,
+      platform:navigator.platform,
+      display:{pixelRatio:devicePixelRatio,screenWidth:screen.width,screenHeight:screen.height},
+      webgl2:webglProbe(),
+      webgpu:{supported:!!navigator.gpu,preferredCanvasFormat:null,
+        lowPower:null,highPerformance:{status:"not-requested"}}
+    };
+    try{report.webgpu.preferredCanvasFormat=navigator.gpu?.getPreferredCanvasFormat?.()??null;}
+    catch(e){report.webgpu.preferredCanvasFormatError=errorInfo(e);}
+    report.webgpu.lowPower=await webgpuProbe("low-power");
+    if($("test-high").checked){
+      report.webgpu.highPerformance=await webgpuProbe("high-performance");
+    }
+    // Include only the previous Urbarium renderer's non-sensitive GPU fields.
+    // Never export caches, URLs, secrets, or other browser storage.
+    try{
+      const last=JSON.parse(localStorage.getItem("urbarium-renderer-last-session-v1")||"null");
+      if(last)report.previousUrbariumSession={
+        backend:last.backend||null,requestedRenderer:last.requestedRenderer||null,
+        gpuDeviceType:last.gpuDeviceType||null,gpuAdapter:last.gpuAdapter||null,
+        surfaceFormat:last.surfaceFormat||null,frameIntervalMs:last.frameIntervalMs||null
+      };
+    }catch(_){}
+    latest=report;
+    $("output").textContent=JSON.stringify(report,null,2);
+    $("status").textContent="Test complete. Downloading JSON now; upload that file to the chat.";
+    $("download-again").disabled=false;
+    downloadReport();
+  }catch(e){
+    $("status").textContent="Probe failed: "+String(e?.message||e);
+    $("output").textContent=JSON.stringify({error:errorInfo(e)},null,2);
+  }finally{btn.disabled=false;}
+});
+})();
+</script>
+</body>
+</html>

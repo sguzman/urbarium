@@ -12,6 +12,9 @@
       const requested = new URLSearchParams(location.search).get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
+      // Test-only opt-in for software Vulkan in automated Chromium QA.
+      document.documentElement.dataset.allowSoftwareWebgpu =
+        new URLSearchParams(location.search).get("allow-software") === "1" ? "true":"false";
       document.documentElement.dataset.safeGpu =
         new URLSearchParams(location.search).get("safe") === "1" ? "true" : "false";
       // Explicit opt-in, never remembered as the default release view.
@@ -44,6 +47,7 @@
   <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="0">
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/landmarks.json" data-target-path="assets">
+  <link data-trunk rel="copy-file" href="web/gpu-test.html">
   <link data-trunk rel="copy-file" href="web/minimap.js">
   <link data-trunk rel="copy-file" href="web/data-cache.js">
   <!-- Geography cache intercepts the initial Rust download, not just reloads. -->
@@ -234,6 +238,8 @@
     <button id="safe-gpu-toggle" type="button" aria-pressed="false"
       title="Restart using a capped 640k-pixel framebuffer and at most 30 rendered frames per second">Conservative GPU: off</button>
     <p id="renderer-health" role="status">Loading the Rust viewer...</p>
+    <p id="gpu-fallback-message" class="scene-note" role="status" hidden></p>
+    <p><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
     <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
     <div class="scene-controls">
       <button id="bridge-preview-toggle" type="button" aria-pressed="false"
@@ -333,6 +339,15 @@
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");
+      const fallbackMessage=document.getElementById("gpu-fallback-message");
+      try {
+        const notice=JSON.parse(sessionStorage.getItem("urbarium-webgpu-fallback-v1")||"null");
+        if(notice && Date.now()-Date.parse(notice.time)<3600000 && mode==="webgl2"){
+          fallbackMessage.textContent="WebGPU selected software rendering. Switched to hardware WebGL2. Use GPU adapter test to download a report.";
+          fallbackMessage.hidden=false;
+        }
+        sessionStorage.removeItem("urbarium-webgpu-fallback-v1");
+      }catch(_){}
       const legend = document.getElementById("landmark-legend");
       const colors = window.urbariumLandmarkPalette;
       const categories = Object.keys(colors);

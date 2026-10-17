@@ -154,6 +154,24 @@ materials; this standalone GLB export still has flat terrain and no textures or
 collision, unlike the browser's separate DEM-aware geometry pipeline. Geometry remains generated in Rust; a future
 WebGPU/WASM runtime will use the same geometry pipeline.
 
+## Browser GPU adapter diagnosis (October 17, 2026)
+
+Open `gpu-test.html` from the live viewer, then select **Run adapter test and
+download JSON**. This is a standalone test: it does not load WASM or city
+geography, launch an animation loop, or intentionally engage the RTX 3090.
+It checks the hardware-facing WebGL2 renderer and browser WebGPU low-power
+adapter, and writes `urbarium-gpu-report-*.json` locally. The optional
+high-performance adapter test is disabled by default because it could wake
+an additional GPU. Upload the downloaded JSON for analysis; no network
+telemetry or personal files are collected. A browser may hide adapter names.
+
+Normal WebGPU viewer startup now prefers a low-power adapter on the web and
+**automatically switches to WebGL2 if wgpu reports a CPU/software WebGPU
+adapter**. The `?allow-software=1` override is deliberately for CI / debugging
+only and may use significant CPU power. Automated browser QA exercises the
+standalone downloadable report and the software-adapter fallback separately.
+A result from software Chromium CI cannot establish real AMD hardware selection.
+
 ## Experimental WebGPU browser viewer
 
 A Rust/winit/wgpu viewer is now implemented in `src/bin/viewer.rs`.
