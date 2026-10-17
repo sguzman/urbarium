@@ -59,6 +59,29 @@ geometry, camera traversal and bounded eviction are verified. Large
 building polygons crossing an Overture section boundary can still produce
 overlapping source triangles; proper clipping/stitching remains pending.
 
+## Startup delay diagnosis (October 17)
+
+Opening the `Details` tab does not initiate any HTTP request or restart
+WASM. The user-reported `Starting application · 27s` message was a
+**mislabeling** of an unrecognized `neighbor-fetch` stage in the opt-in
+joined-world path. At that stage the viewer may fetch/cache-hit the second
+region, deserialize geography and build another CPU mesh before GPU startup;
+the stage label alone cannot distinguish how much time each consumed.
+
+The Details panel now displays the recognized neighboring-section stage and
+**current-stage seconds versus total startup seconds**, plus independent
+metrics for (1) city/terrain CacheStorage network requests during this visit
+and (2) browser-reported WebAssembly resource transfer size, duration, and
+completion time. A `CACHE HIT` confirms geography was reused; it does not
+mean the Rust/WASM module or CPU mesh was cached. A zero browser-reported
+transfer size is ambiguous: disk cache and unavailable timing details cannot
+be distinguished in every environment. A Resource Timing entry only exists
+after that request completes, so a missing entry does **not** prove no
+download started. The JSON renderer report now contains `startup` telemetry.
+These diagnostics do not currently shorten the first frame time or guarantee
+that startup is exclusively CPU-bound; optimization comes after identifying
+the expensive stage.
+
 ## Compact tabbed viewer HUD (October 17)
 
 The main left overlay is now a narrow, scroll-bounded tabbed panel:
