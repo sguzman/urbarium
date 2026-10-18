@@ -11,7 +11,7 @@ self.onmessage=async event=>{
   if(data?.type==="init"){
     try {
       importScripts("./urbarium-mesh-worker.js");
-      engine=self.wasm_bindgen;
+      engine=wasm_bindgen;
       if(typeof engine!=="function")throw Error("WASM worker loader missing");
       await engine("./urbarium-mesh-worker_bg.wasm");
       engine.initialize_worker(data.city,data.terrain);
