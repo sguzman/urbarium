@@ -163,10 +163,39 @@ impl TerrainGrid {
                 report.buildings_skipped+=1;continue;
             };
             if exterior.is_empty(){report.buildings_skipped+=1;continue;}
+            // A single centroid-height foundation lets sloping terrain
+            // intersect entire walls (especially in adjacent regions).
+            // Keep the roof horizontal at the high-ground datum, and extend
+            // all wall bases below the lowest sampled terrain. No source
+            // footprint changes and no new geometry invented at the seam.
             let x=exterior.iter().map(|p|p.x).sum::<f64>()/exterior.len() as f64;
             let z=exterior.iter().map(|p|p.z).sum::<f64>()/exterior.len() as f64;
-            let ground=self.sample_surface(&city.region,x,z);
-            for vertex in &mut mesh.vertices {vertex.position[1]+=ground;}
+            let mut low=self.sample_surface(&city.region,x,z);
+            let mut high=low;
+            for polygon in &building.polygons {
+                for ring in &polygon.rings {
+                    for pair in ring.iter().zip(ring.iter().cycle().skip(1))
+                        .take(ring.len()) {
+                        let length=(pair.1.x-pair.0.x).hypot(pair.1.z-pair.0.z);
+                        let subdivisions=(length/5.0).ceil().max(1.0) as usize;
+                        for i in 0..=subdivisions {
+                            let t=i as f64/subdivisions as f64;
+                            let h=self.sample_surface(&city.region,
+                                pair.0.x+(pair.1.x-pair.0.x)*t,
+                                pair.0.z+(pair.1.z-pair.0.z)*t);
+                            low=low.min(h);
+                            high=high.max(h);
+                        }
+                    }
+                }
+            }
+            for vertex in &mut mesh.vertices {
+                if vertex.position[1].abs()<1e-4 && vertex.normal[1]==0.0 {
+                    vertex.position[1]=low-0.6;
+                }else{
+                    vertex.position[1]+=high;
+                }
+            }
             let offset=u32::try_from(combined.vertices.len())
                 .map_err(|_|"too many building vertices")?;
             if mesh.indices.iter().any(|i|i.checked_add(offset).is_none()) {
@@ -275,5 +304,15 @@ mod tests {
         assert_eq!(report.buildings_meshed,1);
         let roof_y=mesh.vertices[0].position[1];
         assert!(mesh.vertices.iter().take(4).all(|v|(v.position[1]-roof_y).abs()<0.001));
+        // Terrain relief may vary across a footprint. All walls must extend
+        // below terrain, rather than showing DEM triangles through facades.
+        let g=grid();
+        let minimum=mesh.vertices.iter().filter(|v|v.normal[1]==0.0)
+            .map(|v|v.position[1]).fold(f32::INFINITY,f32::min);
+        for p in &city.buildings[0].polygons[0].rings[0]{
+            let h=g.sample_surface(&r,p.x,p.z);
+            assert!(minimum<h-0.3,"Wall foundation must be buried below terrain");
+        }
+        assert!(roof_y>minimum+12.0);
     }
 }
