@@ -50,11 +50,11 @@ pub fn first_frame_streets(city:&City,center:Point,radius_m:f64)->City {
 }
 
 
-/* Camera-following mesh cells. Every cell owns its building footprints once,
- * and every street segment is clipped to exactly one cell interior (shared
- * geometric boundaries may coincide but do not duplicate surface area).
- * The original source city and terrain are kept unchanged for collision,
- * minimap and explicit full-scene fallback.
+/* Camera-following mesh cells. Each cell owns its building footprints once.
+ * Streets retain the ORIGINAL source path (including bends and genuine
+ * endpoint topology) until after surface tessellation. The finished road,
+ * walk, step and rail triangles are clipped to tile bounds in chunk_mesh.
+ * Clipping centerlines here previously erased miter context at every seam.
  */
 pub const CHUNK_SIZE_M:f64=300.0;
 // Keep enough cells to preserve distant skyline in the bounded pilot.
@@ -129,53 +129,33 @@ fn owner(building:&crate::Building)->Option<ChunkKey>{
     };
     Some(ChunkKey::at(centroid))
 }
-/// Liang-Barsky clipping, using exact shared cell bounds. Endpoint-only and
-/// zero-length touches are discarded; true crossings are retained.
-fn clip_segment(a:Point,b:Point,bounds:[f64;4])->Option<(Point,Point)>{
-    // Half-open cell ownership: a segment lying exactly on a shared
-    // north/east border belongs to that neighboring cell only.
-    if ((a.x-bounds[2]).abs()<1e-9 && (b.x-bounds[2]).abs()<1e-9)
-       || ((a.z-bounds[3]).abs()<1e-9 && (b.z-bounds[3]).abs()<1e-9) {
-        return None;
-    }
-    let dx=b.x-a.x;let dz=b.z-a.z;
-    let mut lo:f64=0.0;let mut hi:f64=1.0;
-    for (p,q) in [(-dx,a.x-bounds[0]),(dx,bounds[2]-a.x),
-                  (-dz,a.z-bounds[1]),(dz,bounds[3]-a.z)] {
-        if p.abs()<1e-12 {
-            if q<0.0 {return None;}
-        }else{
-            let t=q/p;
-            if p<0.0 {lo=lo.max(t);}else{hi=hi.min(t);}
-            if lo>=hi{return None;}
-        }
-    }
-    let start=Point{x:a.x+lo*dx,z:a.z+lo*dz};
-    let end=Point{x:a.x+hi*dx,z:a.z+hi*dz};
-    if (end.x-start.x).hypot(end.z-start.z)<1e-5{return None;}
-    Some((start,end))
+/// Upper bound on ribbon reach from its source centerline: 60m source
+/// width / 2, times the 2x capped miter at bends = 60m. Leave another 20m
+/// for numerical and future intersection margin. Only source candidates near
+/// a cell are meshed, while their full paths preserve bend geometry.
+pub const ROAD_CONTEXT_HALO_M:f64=80.0;
+
+fn street_near_cell(street:&Street,bounds:[f64;4])->bool {
+    let halo=ROAD_CONTEXT_HALO_M;
+    street.path.windows(2).any(|segment| {
+        let a=segment[0];let b=segment[1];
+        a.x.min(b.x)<=bounds[2]+halo && a.x.max(b.x)>=bounds[0]-halo &&
+        a.z.min(b.z)<=bounds[3]+halo && a.z.max(b.z)>=bounds[1]-halo
+    })
 }
-/// Select geometry owned by the requested cell, without whole-city meshing.
-/// Source street tags/class are retained for roads and bridge eligibility.
+
+/// Select untouched source paths for each cell's surface generator. It is the
+/// *finished triangles*, not these centerlines, that receive exact cell
+/// ownership. Never fabricate endpoints or erase OSM node identities here.
 pub fn chunk_city(source:&City,key:ChunkKey)->City {
-    let bbox=key.bounds();
-    let mut streets=Vec::new();
-    for street in &source.streets {
-        for (i,segment) in street.path.windows(2).enumerate() {
-            if let Some((a,b))=clip_segment(segment[0],segment[1],bbox){
-                let mut fragment=street.clone();
-                fragment.source_id=format!("{}:chunk:{}:{}:segment:{}",street.source_id,
-                    key.x,key.z,i);
-                fragment.path=vec![a,b];
-                fragment.osm_node_ids.clear(); // Clipped endpoints are new coordinates
-                streets.push(fragment);
-            }
-        }
-    }
+    let bounds=key.bounds();
     City {
         schema_version:source.schema_version,
         region:source.region.clone(),provenance:Vec::new(),
-        streets,buildings:source.buildings.iter()
+        streets:source.streets.iter()
+            .filter(|street|street_near_cell(street,bounds))
+            .cloned().collect(),
+        buildings:source.buildings.iter()
             .filter(|b|owner(b)==Some(key)).cloned().collect(),
     }
 }
@@ -259,18 +239,33 @@ mod tests {
     }
 
     #[test]
-    fn clipping_preserves_cross_cell_road_without_repeated_area() {
-        let city=sample_city();
+    fn cross_cell_streets_preserve_source_bends_and_real_endpoints() {
+        let mut city=sample_city();
+        city.streets.push(street("bend",&[
+            (275.,100.),(298.,100.),(320.,130.),(350.,130.)
+        ]));
+        city.streets[0].osm_node_ids=vec![11,12];
         let a=chunk_city(&city,ChunkKey{x:0,z:0});
         let b=chunk_city(&city,ChunkKey{x:1,z:0});
-        let a_road=a.streets.iter().find(|s|s.source_id.starts_with("crossing")).unwrap();
-        let b_road=b.streets.iter().find(|s|s.source_id.starts_with("crossing")).unwrap();
-        assert_eq!(a_road.path[0].x,0.0);
-        assert_eq!(a_road.path[1].x,CHUNK_SIZE_M);
-        assert_eq!(b_road.path[0].x,CHUNK_SIZE_M);
-        assert_eq!(b_road.path[1].x,CHUNK_SIZE_M*2.0);
+        for selected in [&a,&b] {
+            let cross=selected.streets.iter()
+                .find(|s|s.source_id=="crossing").unwrap();
+            assert_eq!(cross.path,city.streets[0].path);
+            assert_eq!(cross.osm_node_ids,[11,12]);
+            let bend=selected.streets.iter()
+                .find(|s|s.source_id=="bend").unwrap();
+            assert_eq!(bend.path,city.streets.last().unwrap().path);
+        }
         assert_eq!(city.streets[0].path[0].x,-800.0);
-        assert!(a_road.osm_node_ids.is_empty());
+    }
+    #[test]
+    fn surface_halo_selects_width_without_exploding_to_all_streets() {
+        let mut city=sample_city();
+        city.streets.push(street("wide",&[(310.,80.),(320.,90.)]));
+        city.streets.push(street("remote",&[(500.,80.),(520.,90.)]));
+        let chosen=chunk_city(&city,ChunkKey{x:0,z:0});
+        assert!(chosen.streets.iter().any(|s|s.source_id=="wide"));
+        assert!(!chosen.streets.iter().any(|s|s.source_id=="remote"));
     }
     #[test]
     fn a_building_is_owned_by_one_cell_even_when_it_crosses_an_edge() {
@@ -288,13 +283,6 @@ mod tests {
         assert_eq!(b.buildings[0].source_id,"b1");
         assert_eq!(city.buildings.len(),1);
     }
-    #[test]
-    fn clip_rejects_zero_length_touch_and_missed_cell() {
-        let bbox=[0.0,0.0,300.0,300.0];
-        assert!(clip_segment(Point{x:-20.0,z:0.0},Point{x:0.0,z:0.0},bbox).is_none());
-        assert!(clip_segment(Point{x:-20.0,z:-10.0},Point{x:-1.0,z:-10.0},bbox).is_none());
-    }
-
     #[test]
     fn long_crossing_street_is_kept_even_when_endpoints_are_distant() {
         let city=sample_city();
