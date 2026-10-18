@@ -78,7 +78,12 @@ self.onmessage=async event=>{
       const payload=engine.mesh_chunk(data.x,data.z);
       if(!(payload instanceof Uint8Array) || payload.byteLength<24)
         throw Error("Invalid binary mesh output");
-      self.postMessage({type:"mesh",payload},[payload.buffer]);
+      const backing=payload.buffer;
+      self.postMessage({type:"mesh",payload},[backing]);
+      // The browser must detach the worker's backing store immediately:
+      // an ordinary structured clone would preserve it, doubling memory.
+      if(backing.byteLength!==0)
+        throw Error("Browser did not transfer mesh ArrayBuffer ownership");
     }catch(error){
       failed=true;
       self.postMessage({type:"error",message:String(error)});
