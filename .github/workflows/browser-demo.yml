@@ -36,10 +36,10 @@ on:
       - scripts/qa-browser.py
   workflow_dispatch:
 
-# Only one Pages deployment at a time; a newer push wins.
+# Prioritize the latest verified commit; do not queue obsolete full WASM builds.
 concurrency:
   group: urbarium-pages
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   package:
