@@ -57,8 +57,10 @@ pub fn first_frame_streets(city:&City,center:Point,radius_m:f64)->City {
  * minimap and explicit full-scene fallback.
  */
 pub const CHUNK_SIZE_M:f64=300.0;
-pub const CHUNK_RADIUS:i32=1;
-pub const MAX_RESIDENT_CHUNKS:usize=9;
+// Keep enough cells to preserve distant skyline in the bounded pilot.
+// Larger regions will need screen-space LOD and measured frustum culling.
+pub const VIEW_RADIUS_M:f64=3_000.0;
+pub const MAX_RESIDENT_CHUNKS:usize=96;
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq,PartialOrd,Ord,Hash)]
 pub struct ChunkKey{pub x:i32,pub z:i32}
@@ -76,29 +78,48 @@ impl ChunkKey {
         Point{x:(b[0]+b[2])*0.5,z:(b[1]+b[3])*0.5}
     }
 }
-pub fn desired_chunks(camera:Point,region:&crate::Region)->Vec<ChunkKey>{
-    let origin=ChunkKey::at(camera);
+/// Every chunk covering the source region is a *potentially visible* chunk.
+/// Prioritize proximity without discarding the distant skyline: on the pilot
+/// all cells fit within the view radius and the bounded GPU residency budget.
+pub fn all_region_chunks(region:&crate::Region)->Vec<ChunkKey>{
     let sw=region.project(region.bbox[0],region.bbox[1]);
     let ne=region.project(region.bbox[2],region.bbox[3]);
+    let x0=(sw.x/CHUNK_SIZE_M).floor() as i32;
+    let x1=(ne.x/CHUNK_SIZE_M).floor() as i32;
+    let z0=(sw.z/CHUNK_SIZE_M).floor() as i32;
+    let z1=(ne.z/CHUNK_SIZE_M).floor() as i32;
     let mut chunks=Vec::new();
-    for dz in -CHUNK_RADIUS..=CHUNK_RADIUS {
-        for dx in -CHUNK_RADIUS..=CHUNK_RADIUS {
-            let k=ChunkKey{x:origin.x+dx,z:origin.z+dz};
+    for z in z0..=z1{
+        for x in x0..=x1{
+            let k=ChunkKey{x,z};
             let b=k.bounds();
             if b[0]<ne.x && b[2]>sw.x && b[1]<ne.z && b[3]>sw.z {
                 chunks.push(k);
             }
         }
     }
+    chunks
+}
+fn squared_distance_to_cell(p:Point,key:ChunkKey)->f64{
+    let b=key.bounds();
+    let dx=(p.x.clamp(b[0],b[2])-p.x).abs();
+    let dz=(p.z.clamp(b[1],b[3])-p.z).abs();
+    dx*dx+dz*dz
+}
+pub fn desired_chunks(camera:Point,region:&crate::Region)->Vec<ChunkKey>{
+    let mut chunks=all_region_chunks(region);
+    // Conservative AABB distance rather than a view-direction cone:
+    // an elevated/rotating camera must not make background buildings vanish.
+    chunks.retain(|k|squared_distance_to_cell(camera,*k)<=VIEW_RADIUS_M*VIEW_RADIUS_M);
     chunks.sort_by(|a,b|{
-        let a=a.center();let b=b.center();
-        let da=(a.x-camera.x).powi(2)+(a.z-camera.z).powi(2);
-        let db=(b.x-camera.x).powi(2)+(b.z-camera.z).powi(2);
-        da.total_cmp(&db).then_with(||a.x.total_cmp(&b.x))
+        squared_distance_to_cell(camera,*a)
+            .total_cmp(&squared_distance_to_cell(camera,*b))
+            .then_with(||a.cmp(b))
     });
     chunks.truncate(MAX_RESIDENT_CHUNKS);
     chunks
 }
+
 fn owner(building:&crate::Building)->Option<ChunkKey>{
     let ring=building.polygons.first()?.rings.first()?;
     if ring.is_empty(){return None;}
@@ -196,9 +217,47 @@ mod tests {
         assert!(elsewhere.len()<=MAX_RESIDENT_CHUNKS);
         assert!(at_origin.contains(&ChunkKey{x:0,z:0}));
         assert!(elsewhere.contains(&ChunkKey{x:2,z:0}));
-        assert_ne!(at_origin,elsewhere);
-        assert!(at_origin.iter().any(|k| !elsewhere.contains(k)));
+        // A small pilot must not lose buildings when the camera moves:
+        // every region cell remains in scope, including distant high-rises.
+        assert_eq!(at_origin.len(),all_region_chunks(&city.region).len());
+        assert_eq!(at_origin.iter().copied().collect::<std::collections::BTreeSet<_>>(),
+            elsewhere.iter().copied().collect());
+        assert!(at_origin.len()>9);
     }
+    #[test]
+    fn all_pilot_cells_survive_elevated_camera_relocation() {
+        let region=crate::Region{
+            id:"downtown-la".into(),name:"Downtown LA".into(),
+            origin:[-118.25,34.05],
+            bbox:[-118.258,34.045,-118.242,34.056],
+        };
+        let all=all_region_chunks(&region);
+        assert!(all.len()>9 && all.len()<=MAX_RESIDENT_CHUNKS, "{:?}",all.len());
+        for camera in [
+            Point{x:0.0,z:0.0}, Point{x:-400.0,z:-400.0},
+            Point{x:400.0,z:300.0},Point{x:600.0,z:-300.0},
+        ] {
+            let requested=desired_chunks(camera,&region);
+            let keys:std::collections::BTreeSet<_>=requested.into_iter().collect();
+            assert_eq!(keys.len(),all.len(),"camera {camera:?} lost a skyline cell");
+            assert!(all.iter().all(|k|keys.contains(k)));
+        }
+    }
+    #[test]
+    fn far_away_cells_are_still_bounded_on_large_geography() {
+        let huge=crate::Region{
+            id:"large".into(),name:"large".into(),
+            origin:[0.0,0.0],bbox:[-0.09,-0.09,0.09,0.09],
+        };
+        let origin=desired_chunks(Point{x:0.0,z:0.0},&huge);
+        let remote=desired_chunks(Point{x:5000.0,z:5000.0},&huge);
+        assert!(origin.len()<=MAX_RESIDENT_CHUNKS);
+        assert!(remote.len()<=MAX_RESIDENT_CHUNKS);
+        assert!(!origin.is_empty() && !remote.is_empty());
+        assert_ne!(origin.iter().copied().collect::<std::collections::BTreeSet<_>>(),
+            remote.iter().copied().collect());
+    }
+
     #[test]
     fn clipping_preserves_cross_cell_road_without_repeated_area() {
         let city=sample_city();
