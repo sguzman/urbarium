@@ -135,26 +135,57 @@ fn owner(building:&crate::Building)->Option<ChunkKey>{
 /// a cell are meshed, while their full paths preserve bend geometry.
 pub const ROAD_CONTEXT_HALO_M:f64=80.0;
 
-fn street_near_cell(street:&Street,bounds:[f64;4])->bool {
+fn segment_near_cell(a:Point,b:Point,bounds:[f64;4])->bool {
     let halo=ROAD_CONTEXT_HALO_M;
-    street.path.windows(2).any(|segment| {
-        let a=segment[0];let b=segment[1];
-        a.x.min(b.x)<=bounds[2]+halo && a.x.max(b.x)>=bounds[0]-halo &&
-        a.z.min(b.z)<=bounds[3]+halo && a.z.max(b.z)>=bounds[1]-halo
-    })
+    a.x.min(b.x)<=bounds[2]+halo && a.x.max(b.x)>=bounds[0]-halo &&
+    a.z.min(b.z)<=bounds[3]+halo && a.z.max(b.z)>=bounds[1]-halo
 }
 
-/// Select untouched source paths for each cell's surface generator. It is the
-/// *finished triangles*, not these centerlines, that receive exact cell
-/// ownership. Never fabricate endpoints or erase OSM node identities here.
+/// Keep only source spans near a tile, plus one adjacent control vertex on
+/// either side of each run. The guard vertices preserve full-path miter
+/// normals at every visible bend. Any temporary run end is at least the
+/// 80-meter context halo from the rendered cell (ribbon reach <=60m), so
+/// it cannot create a visible artificial end cap or junction.
+fn local_street_spans(street:&Street,bounds:[f64;4])->Vec<Street>{
+    let len=street.path.len();
+    if len<2 {return Vec::new();}
+    let mut ranges:Vec<(usize,usize)>=Vec::new();
+    for (i,pair) in street.path.windows(2).enumerate(){
+        if !segment_near_cell(pair[0],pair[1],bounds){continue;}
+        let lo=i.saturating_sub(1);
+        let hi=(i+2).min(len-1);
+        if let Some(last)=ranges.last_mut() {
+            if lo<=last.1 {
+                last.1=last.1.max(hi);
+                continue;
+            }
+        }
+        ranges.push((lo,hi));
+    }
+    ranges.into_iter().map(|(lo,hi)|{
+        let mut part=street.clone();
+        part.path=street.path[lo..=hi].to_vec();
+        if street.osm_node_ids.len()==len {
+            part.osm_node_ids=street.osm_node_ids[lo..=hi].to_vec();
+        }else{
+            part.osm_node_ids.clear();
+        }
+        part
+    }).collect()
+}
+
+/// Choose source-derived road spans with enough neighboring centerline
+/// context to render the identical visible bends as the full source city.
+/// The finished surface triangles are then clipped to exact geographic
+/// tile/region bounds by chunk_mesh; never clip the centerline to that tile.
 pub fn chunk_city(source:&City,key:ChunkKey)->City {
     let bounds=key.bounds();
     City {
         schema_version:source.schema_version,
         region:source.region.clone(),provenance:Vec::new(),
         streets:source.streets.iter()
-            .filter(|street|street_near_cell(street,bounds))
-            .cloned().collect(),
+            .flat_map(|street|local_street_spans(street,bounds))
+            .collect(),
         buildings:source.buildings.iter()
             .filter(|b|owner(b)==Some(key)).cloned().collect(),
     }
@@ -257,6 +288,28 @@ mod tests {
             assert_eq!(bend.path,city.streets.last().unwrap().path);
         }
         assert_eq!(city.streets[0].path[0].x,-800.0);
+    }
+    #[test]
+    fn long_winding_source_is_windowed_without_losing_bend_neighbors() {
+        let mut city=sample_city();
+        let points:(Vec<(f64,f64)>)=(-100..=100)
+            .map(|i|(i as f64*10.0,100.0+if i>=30{20.0}else{0.0}))
+            .collect();
+        let mut winding=street("long",&points);
+        winding.osm_node_ids=(0..winding.path.len() as i64).collect();
+        city.streets.push(winding);
+        let selected=chunk_city(&city,ChunkKey{x:0,z:0});
+        let span=selected.streets.iter().find(|s|s.source_id=="long").unwrap();
+        assert!(span.path.len()<70,
+            "meshing an entire kilometer-long road per tile regresses worker memory");
+        assert!(span.path.len()>35);
+        assert!(span.path.iter().any(|p|p.x==300.0));
+        assert_eq!(span.path.len(),span.osm_node_ids.len());
+        for (p,id) in span.path.iter().zip(&span.osm_node_ids){
+            assert_eq!(p.x,*id as f64*10.0-1000.0);
+        }
+        assert_eq!(city.streets.last().unwrap().path.len(),201,
+            "source must not be rewritten for other chunks or minimap");
     }
     #[test]
     fn surface_halo_selects_width_without_exploding_to_all_streets() {
