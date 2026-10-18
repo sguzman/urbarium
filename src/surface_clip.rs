@@ -7,6 +7,7 @@
 //! common case remains cheap. Buildings are intentionally NOT cut here.
 
 use crate::geometry::{Mesh, Vertex};
+use std::collections::HashMap;
 
 fn inside(v: Vertex, axis: usize, limit: f32, keep_greater: bool) -> bool {
     if keep_greater { v.position[axis] >= limit }
@@ -52,6 +53,24 @@ fn area_xz(a: Vertex, b: Vertex, c: Vertex) -> f64 {
         - (b.position[2] as f64 - az) * (c.position[0] as f64 - ax)).abs() * 0.5
 }
 
+// Share existing and newly cut polygon vertices by their exact f32 bit pattern.
+// Avoid geometric quantization here: independently classified overlapping
+// pavements and elevation levels must never be accidentally merged.
+type VertexKey = [u32;6];
+fn vertex_key(v:Vertex)->VertexKey {
+    [v.position[0].to_bits(),v.position[1].to_bits(),v.position[2].to_bits(),
+     v.normal[0].to_bits(),v.normal[1].to_bits(),v.normal[2].to_bits()]
+}
+fn intern(out:&mut Mesh,lookup:&mut HashMap<VertexKey,u32>,v:Vertex)->Result<u32,String>{
+    let key=vertex_key(v);
+    if let Some(&index)=lookup.get(&key){return Ok(index);}
+    let index=u32::try_from(out.vertices.len())
+        .map_err(|_|"surface vertex count overflow")?;
+    out.vertices.push(v);
+    lookup.insert(key,index);
+    Ok(index)
+}
+
 /// Clip asphalt, walk, step and rail surfaces AFTER offsets, bends and junctions
 /// have been computed. Bounds are [west_x, south_z, east_x, north_z] in meters.
 /// The inside and neighboring tile use the same X/Z boundaries, without
@@ -67,6 +86,7 @@ pub fn clip_surface_to_bounds(mesh: &Mesh, bounds: [f64; 4]) -> Result<Mesh, Str
                  (2usize, bounds[1] as f32, true),
                  (2usize, bounds[3] as f32, false)];
     let mut out = Mesh::default();
+    let mut lookup=HashMap::<VertexKey,u32>::new();
     let mut reused = vec![None; mesh.vertices.len()];
     for indices in mesh.indices.chunks_exact(3) {
         let [a, b, c] = [indices[0] as usize, indices[1] as usize, indices[2] as usize];
@@ -82,10 +102,8 @@ pub fn clip_surface_to_bounds(mesh: &Mesh, bounds: [f64; 4]) -> Result<Mesh, Str
                 let mapped = match *slot {
                     Some(mapped) => mapped,
                     None => {
-                        let mapped = u32::try_from(out.vertices.len())
-                            .map_err(|_|"surface vertex count overflow")?;
-                        out.vertices.push(mesh.vertices[index as usize]);
-                        *slot = Some(mapped);
+                        let mapped=intern(&mut out,&mut lookup,mesh.vertices[index as usize])?;
+                        *slot=Some(mapped);
                         mapped
                     }
                 };
@@ -106,13 +124,14 @@ pub fn clip_surface_to_bounds(mesh: &Mesh, bounds: [f64; 4]) -> Result<Mesh, Str
             let [a,b,c] = [poly[0], poly[i], poly[i+1]];
             // Boundary-only touches have no geographic area or road surface.
             if area_xz(a,b,c) < 1e-7 { continue; }
-            let base = u32::try_from(out.vertices.len())
-                .map_err(|_|"surface vertex count overflow")?;
-            if base > u32::MAX - 3 {
-                return Err("surface clipping vertex count overflow".into());
+            let ids=[
+                intern(&mut out,&mut lookup,a)?,
+                intern(&mut out,&mut lookup,b)?,
+                intern(&mut out,&mut lookup,c)?,
+            ];
+            if ids[0]!=ids[1] && ids[0]!=ids[2] && ids[1]!=ids[2] {
+                out.indices.extend(ids);
             }
-            out.vertices.extend([a,b,c]);
-            out.indices.extend([base,base+1,base+2]);
         }
     }
     Ok(out)
@@ -165,6 +184,35 @@ mod tests {
         let touches=|mesh:&Mesh| mesh.vertices.iter()
             .filter(|v|(v.position[0]-300.0).abs()<1e-4).count();
         assert!(touches(&west)>0 && touches(&east)>0);
+    }
+    #[test]
+    fn clipped_intersection_tessellation_shares_corners_between_triangles() {
+        let mut quad=Mesh::default();
+        for &(x,z) in &[(-10.,-10.),(10.,-10.),(10.,10.),(-10.,10.)] {
+            quad.vertices.push(Vertex {position:[x,0.24,z],normal:[0.,1.,0.]});
+        }
+        quad.indices.extend([0,3,1,1,3,2]);
+        let west=clip_surface_to_bounds(&quad,[-10.,-10.,0.,10.]).unwrap();
+        let east=clip_surface_to_bounds(&quad,[0.,-10.,10.,10.]).unwrap();
+        assert!((area(&west)-200.).abs()<0.001);
+        assert!((area(&east)-200.).abs()<0.001);
+        assert!(west.indices.len()>west.vertices.len(),
+            "cut triangles must reuse shared GPU vertices");
+        assert!(east.indices.len()>east.vertices.len(),
+            "cut triangles must reuse shared GPU vertices");
+        assert!(west.indices.iter().all(|&i|(i as usize)<west.vertices.len()));
+        assert!(east.indices.iter().all(|&i|(i as usize)<east.vertices.len()));
+    }
+    #[test]
+    fn all_four_tile_owners_reconstruct_crossing_surface_area() {
+        let mesh=road(&[(-25.,-25.),(25.,25.)]);
+        let tiles=[[-50.,-50.,0.,0.],[0.,-50.,50.,0.],
+                   [-50.,0.,0.,50.],[0.,0.,50.,50.]];
+        let sum:f64=tiles.into_iter()
+            .map(|bounds|area(&clip_surface_to_bounds(&mesh,bounds).unwrap()))
+            .sum();
+        assert!((sum-area(&mesh)).abs()<0.005,
+            "four cells must neither overlap nor erase road coverage");
     }
     #[test]
     fn rejects_invalid_triangles_instead_of_panicking() {

@@ -78,15 +78,16 @@ The geometry pipeline now enforces these invariants:
 - Conform transportation surfaces to the **same DEM triangles** used by the
   rendered ground. Per-vertex height sampling alone is insufficient: a road
   triangle can penetrate a nonplanar DEM between its original vertices.
-  Split only triangles spanning DEM-face boundaries, and preserve shared
-  vertices in the common same-face case.
+  Clip fully meshed planar surfaces to geographic chunk ownership **before**
+  DEM-face subdivision, so source halo geometry is never terrain-tessellated
+  just to be discarded. Reuse indexed vertices in both clipping passes.
 - Assign **finished** surface triangles to exact intersection of chunk bounds
   and geographic region bounds. Clip polygons, not source centerlines; do not
   invent borders or delete any partial triangle wholesale.
 - Keep whole building roofs and walls owned by one deterministic cell; building
   footprint ownership follows a different rule than roadway surface ownership.
 - Unit tests cover bent-road surface area conservation across chunk borders,
-  full-path/source-ID retention, and DEM midpoint/edge clearance even on
+  bend-safe source context retention, four-cell area conservation, and DEM midpoint/edge clearance even on
   steep nonplanar synthetic terrain.
 - Rust CI and both browser-renderer QA gates must pass before changes to the
   default site. All geometry source modules now trigger browser QA on push.

@@ -129,20 +129,28 @@ impl TerrainGrid {
         if !bridge_preview {
             crate::road_grade::flatten_bridge_spans(roads)?;
         }
-        for (kind,mesh) in roads.layers.iter_mut() {
-            if matches!(kind,SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
-                SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails|
-                SurfaceKind::BridgeStripe){continue;}
-            // A centerline ribbon triangulated across several DEM faces can
-            // pierce terrain between correctly sampled vertices. Conform the
-            // entire surface to the actual ground triangles; this retains
-            // geometrically defined clearance even at steep grid diagonals.
-            *mesh=crate::terrain_drape::conform_to_ground(self,region,mesh)?;
-        }
+        self.conform_prepared_surface_layers(region,roads)?;
         if bridge_preview {
             crate::road_grade::build_bridge_layers(roads,|x,z|
                 self.sample_surface(region,x,z))
         }else{Ok(())}
+    }
+
+    /// Conform only prepared at-grade surface meshes. Callers that own chunks
+    /// should build original ribbons, flatten the optional bridge preview,
+    /// clip the finished horizontal surfaces to the cell bounds, and THEN
+    /// invoke this pass. This avoids terrain-tessellating the wide source halo
+    /// around every cell, without sacrificing full-path bend context.
+    pub fn conform_prepared_surface_layers(&self,region:&Region,roads:&mut RoadScene)
+        ->Result<(),String> {
+        self.validate(region)?;
+        for (kind,mesh) in roads.layers.iter_mut() {
+            if matches!(kind,SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
+                SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails|
+                SurfaceKind::BridgeStripe){continue;}
+            *mesh=crate::terrain_drape::conform_to_ground(self,region,mesh)?;
+        }
+        Ok(())
     }
 
     /// Keep each building's foundation and roof horizontal by applying one

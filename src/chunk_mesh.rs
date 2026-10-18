@@ -127,7 +127,7 @@ pub fn landmark_disc(terrain:&TerrainGrid,region:&Region,p:Point,radius:f64)->Me
 
 // A cell contributes buildings, classified street fragments and source-backed
 // landmark discs, but NOT another full-region terrain mesh. Each building has
-// one canonical owner cell; each road segment is clipped to its owner cell.
+// one canonical owner cell; complete road surfaces are clipped to cells.
 pub fn chunk_geometry(city:&City,terrain:&TerrainGrid,
     key:ChunkKey)
     ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String>{
@@ -136,12 +136,15 @@ pub fn chunk_geometry(city:&City,terrain:&TerrainGrid,
         return Err(format!("{} chunk buildings could not be meshed",report.buildings_skipped));
     }
     let (mut roads,_)=mesh_streets_with_bridges(city,false)?;
-    terrain.drape_roads_with_preview(&city.region,&mut roads,false)?;
+    // First flatten the source-qualified bridge spans exactly once. The
+    // ordinary viewer must not resurrect hidden freeway ribbons.
+    crate::road_grade::flatten_bridge_spans(&mut roads)?;
 
-    // Source roads have full path context: preserve the genuine bend normals,
-    // widths and junction patches through meshing and terrain draping, THEN
-    // assign their finished triangles to this tile. Intersect with the region
-    // itself so edge cells do not bleed onto a neighboring joined region.
+    // Preserve full-path bend normals, actual intersections and layer widths
+    // through planar meshing. Clip only the FINISHED horizontal polygons,
+    // before expensive DEM-face splitting. This removes 80m halo triangles
+    // from the terrain pass instead of rebuilding them per render chunk.
+    // Region bounds also prevent bleed into the joined neighboring region.
     let sw=city.region.project(city.region.bbox[0],city.region.bbox[1]);
     let ne=city.region.project(city.region.bbox[2],city.region.bbox[3]);
     let tile=key.bounds();
@@ -155,6 +158,7 @@ pub fn chunk_geometry(city:&City,terrain:&TerrainGrid,
     for mesh in roads.layers.values_mut() {
         *mesh=clip_surface_to_bounds(mesh,bounds)?;
     }
+    terrain.conform_prepared_surface_layers(&city.region,&mut roads)?;
     let mut vertices=Vec::new();
     let mut indices=Vec::new();
     let mut batches=Vec::new();
