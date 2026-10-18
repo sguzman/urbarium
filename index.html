@@ -53,7 +53,7 @@
   <!-- Install version-aware geographic fetch interception before WASM boot. -->
   <script src="./data-cache.js?v=content-hash-v2"></script>
   <!-- Size-optimize release WASM to reduce cold-network transfer on slow connections. -->
-  <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="z">
+  <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory">
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/landmarks.json" data-target-path="assets">
   <link data-trunk rel="copy-file" href="web/gpu-test.html">
