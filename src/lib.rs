@@ -11,6 +11,7 @@ pub mod terrain;
 pub mod world;
 pub mod streaming;
 pub mod surface_clip;
+pub mod terrain_drape;
 #[cfg(feature="viewer")]
 pub mod chunk_mesh;
 #[cfg(feature="viewer")]
