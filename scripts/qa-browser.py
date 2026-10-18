@@ -1031,15 +1031,26 @@ with sync_playwright() as p:
         page.keyboard.up("s")
         back=joined_pose()
         assert abs(back[1]-start[1])<0.2,("Backward flight must hold altitude",start,back)
-        page.keyboard.down("e")
-        sleep(0.4)
-        page.keyboard.up("e")
-        up=joined_pose()
+        # Software WebGL2 can go hundreds of milliseconds without a present
+        # under CI load. A fixed 400ms keypress can therefore test *zero*
+        # simulation frames and misdiagnose the camera as broken. Keep the key
+        # held until the required movement is actually observed, with a firm
+        # timeout and guaranteed release. The movement requirement is unchanged.
+        def assert_vertical_move(key,baseline,direction):
+            page.keyboard.down(key)
+            try:
+                page.wait_for_function("""([base,sign]) => {
+                    const pose=document.querySelector("#status")?.dataset.cameraPose;
+                    if (!pose) return false;
+                    const altitude=Number(pose.split(",")[1]);
+                    return Number.isFinite(altitude) && sign*(altitude-base)>0.2;
+                }""",arg=[baseline,direction],timeout=20000)
+            finally:
+                page.keyboard.up(key)
+            return joined_pose()
+        up=assert_vertical_move("e",back[1],1)
         assert up[1]>back[1]+0.2,("E must raise the camera",back,up)
-        page.keyboard.down("q")
-        sleep(0.4)
-        page.keyboard.up("q")
-        down=joined_pose()
+        down=assert_vertical_move("q",up[1],-1)
         assert down[1]<up[1]-0.2,("Q must lower the camera",up,down)
         print("Joined world WASD height stability and explicit E/Q altitude controls passed",start,mid,back,up,down)
         assert not errors,errors
