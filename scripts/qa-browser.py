@@ -289,7 +289,11 @@ with sync_playwright() as p:
         page.wait_for_timeout(450)
         page.keyboard.up("w")
         page.wait_for_timeout(450)
-        assert page.locator("#status").inner_text().startswith("Downtown LA ready")
+        # Progressive enrichment replaces the initial "ready" text with
+        # final mesh statistics. Assert durable rendering state, not a
+        # transient informational string.
+        assert page.locator("#status").get_attribute("data-render-stage")=="first-present"
+        assert page.locator("#status").get_attribute("data-scene-detail")=="complete"
         page.wait_for_function(
             "() => Number(document.querySelector('#status')?.getAttribute('data-frame-count') || '0') >= 3",
             timeout=15000,
