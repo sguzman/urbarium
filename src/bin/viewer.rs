@@ -1,7 +1,7 @@
 //! First WASM/WebGPU city viewer: actual procedural Urbarium meshes, no JS geometry.
 //! FPS pointer lock, WASD walk, E/Q fly, Shift accelerates.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap,HashSet};
 use std::mem::size_of;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -456,6 +456,84 @@ fn coarse_city(city:&City,terrain:&TerrainGrid,bridges:bool,spawn:Point)
     Ok((vertices,indices,batches))
 }
 
+
+// A cell contributes buildings, classified street fragments and source-backed
+// landmark discs, but NOT another full-region terrain mesh. Each building has
+// one canonical owner cell; each road segment is clipped to its owner cell.
+fn chunk_geometry(city:&City,terrain:&TerrainGrid,
+    key:urbarium::streaming::ChunkKey)
+    ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String>{
+    let (buildings,report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
+    if report.buildings_skipped>0 {
+        return Err(format!("{} chunk buildings could not be meshed",report.buildings_skipped));
+    }
+    let (mut roads,_)=mesh_streets_with_bridges(city,false)?;
+    terrain.drape_roads_with_preview(&city.region,&mut roads,false)?;
+    let mut vertices=Vec::new();
+    let mut indices=Vec::new();
+    let mut batches=Vec::new();
+    let mut add=|mesh:&Mesh,color:[f32;3],layer:SceneLayer|->Result<(),String>{
+        let start=u32::try_from(indices.len()).map_err(|_|"chunk index count overflow")?;
+        append_part(mesh,color,&mut vertices,&mut indices)?;
+        let end=u32::try_from(indices.len()).map_err(|_|"chunk index count overflow")?;
+        if end>start {batches.push(DrawBatch{layer,first_index:start,count:end-start});}
+        Ok(())
+    };
+    add(&buildings,[0.71,0.76,0.81],SceneLayer::Buildings)?;
+    for (kind,mesh) in roads.layers {
+        let (layer,color)=match kind {
+            SurfaceKind::Road=>(SceneLayer::Road,[0.24,0.26,0.29]),
+            SurfaceKind::Motorway=>(SceneLayer::Road,[0.14,0.19,0.23]),
+            SurfaceKind::MotorwayStripe=>(SceneLayer::Road,[0.91,0.89,0.77]),
+            SurfaceKind::Walk=>(SceneLayer::Walk,[0.60,0.58,0.51]),
+            SurfaceKind::Steps=>(SceneLayer::Steps,[0.74,0.62,0.46]),
+            SurfaceKind::Rail=>(SceneLayer::Rail,[0.40,0.52,0.61]),
+            SurfaceKind::ElevatedRoad=>(SceneLayer::ElevatedRoad,[0.26,0.29,0.32]),
+            SurfaceKind::BridgeFascia=>(SceneLayer::BridgeStructure,[0.48,0.51,0.52]),
+            SurfaceKind::BridgeSupports=>(SceneLayer::BridgeStructure,[0.61,0.63,0.62]),
+            SurfaceKind::BridgeRails=>(SceneLayer::BridgeStructure,[0.76,0.78,0.78]),
+            SurfaceKind::BridgeStripe=>(SceneLayer::ElevatedRoad,[0.91,0.89,0.77]),
+        };
+        add(&mesh,color,layer)?;
+    }
+    let mut landmarks:LandmarkCatalog=
+        serde_json::from_str(include_str!("../../web/landmarks.json"))
+            .map_err(|err|format!("bundled landmarks: {err}"))?;
+    if landmarks.region_id!=city.region.id{landmarks.landmarks.clear();}
+    // Marker ownership is canonical by source position, independently
+    // of the building that might contain the landmark.
+    for landmark in &landmarks.landmarks {
+        let [lon,lat]=landmark.coordinates;
+        let p=city.region.project(lon,lat);
+        if urbarium::streaming::ChunkKey::at(p)!=key{continue;}
+        if let Some(rgb)=category_rgb(&landmark.kind) {
+            if let Some(category)=category_index(&landmark.kind){
+                let disc=landmark_disc(terrain,&city.region,p,
+                    if landmark.kind=="park"{15.0}else{6.0});
+                add(&disc,rgb,SceneLayer::Marker(category))?;
+            }
+        }
+    }
+    // Category tint is applied to each complete, original building mesh;
+    // no polygon is cut at cell edges.
+    let mut cursor=0usize;
+    for building in &city.buildings {
+        let Ok(building_mesh)=mesh_building(building,HeightPolicy::default()) else{continue};
+        let end=cursor+building_mesh.vertices.len();
+        if end>buildings.vertices.len(){return Err("chunk building vertex ordering mismatch".into());}
+        if let Some((rgb,id))=building_landmark_color(
+            building,&city.region,&landmarks.landmarks){
+            for vertex in &mut vertices[cursor..end]{
+                vertex.category_color=rgb;
+                vertex.category_id=(id+1) as f32;
+            }
+        }
+        cursor=end;
+    }
+    if cursor!=buildings.vertices.len(){return Err("chunk building count mismatch".into());}
+    Ok((vertices,indices,batches))
+}
+
 fn info(message: &str) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -537,6 +615,15 @@ fn mark_first_frame_detail(){
     }
 }
 
+fn browser_chunk_streaming()->bool {
+    #[cfg(target_arch="wasm32")]
+    if let Some(value)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-chunk-streaming")){
+        return value=="true";
+    }
+    false
+}
 fn browser_joined_world()->bool {
     #[cfg(target_arch="wasm32")]
     if let Some(value)=web_sys::window().and_then(|w|w.document())
@@ -854,6 +941,41 @@ type NeighborCpu=(
     Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>,TerrainGrid,Region,
     CollisionWorld,urbarium::world::TilePlacement,[f64;4]
 );
+
+struct ChunkBuffers{
+    vertex:Option<wgpu::Buffer>,
+    index:Option<wgpu::Buffer>,
+    batches:Vec<DrawBatch>,
+    bytes:usize,
+}
+struct ChunkStream{
+    source:City,
+    terrain:TerrainGrid,
+    chunks:BTreeMap<urbarium::streaming::ChunkKey,ChunkBuffers>,
+    built:u64,
+    evicted:u64,
+    preview_retired:bool,
+    last_camera_cell:Option<urbarium::streaming::ChunkKey>,
+}
+fn set_chunk_telemetry(resident:usize,wanted:usize,built:u64,evicted:u64,
+    initial_complete:bool){
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")){
+        for (k,v) in [
+            ("data-chunks-resident",resident.to_string()),
+            ("data-chunks-wanted",wanted.to_string()),
+            ("data-chunks-built",built.to_string()),
+            ("data-chunks-evicted",evicted.to_string()),
+            ("data-chunk-size-m",urbarium::streaming::CHUNK_SIZE_M.to_string()),
+            ("data-chunk-streaming","true".into()),
+            ("data-chunk-initial-complete",initial_complete.to_string()),
+        ] {let _=el.set_attribute(k,&v);}
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(resident,wanted,built,evicted,initial_complete);
+}
+
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -881,6 +1003,7 @@ struct Graphics {
     primary_bounds:[f64;4],
     neighbor:Option<ResidentTile>,
     deferred_scene:Option<DeferredScene>,
+    stream:Option<ChunkStream>,
     primary_gpu_bytes:usize,
     rendered_frames: u64,
     gpu_mesh_bytes: usize,
@@ -1027,6 +1150,95 @@ impl Graphics {
         self.gpu_mesh_bytes+=bytes;
         set_world_telemetry(2,0);
     }
+
+    fn begin_streaming(&mut self,job:DeferredScene){
+        // Joined-world and experimental bridge views retain their verified
+        // full-section fallback; normal single-region progressive viewer
+        // uses camera-following resident cells.
+        self.stream=Some(ChunkStream{
+            source:job.city,terrain:job.terrain,
+            chunks:BTreeMap::new(),built:0,evicted:0,
+            preview_retired:false,last_camera_cell:None,
+        });
+        set_bridge_mesh_triangles(0);
+        set_freeway_mesh_triangles(0);
+    }
+    fn update_chunks(&mut self){
+        let Some(stream)=self.stream.as_mut() else{return};
+        let camera=Point{x:self.camera.position.x as f64,
+            z:self.camera.position.z as f64};
+        let wanted=urbarium::streaming::desired_chunks(camera,&stream.source.region);
+        let previous_cell=stream.last_camera_cell.replace(
+            urbarium::streaming::ChunkKey::at(camera));
+        let moved=previous_cell!=stream.last_camera_cell;
+        if moved && stream.preview_retired {set_scene_detail("streaming");}
+        let unwanted:Vec<_>=stream.chunks.keys().copied()
+            .filter(|k| !wanted.contains(k)).collect();
+        for key in unwanted {
+            if let Some(old)=stream.chunks.remove(&key){
+                self.gpu_mesh_bytes=self.gpu_mesh_bytes.saturating_sub(old.bytes);
+                stream.evicted+=1; // Dropping the buffers releases their GPU residency.
+            }
+        }
+        if let Some(key)=wanted.iter().copied()
+            .find(|key|!stream.chunks.contains_key(key)) {
+            let selected=urbarium::streaming::chunk_city(&stream.source,key);
+            match chunk_geometry(&selected,&stream.terrain,key) {
+                Ok((vertices,indices,batches))=>{
+                    let bytes=vertices.len()*size_of::<GpuVertex>()+
+                        indices.len()*size_of::<u32>();
+                    let vertex=(!vertices.is_empty()).then(||
+                        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                            label:Some("Camera-local city vertices"),
+                            contents:bytemuck::cast_slice(&vertices),
+                            usage:wgpu::BufferUsages::VERTEX,
+                        }));
+                    let index=(!indices.is_empty()).then(||
+                        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                            label:Some("Camera-local city indices"),
+                            contents:bytemuck::cast_slice(&indices),
+                            usage:wgpu::BufferUsages::INDEX,
+                        }));
+                    stream.chunks.insert(key,ChunkBuffers{vertex,index,batches,bytes});
+                    stream.built+=1;
+                    self.gpu_mesh_bytes+=bytes;
+                }
+                Err(error)=>{
+                    set_scene_detail("error");
+                    info(&format!("Camera-local mesh failed in ({},{}): {error}",key.x,key.z));
+                    self.stream=None;
+                    return;
+                }
+            }
+        }
+        let complete=wanted.iter().all(|k|stream.chunks.contains_key(k));
+        let retire=complete && !stream.preview_retired;
+        if retire {
+            stream.preview_retired=true;
+        }
+        let resident=stream.chunks.len();
+        let built=stream.built;
+        let evicted=stream.evicted;
+        let initialized=stream.preview_retired;
+        if retire {
+            // Drop the temporary terrain+road preview only after every
+            // requested chunk is resident. Keep exactly one terrain mesh.
+            let mut vertices=Vec::new();
+            let mut indices=Vec::new();
+            let mut batches=Vec::new();
+            if let Ok(ground)=self.terrain.mesh(&self.region) {
+                if append_part(&ground,[0.39,0.44,0.42],
+                    &mut vertices,&mut indices).is_ok(){
+                    batches.push(DrawBatch{layer:SceneLayer::Ground,
+                        first_index:0,count:indices.len() as u32});
+                    self.set_primary_mesh(vertices,indices,batches);
+                }
+            }
+        }
+        if complete {set_scene_detail("complete");}
+        set_chunk_telemetry(resident,wanted.len(),built,evicted,initialized);
+    }
+
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
         let (camera_request,overview)=browser_camera_request();
         if camera_request!=self.camera_request {
@@ -1122,6 +1334,23 @@ impl Graphics {
                 pass.draw_indexed(batch.first_index..batch.first_index+batch.count,0,0..1);
                 drawn_calls+=1;
                 drawn_triangles+=batch.count/3;
+            }
+            // Independent GPU buffers are submitted only while their cell
+            // is resident; the oldest cells are dropped as the camera moves.
+            if let Some(stream)=&self.stream {
+                for cell in stream.chunks.values(){
+                    if let (Some(vertices),Some(indices))=(&cell.vertex,&cell.index){
+                        pass.set_vertex_buffer(0,vertices.slice(..));
+                        pass.set_index_buffer(indices.slice(..),wgpu::IndexFormat::Uint32);
+                        for batch in &cell.batches {
+                            if !scene_layer_visible(batch.layer){continue;}
+                            pass.draw_indexed(batch.first_index..
+                                batch.first_index+batch.count,0,0..1);
+                            drawn_calls+=1;
+                            drawn_triangles+=batch.count/3;
+                        }
+                    }
+                }
             }
             let mut secondary_draws=0;
             if let Some(neighbor)=&self.neighbor {
@@ -1432,7 +1661,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         world_preview:browser_joined_world(),primary_bounds,neighbor,
-        deferred_scene,primary_gpu_bytes,
+        deferred_scene,stream:None,primary_gpu_bytes,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
         gpu_fault,
@@ -1690,17 +1919,26 @@ impl ApplicationHandler<AppEvent> for App {
                         // has been submitted. The old path blocked the first
                         // frame on two complete sections.
                         if let Some(job)=gfx.deferred_scene.take(){
-                            let proxy=self_proxy(event_loop);
-                            #[cfg(target_arch="wasm32")]
-                            wasm_bindgen_futures::spawn_local(enrich_scene(job,proxy));
-                            #[cfg(not(target_arch="wasm32"))]
-                            pollster::block_on(enrich_scene(job,proxy));
+                            if browser_chunk_streaming() && !job.joined &&
+                                !job.bridge_preview {
+                                gfx.begin_streaming(job);
+                            }else{
+                                let proxy=self_proxy(event_loop);
+                                #[cfg(target_arch="wasm32")]
+                                wasm_bindgen_futures::spawn_local(enrich_scene(job,proxy));
+                                #[cfg(not(target_arch="wasm32"))]
+                                pollster::block_on(enrich_scene(job,proxy));
+                            }
                         }
                     }
                     // One compact pose attribute every frame gives the
                     // 2D minimap and world-space landmark labels 60Hz
                     // camera tracking without redrawing a GIS scene or
                     // setting five separate attributes per frame.
+                    // Build at most one camera-local mesh cell per presented
+                    // frame. The scene stays navigable between cell uploads.
+                    // There is no full-city enrichment in this mode.
+                    if rendered {gfx.update_chunks();}
                     expose_camera_pose_fast(&gfx.camera);
                     // Heavier stats/compatibility attributes remain throttled.
                     if gfx.rendered_frames % 8 == 0 {
