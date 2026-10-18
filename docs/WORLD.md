@@ -18,16 +18,13 @@ How source geography is transformed into sections, coordinate frames, DEM-aware 
 
 ## First adjacent section (October 2026)
 
-The pilot can now select **Downtown LA** or an independently generated
-**Little Tokyo / northern Arts District** section from the Area menu. The
-sections share a geographic edge, but are **not yet stitched**: changing
-sections reloads the viewer and releases the previous section's GPU buffers
-instead of rendering both simultaneously. This is intentional while we
-develop section streaming, visible-section culling, and continuous navigation.
-Each source section has its own Overture city JSON, DEM grid, origin and
-content-hash cache key; the existing Downtown LA scene is unchanged. No
-additional GPU or browser launch configuration is needed. The browser preserves
-the renderer and quality choices when selecting an area.
+The pilot contains independently generated **Downtown LA** and
+**Little Tokyo / northern Arts District** sections. Both now render together
+by default as a joined scene; `?world=0` selects standalone mode. Each source
+section retains its own Overture city JSON, DEM grid, origin, and content-hash
+cache key. The renderer preserves the quality and backend choices when
+switching modes. The joined mode is a bounded two-region preview rather than
+unlimited city streaming.
 
 Source region definitions are enumerated in `regions/catalog.json` and
 validated by `scripts/validate-region-catalog.py`. A new region can use
@@ -62,6 +59,43 @@ ownership by their source-derived centers, and full roofs and walls remain
 intact rather than being cut at tile borders. Catalog-wide source geometry
 and DEM seam validation now runs before deployment. Surveyed curb and
 intersection geometry remains a source-data limitation.
+
+## Road surface ownership and terrain conformity (October 18)
+
+A recurrent defect in chunk streaming was clipping source **centerlines** to
+each 300-meter cell before constructing their ribbon meshes. That lost the
+preceding and following bend normals, broke roadway corners, and fabricated
+artificial road endpoints at every cell border.
+
+The geometry pipeline now enforces these invariants:
+
+- Retain original street centerline paths and geographic tags throughout
+  surface generation; select candidate streets using a bounded 80-meter
+  context halo (the maximum width/miter reach plus margin).
+- Generate full-width asphalt, walking, steps and rail triangles, retaining
+  real source bends, junction topology and material layering.
+- Conform transportation surfaces to the **same DEM triangles** used by the
+  rendered ground. Per-vertex height sampling alone is insufficient: a road
+  triangle can penetrate a nonplanar DEM between its original vertices.
+  Split only triangles spanning DEM-face boundaries, and preserve shared
+  vertices in the common same-face case.
+- Assign **finished** surface triangles to exact intersection of chunk bounds
+  and geographic region bounds. Clip polygons, not source centerlines; do not
+  invent borders or delete any partial triangle wholesale.
+- Keep whole building roofs and walls owned by one deterministic cell; building
+  footprint ownership follows a different rule than roadway surface ownership.
+- Unit tests cover bent-road surface area conservation across chunk borders,
+  full-path/source-ID retention, and DEM midpoint/edge clearance even on
+  steep nonplanar synthetic terrain.
+- Rust CI and both browser-renderer QA gates must pass before changes to the
+  default site. All geometry source modules now trigger browser QA on push.
+
+The source geometry is still centerline-derived and has no surveyed curb
+boundaries. This eliminates two systemic classes of visual clipping but does
+**not** prove that every source-road intersection, building/road conflict,
+or joined-region transition is clean. Real-geography browser verification,
+bounded frame/GPU memory performance, and recorded visible defects remain
+mandatory before calling any road release visually complete.
 
 ## Joined-world camera regression fix (October 17)
 
