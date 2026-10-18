@@ -5,8 +5,10 @@ Controls, display behavior, minimap, landmarks and other browser-facing features
 [Documentation index](INDEX.md) · [Project README](../README.md)
 
 Camera-following mesh chunks are the default in normal single-region
-progressive mode. Details reports resident/built/evicted cell counts; use
-`?stream=0` for the historical full-city enrichment path.
+progressive mode. The entire Downtown LA skyline now stays resident,
+including distant buildings visible from the elevated overview camera.
+Details reports resident/built/evicted cell counts; use `?stream=0` for the
+historical full-city enrichment path.
 Joined-world (`?world=1`) and experimental freeways (`?bridges=1`) still
 use the separately verified full-section renderer.
 

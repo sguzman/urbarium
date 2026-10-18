@@ -104,10 +104,14 @@ with sync_playwright() as p:
             assert page.locator("#status").get_attribute("data-chunk-streaming")=="true"
             resident=int(page.locator("#status").get_attribute("data-chunks-resident"))
             wanted=int(page.locator("#status").get_attribute("data-chunks-wanted"))
-            assert 0<resident==wanted<=9,(resident,wanted)
+            region_total=int(page.locator("#status").get_attribute("data-chunks-region-total"))
+            assert 9<region_total<=96,region_total
+            # No distance-based skyline cutoff: the bounded pilot's entire
+            # geographic extent must have independently resident meshes.
+            assert 0<resident==wanted==region_total<=96,(resident,wanted,region_total)
             assert page.locator("#status").get_attribute("data-chunk-initial-complete")=="true"
             assert int(page.locator("#status").get_attribute("data-chunks-built"))==resident
-            print("Initial streamed world: independently resident camera-local GPU cells",resident)
+            print("Complete pilot skyline: all geographic chunks resident",resident)
         else:
             assert page.locator("#status").get_attribute("data-chunk-streaming") is None, (
                 "Experimental bridge mode must retain its full-scene fallback")
@@ -824,19 +828,22 @@ with sync_playwright() as p:
         }""",timeout=15000)
         print("City overview camera switched to elevated view")
         if not bridge_preview:
-            # The standard primary view streams nine or fewer cells. The
-            # experimental bridge scene intentionally follows the old path.
+            # The elevated view must retain the entire bounded city,
+            # INCLUDING the blocks beyond the old nine-cell radius.
+            # Merely seeing local buildings is an unacceptable regression.
             page.wait_for_function("""() => {
                 const s=document.querySelector("#status");
-                return Number(s?.dataset.chunksEvicted)>0 &&
-                    Number(s?.dataset.chunksBuilt)>9 &&
-                    Number(s?.dataset.chunksResident)<=9 &&
+                const resident=Number(s?.dataset.chunksResident);
+                return resident>9 &&
+                    resident===Number(s?.dataset.chunksRegionTotal) &&
+                    resident===Number(s?.dataset.chunksWanted) &&
                     s?.dataset.sceneDetail==="complete";
-            }""",timeout=60000)
+            }""",timeout=90000)
             after_stream_move=page.locator("#status")
-            print("Camera-following streaming: built",after_stream_move.get_attribute("data-chunks-built"),
-                  "evicted",after_stream_move.get_attribute("data-chunks-evicted"),
-                  "resident",after_stream_move.get_attribute("data-chunks-resident"))
+            assert int(after_stream_move.get_attribute("data-chunks-evicted"))==0, (
+                "Relocating the camera within Downtown must not discard visible skyline")
+            print("Elevated overview: all distant building chunks retained",
+                  after_stream_move.get_attribute("data-chunks-resident"))
         page.locator("#camera-street").click()
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
@@ -995,16 +1002,17 @@ with sync_playwright() as p:
                     Number(s.dataset.chunksResident)>0 &&
                     Number(s.dataset.chunksResident)<=9;
             }""",timeout=90000)
-            before_eviction=int(page.locator("#status").get_attribute("data-chunks-evicted"))
             page.locator("#camera-overview").click()
-            page.wait_for_function("""() =>
-                Number(document.querySelector("#status")?.dataset.chunksEvicted)>0 &&
-                document.querySelector("#status")?.dataset.sceneDetail==="complete"
-            """,timeout=90000)
-            assert int(page.locator("#status").get_attribute("data-chunks-evicted"))>before_eviction
-            assert int(page.locator("#status").get_attribute("data-chunks-resident"))<=9
+            page.wait_for_function("""() => {
+                const s=document.querySelector("#status");
+                return s?.dataset.cameraMode==="overview" &&
+                    s?.dataset.sceneDetail==="complete" &&
+                    Number(s.dataset.chunksResident)>9 &&
+                    Number(s.dataset.chunksResident)===Number(s.dataset.chunksRegionTotal);
+            }""",timeout=90000)
+            assert int(page.locator("#status").get_attribute("data-chunks-evicted"))==0
             assert not errors,errors
-            print("WebGL2 normal view: camera-following chunks load and evict independently")
+            print("WebGL2 skyline: complete primary-city chunk set persists across overview")
 
         # SW must cache the exact fingerprinted WASM, then serve the same
         # build from CacheStorage on a subsequent navigation. It may not

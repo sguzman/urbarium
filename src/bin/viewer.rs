@@ -1155,6 +1155,15 @@ impl Graphics {
         // Joined-world and experimental bridge views retain their verified
         // full-section fallback; normal single-region progressive viewer
         // uses camera-following resident cells.
+        let full_region_chunks=urbarium::streaming::all_region_chunks(&job.city.region).len();
+        #[cfg(target_arch="wasm32")]
+        if let Some(el)=web_sys::window().and_then(|w|w.document())
+            .and_then(|d|d.get_element_by_id("status")) {
+            let _=el.set_attribute("data-chunks-region-total",
+                &full_region_chunks.to_string());
+        }
+        #[cfg(not(target_arch="wasm32"))]
+        let _=full_region_chunks;
         self.stream=Some(ChunkStream{
             source:job.city,terrain:job.terrain,
             chunks:BTreeMap::new(),built:0,evicted:0,

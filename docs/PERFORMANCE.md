@@ -61,12 +61,21 @@ In the normal single-region progressive browser mode, Urbarium retains one
 complete terrain mesh but builds **300-meter geometry cells on demand**.
 Each visible-neighborhood cell includes source-derived building meshes,
 clipped transportation surfaces, and corresponding landmark markers.
-The camera drives a 3-by-3 cell neighborhood (maximum nine resident chunks).
-When the player moves into another grid cell, new road/building meshes are
-constructed from their own source subsets, uploaded as independent GPU buffers,
-and no-longer-needed buffers are dropped. The total number of instantiated
-primary-city mesh cells is bounded; the full geographic city and collision
-data remain in CPU memory.
+The **initial nine-cell radius was visually unacceptable**: elevated views
+showed entire sections of buildings disappearing beyond a few hundred meters.
+This was corrected by keeping the entire bounded Downtown LA pilot skyline
+resident. The desired-cell calculation now includes all overlapping cells
+within a conservative 3 km distance, capped at 96 GPU-resident cells for
+future larger regions. Cells are constructed one at a time in camera-proximity
+order, but the full pilot extent remains available from any camera position.
+A camera relocation inside the pilot does not evict still-visible distant
+buildings. Large future regions may still use eviction outside the conservative
+distance and will require view-frustum-aware LOD and occlusion handling.
+
+The original geographic city and collision data remain resident in CPU memory.
+Conservative coverage is intentional: **true occlusion culling has not yet
+been implemented**, so no building is hidden merely because its cell is outside
+a small local radius.
 
 The initial coarse terrain/road preview is replaced with terrain-only after
 the first active neighborhood is complete, avoiding permanent duplicate road

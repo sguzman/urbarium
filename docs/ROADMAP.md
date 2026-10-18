@@ -68,8 +68,11 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 - [x] Add first-person capsule-like planar building-footprint collision with swept horizontal movement, courtyards and wall sliding.
 - [x] Limit progressive first-frame road meshing to source geometry within a
       fixed radius of the actual initial camera (full scene still loads later).
-- [x] Stream source-derived road/building GPU chunks near the primary camera,
-      with capped residency and eviction as the camera crosses cells.
+- [x] Stream source-derived road/building GPU chunks with bounded residency.
+- [x] Preserve distant skyline geometry throughout the small Downtown pilot;
+      remove the faulty nine-cell visibility cutoff.
+- [ ] Introduce conservative view-frustum draw culling and validated occlusion
+      strategies without dropping visible buildings or intersecting footprints.
 - [ ] Move camera-following chunk generation off the main browser thread,
       extend chunk residency across joined regions and implement adaptive LOD,
       broad-phase collision indexing and terrain slope traversal constraints.
