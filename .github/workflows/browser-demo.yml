@@ -89,6 +89,16 @@ jobs:
           grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-render.sh
       - name: Compile real Rust/WebGPU WASM app
         run: trunk build --release --public-url ./
+      - name: Build CPU-only Rust WASM mesh worker
+        run: |
+          cargo build --release --target wasm32-unknown-unknown --features viewer --bin urbarium-mesh-worker
+          BINDGEN="$(find "$HOME/.cache" -type f -name wasm-bindgen -perm /u+x | head -n 1)"
+          test -n "$BINDGEN"
+          "$BINDGEN" --target no-modules --out-name urbarium-mesh-worker --out-dir dist \
+            target/wasm32-unknown-unknown/release/urbarium-mesh-worker.wasm
+          test -s dist/urbarium-mesh-worker.js
+          test -s dist/urbarium-mesh-worker_bg.wasm
+          echo "CPU worker bytes: $(stat -c%s dist/urbarium-mesh-worker_bg.wasm)"
       - name: Remove eager WASM preload so first fetch can be cached
         run: python3 scripts/remove-wasm-preload.py dist/index.html
       - name: Validate static site and scene data
@@ -120,6 +130,9 @@ jobs:
           assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
           assert (dist/"wasm-sw.js").is_file(), "WASM service worker missing"
+          assert (dist/"urbarium-mesh-worker.js").is_file()
+          assert (dist/"urbarium-mesh-worker_bg.wasm").is_file()
+          assert (dist/"mesh-worker-runtime.js").is_file()
           worker=(dist/"wasm-sw.js").read_text()
           assert "urbarium-wasm-binaries-v1" in worker and "MAX_VERSIONS=2" in worker
           assert "wasm-sw.js" in (dist/"index.html").read_text()

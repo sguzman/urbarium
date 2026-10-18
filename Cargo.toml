@@ -64,3 +64,8 @@ path = "src/main.rs"
 name = "urbarium-viewer"
 path = "src/bin/viewer.rs"
 required-features = ["viewer"]
+
+[[bin]]
+name = "urbarium-mesh-worker"
+path = "src/bin/mesh-worker.rs"
+required-features = ["viewer"]
