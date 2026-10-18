@@ -97,6 +97,15 @@ The geometry pipeline now enforces these invariants:
 - Rust CI and both browser-renderer QA gates must pass before changes to the
   default site. All geometry source modules now trigger browser QA on push.
 
+An additional `audit-road-buildings --city FILE` command measures asphalt
+intersection with actual triangulated building footprints (including courtyard
+holes). It reports source building/road IDs and geometric overlap areas.
+The diagnostic runs on every catalog region in the browser workflow.
+This is a **diagnostic, not an automatic repair**: a conflict may indicate
+misregistered source data, covered roadway or grade separation. Deleting
+either complete surface would introduce new holes. Only at-grade ordinary
+roads are assessed; hidden freeways, bridges and tunnels are excluded.
+
 The source geometry is still centerline-derived and has no surveyed curb
 boundaries. This eliminates two systemic classes of visual clipping but does
 **not** prove that every source-road intersection, building/road conflict,

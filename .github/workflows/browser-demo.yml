@@ -21,6 +21,7 @@ on:
       - src/roads.rs
       - src/road_grade.rs
       - src/road_coverage.rs
+      - src/road_building_conflicts.rs
       - src/collision.rs
       - src/terrain.rs
       - src/terrain_drape.rs
@@ -202,6 +203,12 @@ jobs:
           while IFS= read -r rid; do
             echo "Checking regional asphalt and pedestrian seams: $rid"
             cargo run --quiet -- verify-road-cells --city "dist/assets/$rid.json"
+          done
+      - name: Diagnose asphalt/building footprint interference in every region
+        run: |
+          python3 -c 'import json; [print(r["id"]) for r in json.load(open("regions/catalog.json"))["regions"]]' |
+          while IFS= read -r rid; do
+            cargo run --quiet -- audit-road-buildings --city "dist/assets/$rid.json"
           done
       - name: QA viewer in browser with WebGPU
         run: |

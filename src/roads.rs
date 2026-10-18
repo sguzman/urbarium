@@ -84,7 +84,7 @@ pub struct RoadReport {
 
 /// Deliberately ignore subway and unknown classes: these must not be rendered
 /// as ordinary at-grade asphalt strips. There is no terrain/bridge geometry yet.
-fn surface_class(street: &Street) -> Option<(SurfaceKind, f64)> {
+pub(crate) fn surface_class(street: &Street) -> Option<(SurfaceKind, f64)> {
     let classification = street.kind.as_str();
     let (kind, default_width): (SurfaceKind, f64) = match classification {
         "motorway" | "motorway_link" | "trunk" | "trunk_link" => (SurfaceKind::Motorway, 12.0),
@@ -439,7 +439,7 @@ fn road_intersects_walk_triangle(tri:[Point;3],a:Point,b:Point,reach:f64)->bool{
     point_in_triangle(a,tri) || point_in_triangle(b,tri) ||
     (0..3).any(|i|segments_within(a,b,tri[i],tri[(i+1)%3],r2))
 }
-fn at_grade_motor_road(street:&Street)->bool {
+pub(crate) fn at_grade_motor_road(street:&Street)->bool {
     surface_class(street).is_some_and(|(kind,_)|
         matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway))
         && !street.tags.get("bridge").is_some_and(|v|v!="no")

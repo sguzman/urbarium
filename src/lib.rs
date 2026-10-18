@@ -6,6 +6,7 @@ pub mod geometry;
 pub mod roads;
 pub mod road_grade;
 pub mod road_coverage;
+pub mod road_building_conflicts;
 pub mod gltf;
 pub mod collision;
 pub mod terrain;
