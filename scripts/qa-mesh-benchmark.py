@@ -89,7 +89,10 @@ with sync_playwright() as p:
                 frames:r.frameIntervals,longTasks:r.longTasks,
                 resident:Number(s.dataset.chunksResident),
                 workerState:s.dataset.meshWorkerState||"disabled",
-                workerCache:window.__urbariumWorkerCache?.kind||"disabled"};
+                workerCache:window.__urbariumWorkerCache?.kind||"disabled",
+                workerFormat:s.dataset.meshWorkerFormat||"local",
+                workerBytes:Number(s.dataset.meshWorkerBytes||0),
+                workerMessages:Number(s.dataset.meshWorkerMessages||0)};
         }""")
         assert raw["firstFrameAt"] is not None and raw["completeAt"] is not None
         interval=raw["completeAt"]-raw["firstFrameAt"]
@@ -106,8 +109,15 @@ with sync_playwright() as p:
             "frameIntervalWorstMs":round(max(frames,default=0),2),
             "framesSampled":len(frames),
             "resident":raw["resident"],"workerState":raw["workerState"],
-            "workerCache":raw["workerCache"]
+            "workerCache":raw["workerCache"],
+            "workerFormat":raw["workerFormat"],
+            "workerTransferredBytes":raw["workerBytes"],
+            "workerMessages":raw["workerMessages"]
         }
+        if mode=="worker":
+            assert result["workerFormat"]=="UBM1-transfer",result
+            assert result["workerMessages"]==result["resident"],result
+            assert result["workerTransferredBytes"]>24*result["resident"],result
         canvas=page.locator("canvas:not(#minimap-canvas):not(#webgpu-control)").first
         return result,canvas.screenshot()
 

@@ -929,6 +929,9 @@
             frustumEnabled:document.documentElement.dataset.frustumCulling!=="false",
             workerState:status?.dataset.meshWorkerState||"disabled",
             workerChunks:Number(status?.dataset.meshWorkerChunks||0),
+            workerFormat:status?.dataset.meshWorkerFormat||"local",
+            workerTransferredBytes:Number(status?.dataset.meshWorkerBytes||0),
+            workerMessages:Number(status?.dataset.meshWorkerMessages||0),
             workerCache:{...window.__urbariumWorkerCache}
           },
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(

@@ -1105,6 +1105,12 @@ with sync_playwright() as p:
         worker_count=int(worker_status.get_attribute("data-mesh-worker-chunks"))
         assert worker_count==int(worker_status.get_attribute("data-chunks-region-total"))
         assert worker_status.get_attribute("data-chunks-evicted")=="0"
+        assert worker_status.get_attribute("data-mesh-worker-format")=="UBM1-transfer"
+        assert int(worker_status.get_attribute("data-mesh-worker-messages"))==worker_count
+        transferred=int(float(worker_status.get_attribute("data-mesh-worker-bytes")))
+        assert transferred>worker_count*24,("No binary vertex packets received",transferred)
+        print("Binary worker transfer: version UBM1; packets",worker_count,
+              "bytes",transferred)
         before_frames=int(worker_status.get_attribute("data-frame-count") or "0")
         # The frame-count DOM diagnostic updates every eighth frame, and
         # software WebGL2 can stall temporarily during screenshot/readback.

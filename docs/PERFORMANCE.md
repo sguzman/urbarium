@@ -66,7 +66,10 @@ use a versioned **binary packet** containing the exact 52-byte GPU vertices,
 32-bit indices and compact layer/batch records. The worker transfers its
 `ArrayBuffer` ownership to the main thread instead of creating JSON strings.
 The same Rust wire codec verifies magic, counts, lengths, finite coordinates,
-indices and draw-batch bounds before the normal GPU upload. Malformed packets
+indices and draw-batch bounds before the normal GPU upload. After
+`postMessage(..., [buffer])`, the worker checks that its buffer was actually
+detached, while browser QA requires the complete thirty-chunk transfer and
+records total binary bytes in the performance report. Malformed packets
 trigger the established local-mesher fallback rather than uploading damaged
 geometry.
 
