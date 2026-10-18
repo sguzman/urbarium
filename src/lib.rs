@@ -553,7 +553,7 @@ fn split_street_grade_scopes(
         .and_then(|text|serde_json::from_str(text).ok()).unwrap_or_default();
     let relevant=|rule:&Value| {
         rule.get("values").and_then(Value::as_array).is_some_and(|v|
-            v.iter().any(|x|matches!(x.as_str(),Some("is_bridge"|"is_tunnel"))))
+            v.iter().any(|x|matches!(x.as_str(),Some("is_bridge"|"is_tunnel"|"is_covered"))))
     };
     if !flags.iter().any(relevant) && levels.is_empty() {
         return vec![(path.to_vec(),tags.clone())];
@@ -607,9 +607,10 @@ fn split_street_grade_scopes(
             rule.get("values").and_then(Value::as_array)
                 .is_some_and(|v|v.iter().any(|x|x.as_str()==Some(name))));
         let mut local_tags=tags.clone();
-        for key in ["bridge","tunnel","layer"] {local_tags.remove(key);}
+        for key in ["bridge","tunnel","covered","layer"] {local_tags.remove(key);}
         if flag("is_bridge"){local_tags.insert("bridge".into(),"yes".into());}
         if flag("is_tunnel"){local_tags.insert("tunnel".into(),"yes".into());}
+        if flag("is_covered"){local_tags.insert("covered".into(),"yes".into());}
         if let Some(level)=levels.iter().filter(|rule|matches(rule))
             .filter_map(|rule|rule.get("value").and_then(Value::as_i64)).last(){
             local_tags.insert("layer".into(),level.to_string());
@@ -662,6 +663,7 @@ pub fn streets_from_geojson(json: &str, region: &Region) -> Result<Vec<Street>, 
         // existing at-grade junction guard.
         let covers_whole_segment = |v:&Value| -> bool {
             let Some(between)=v.get("between") else {return true;};
+            if between.is_null(){return true;}
             let Some(range)=between.as_array() else {return false;};
             range.len()==2 &&
                 range[0].as_f64().is_some_and(|x|x<=0.000001) &&
@@ -688,6 +690,7 @@ pub fn streets_from_geojson(json: &str, region: &Region) -> Result<Vec<Street>, 
                     names.iter().any(|v|v.as_str()==Some(key)));
                 if has("is_bridge") { tags.insert("bridge".into(),"yes".into()); }
                 if has("is_tunnel") { tags.insert("tunnel".into(),"yes".into()); }
+                if has("is_covered") { tags.insert("covered".into(),"yes".into()); }
             }
         }
         if let Some(widths)=prop("width_rules").and_then(Value::as_array) {
@@ -915,6 +918,51 @@ mod tests {
         assert!((city.buildings[0].height_m.unwrap() - 18.288).abs() < 0.001);
     }
 
+    #[test]
+    fn overture_full_null_level_and_covered_flags_are_not_ground_asphalt(){
+        let input=r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","id":"level1","properties":{"class":"service",
+             "level_rules":[{"between":null,"value":1}]},
+            "geometry":{"type":"LineString","coordinates":[
+              [-118.251,34.05],[-118.2505,34.05]]}},
+          {"type":"Feature","id":"covered","properties":{"class":"service",
+             "road_flags":[{"between":null,"values":["is_covered"]}]},
+            "geometry":{"type":"LineString","coordinates":[
+              [-118.251,34.0502],[-118.2505,34.0502]]}}
+        ]}"#;
+        let streets=streets_from_geojson(input,&downtown()).unwrap();
+        assert_eq!(streets.len(),2);
+        assert_eq!(streets[0].tags.get("covered").map(String::as_str),Some("yes"));
+        assert_eq!(streets[1].tags.get("layer").map(String::as_str),Some("1"));
+        assert!(streets.iter().all(crate::roads::source_qualified_non_surface));
+        let city=City{schema_version:1,region:downtown(),
+            streets,buildings:vec![],provenance:vec![]};
+        let (scene,_)=crate::roads::mesh_streets_with_bridges(&city,false).unwrap();
+        assert!(scene.layers.get(&crate::roads::SurfaceKind::Road)
+            .is_none_or(|mesh|mesh.indices.is_empty()));
+    }
+    #[test]
+    fn overture_partial_covered_interval_keeps_open_approaches(){
+        let input=r#"{"type":"FeatureCollection","features":[{
+          "type":"Feature","id":"cover-scope","properties":{"class":"service",
+            "road_flags":[{"between":[0.2,0.8],"values":["is_covered"]}]},
+          "geometry":{"type":"LineString","coordinates":[
+            [-118.252,34.05],[-118.250,34.05]
+          ]}
+        }]}"#;
+        let streets=streets_from_geojson(input,&downtown()).unwrap();
+        assert_eq!(streets.len(),3);
+        assert_eq!(streets.iter().filter(|s|
+            s.tags.get("covered").is_some_and(|v|v=="yes")).count(),1);
+        assert!(streets[0].tags.get("covered").is_none());
+        assert!(streets[2].tags.get("covered").is_none());
+        let city=City{schema_version:1,region:downtown(),
+            streets,buildings:vec![],provenance:vec![]};
+        let (scene,report)=crate::roads::mesh_streets_with_bridges(&city,false).unwrap();
+        assert_eq!(report.segments_meshed,2);
+        assert_eq!(report.segments_skipped,1);
+        assert!(!scene.layers[&crate::roads::SurfaceKind::Road].indices.is_empty());
+    }
     #[test]
     fn scoped_overture_bridge_is_split_before_clipping() {
         let region=downtown();

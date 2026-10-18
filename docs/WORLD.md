@@ -75,6 +75,13 @@ The geometry pipeline now enforces these invariants:
   while avoiding repeated meshing of entire long streets in every tile.
 - Generate full-width asphalt, walking, steps and rail triangles, retaining
   real source bends, junction topology and material layering.
+- Import full Overture `level_rules` where `between: null` denotes the
+  entire feature. Split fractional `is_covered` intervals before clipping
+  the region and retain `covered=yes` on their derived spans. Treat source
+  qualified bridges, tunnels, nonzero relative levels and covered roads as
+  **not at grade**; a surface-only preview must not flatten them onto the
+  same pavement plane as opaque buildings. Preserve original source features
+  for the dedicated future 3D grade pass.
 - Conform transportation surfaces to the **same DEM triangles** used by the
   rendered ground. Per-vertex height sampling alone is insufficient: a road
   triangle can penetrate a nonplanar DEM between its original vertices.

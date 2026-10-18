@@ -61,31 +61,17 @@ fn box_pier(mesh:&mut Mesh,x:f32,z:f32,bottom:f32,top:f32){
 ///
 /// Source paths have X east / Z north in meters. The 5.8m tier clearance is
 /// a *visual heuristic*; it must never be confused with a measured clearance.
-/// Retire unfinished elevated geometry in the normal viewer while preserving
-/// the actual source centerlines as ordinary terrain-draped road surfaces.
-/// No bridge deck, supports, barriers or GPU bridge batches are allocated.
-/// The experimental preview retains the separate grade mesh pipeline.
+/// Remove unverified raised meshes from the normal surface-only scene.
+/// Never flatten an explicitly stacked road back onto terrain: that turns
+/// covered drives and bridges into asphalt cutting through building walls.
+/// Source-qualified bridge spans are retained on RoadScene for future 3D QA.
 pub fn flatten_bridge_spans(scene:&mut RoadScene)->Result<(),String>{
     for kind in [
         SurfaceKind::ElevatedRoad,SurfaceKind::BridgeFascia,
         SurfaceKind::BridgeSupports,SurfaceKind::BridgeRails,
         SurfaceKind::BridgeStripe,
-    ]{
+    ] {
         scene.layers.remove(&kind);
-    }
-    for span in &scene.bridge_spans {
-        let Some(strip)=ribbon(&span.path,span.width_m,0.24)? else{continue;};
-        let motorway=span.kind.starts_with("motorway")||
-            span.kind.starts_with("trunk");
-        // The normal view must not regenerate hidden freeways as flat strips.
-        if motorway {continue;}
-        let kind=SurfaceKind::Road;
-        if motorway {
-            let paint=motorway_edge_stripes(&strip,0.035);
-            append(scene.layers.entry(SurfaceKind::MotorwayStripe)
-                .or_default(),paint)?;
-        }
-        append(scene.layers.entry(kind).or_default(),strip)?;
     }
     Ok(())
 }
@@ -320,7 +306,7 @@ mod tests {
         crate::roads::mesh_streets(&city).unwrap().0
     }
     #[test]
-    fn retired_bridge_mode_keeps_ordinary_road_without_raised_deck(){
+    fn retired_bridge_mode_never_forges_flat_asphalt_under_overpass(){
         let mut scene=scene(vec![
             tagged("primary",&[("bridge","yes"),("layer","1")]),
         ]);
@@ -331,9 +317,10 @@ mod tests {
             SurfaceKind::BridgeStripe] {
             assert!(!scene.layers.contains_key(&kind));
         }
-        let mesh=&scene.layers[&SurfaceKind::Road];
-        assert!(!mesh.indices.is_empty());
-        assert!(mesh.vertices.iter().all(|v|(v.position[1]-0.24).abs()<0.001));
+        assert!(scene.layers.get(&SurfaceKind::Road)
+            .is_none_or(|mesh|mesh.indices.is_empty()));
+        assert_eq!(scene.bridge_spans.len(),1,
+            "retain source grade identity without drawing false pavement");
     }
     #[test]
     fn retired_bridge_mode_never_restores_flat_motorway_ribbons(){

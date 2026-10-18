@@ -126,6 +126,53 @@ fn parse_width(value: &str) -> Option<f64> {
         .filter(|v| v.is_finite() && (0.6..=60.0).contains(v))
 }
 
+fn source_full_rule(street:&Street,key:&str,value:&str)->bool {
+    let Some(raw)=street.tags.get(key) else{return false;};
+    let Ok(rules)=serde_json::from_str::<Vec<serde_json::Value>>(raw) else{return false;};
+    rules.iter().any(|rule|{
+        let full=match rule.get("between") {
+            None|Some(serde_json::Value::Null)=>true,
+            Some(serde_json::Value::Array(a)) if a.len()==2 =>
+                a[0].as_f64().is_some_and(|x|x<=0.000001) &&
+                a[1].as_f64().is_some_and(|x|x>=0.999999),
+            _=>false,
+        };
+        full && rule.get("values").and_then(serde_json::Value::as_array)
+            .is_some_and(|flags|flags.iter().any(|flag|flag.as_str()==Some(value)))
+    })
+}
+/// Default viewer has no verified covered or vertically separated surface
+/// reconstruction. Keep its source linework for later 3D work, but do not
+/// project tunnels, roofed drives, or raised roads onto terrain as asphalt.
+pub(crate) fn source_qualified_non_surface(street:&Street)->bool {
+    if street.tags.get("covered").is_some_and(|v|v=="yes")
+       || street.tags.get("bridge").is_some_and(|v|v!="no")
+       || street.tags.get("tunnel").is_some_and(|v|v!="no")
+       || street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
+            .is_some_and(|n|n!=0)
+       || source_full_rule(street,"overture:road_flags","is_covered")
+       || source_full_rule(street,"overture:road_flags","is_bridge")
+       || source_full_rule(street,"overture:road_flags","is_tunnel") {
+        return true;
+    }
+    // Existing cached sources sometimes retained full level rules as JSON
+    // but lost the derived layer tag when "between" was JSON null.
+    street.tags.get("overture:level_rules").is_some_and(|raw| {
+        serde_json::from_str::<Vec<serde_json::Value>>(raw)
+            .ok().is_some_and(|levels|levels.iter().any(|rule|{
+                let full=match rule.get("between"){
+                    None|Some(serde_json::Value::Null)=>true,
+                    Some(serde_json::Value::Array(a)) if a.len()==2=>
+                        a[0].as_f64().is_some_and(|v|v<=0.000001) &&
+                        a[1].as_f64().is_some_and(|v|v>=0.999999),
+                    _=>false,
+                };
+                full && rule.get("value").and_then(serde_json::Value::as_i64)
+                    .is_some_and(|value|value!=0)
+            }))
+    })
+}
+
 fn direction(a: Point, b: Point) -> Option<[f64;2]> {
     let dx = b.x-a.x;
     let dz = b.z-a.z;
@@ -268,6 +315,7 @@ fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport
     for street in &city.streets {
         let Some((kind,width))=surface_class(street) else {continue};
         if !matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway){continue;}
+        if source_qualified_non_surface(street){continue;}
         // Avoid orphan junction patches in the hidden freeway corridors.
         if kind==SurfaceKind::Motorway && !include_freeways {continue;}
         if street.path.len()<2
@@ -442,10 +490,7 @@ fn road_intersects_walk_triangle(tri:[Point;3],a:Point,b:Point,reach:f64)->bool{
 pub(crate) fn at_grade_motor_road(street:&Street)->bool {
     surface_class(street).is_some_and(|(kind,_)|
         matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway))
-        && !street.tags.get("bridge").is_some_and(|v|v!="no")
-        && !street.tags.get("tunnel").is_some_and(|v|v!="no")
-        && !street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
-            .is_some_and(|layer|layer!=0)
+        && !source_qualified_non_surface(street)
 }
 fn count_pedestrian_asphalt_overlap(city:&City,scene:&RoadScene,
     include_freeways:bool)->usize {
@@ -551,6 +596,13 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
             report.segments_skipped+=1;
             continue;
         };
+        // A covered drive or below-grade segment is NOT visible asphalt in
+        // the default surface-only scene. The whole source remains in City,
+        // and the explicit bridge preview remains independently available.
+        if !detailed_bridges && source_qualified_non_surface(street) {
+            report.segments_skipped+=1;
+            continue;
+        }
         // Render-only raised surface offsets avoid coplanar Z-fighting.
         // Roads should visually cover crossing footpath ribbons on the flat
         // preview. Distinct mapping of footways is not a route overlay and
