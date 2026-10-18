@@ -12,7 +12,7 @@ from statistics import median
 from playwright.sync_api import sync_playwright
 from PIL import Image,ImageChops
 
-BASE="http://127.0.0.1:8010/?renderer=webgl2"
+BASE="http://127.0.0.1:8010/?renderer=webgl2&world=0"
 OUTPUT=Path("/tmp/urbarium-mesh-benchmark.json")
 BENCH_JS=r"""(() => {
   const record=window.__urbariumBench={
