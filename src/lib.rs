@@ -9,6 +9,7 @@ pub mod gltf;
 pub mod collision;
 pub mod terrain;
 pub mod world;
+pub mod streaming;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

@@ -55,6 +55,22 @@ uncompressed WASM decreased from 4,672,314 to 3,932,014 bytes (15.8%).
 This reduces code bytes transferred on a cold load, but does not prove any
 particular time-to-first-frame improvement on the user's connection.
 
+## Camera-local street preview (October 18)
+
+The progressive first pass now retains only source road/path polylines that
+intersect a **450-meter radius around the collision-aware spawn camera**.
+Long polylines crossing that radius remain intact even if both endpoints lie
+outside it. This reduces the first pass's road triangulation and GPU upload.
+The full-detail enrichment still rebuilds and loads all road and building
+geometry, and the original geographic city JSON and collision data remain
+unfiltered. Full scene startup (`?progressive=0`) remains unchanged.
+
+This is **not** dynamic chunk streaming, camera-tracking mesh paging,
+background-thread meshing, or a proven speedup on the user's connection.
+The first-frame subset and complete source count are exposed as
+`data-first-frame-streets` and `data-source-streets`; browser QA verifies
+the first is smaller and nonempty while full scene enrichment still succeeds.
+
 ## Persistent WASM executable cache (October 17)
 
 The viewer now registers a scoped service worker (`wasm-sw.js`) without

@@ -90,6 +90,13 @@ with sync_playwright() as p:
         # Progressive geometry is now the default; retain the full-scene
         # compatibility path for explicit progressive=0 URLs.
         assert page.evaluate("() => document.documentElement.dataset.progressivePreview")=="true"
+        preview_count=int(page.locator("#status").get_attribute("data-first-frame-streets"))
+        source_count=int(page.locator("#status").get_attribute("data-source-streets"))
+        assert 0<preview_count<source_count,(preview_count,source_count)
+        assert float(page.locator("#status").get_attribute(
+            "data-first-frame-street-radius-m"))==450.0
+        print("Camera-local first frame: source roads",source_count,
+              "preview roads",preview_count)
         page.wait_for_function("""() => document.querySelector("#status")?.dataset.firstFrameDetail==="base" """,timeout=60000)
         page.wait_for_function("""() => document.querySelector("#status")?.dataset.sceneDetail==="complete" """,timeout=60000)
         assert page.locator("#renderer-select").count() == 1

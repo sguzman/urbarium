@@ -66,7 +66,11 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 - [x] Validate actual Downtown LA GLB: 34,660 triangles, 6 scene meshes, 1,719,448 bytes, independently loaded via trimesh.
 - [ ] Add physically correct intersections, crossings, grade separation and additional roof primitives.
 - [x] Add first-person capsule-like planar building-footprint collision with swept horizontal movement, courtyards and wall sliding.
-- [ ] Add broad-phase collision spatial indexing, tile streaming, culling and LOD, and terrain slope traversal constraints.
+- [x] Limit progressive first-frame road meshing to source geometry within a
+      fixed radius of the actual initial camera (full scene still loads later).
+- [ ] Add camera-tracking chunk streaming and eviction, then broad-phase
+      collision spatial indexing, culling and LOD, and terrain slope traversal
+      constraints.
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [x] First-person street-level navigation, mouse capture, error overlay and toggleable 18× fast travel.
 - [x] Interactive north-up Downtown LA minimap with zoom, mapped buildings and camera location/heading.

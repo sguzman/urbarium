@@ -416,7 +416,7 @@ fn combined_city(city:&City,terrain:&TerrainGrid,bridge_preview:bool)
 // the GPU is usable while the expensive enrichment is still pending.
 // Uses the exact same road generator as the final mesh, not placeholder
 // raster images or invented street geometry.
-fn coarse_city(city:&City,terrain:&TerrainGrid,bridges:bool)
+fn coarse_city(city:&City,terrain:&TerrainGrid,bridges:bool,spawn:Point)
     ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String>{
     let mut vertices=Vec::new();
     let mut indices=Vec::new();
@@ -430,7 +430,12 @@ fn coarse_city(city:&City,terrain:&TerrainGrid,bridges:bool)
     };
     let ground=terrain.mesh(&city.region)?;
     add(&ground,[0.39,0.44,0.42],SceneLayer::Ground)?;
-    let (mut roads,_)=mesh_streets_with_bridges(city,bridges)?;
+    // Only mesh streets near the actual spawn for first presentation.
+    // The deferred complete pass still consumes the authoritative full city.
+    let preview=urbarium::streaming::first_frame_streets(
+        city,spawn,urbarium::streaming::FIRST_FRAME_STREET_RADIUS_M);
+    set_first_frame_street_telemetry(preview.streets.len(),city.streets.len());
+    let (mut roads,_)=mesh_streets_with_bridges(&preview,bridges)?;
     terrain.drape_roads_with_preview(&city.region,&mut roads,bridges)?;
     for (kind,mesh) in roads.layers {
         let (layer,color)=match kind {
@@ -500,6 +505,18 @@ fn browser_progressive()->bool {
         return value=="true";
     }
     false
+}
+fn set_first_frame_street_telemetry(shown:usize,total:usize) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")) {
+        let _=el.set_attribute("data-first-frame-streets",&shown.to_string());
+        let _=el.set_attribute("data-source-streets",&total.to_string());
+        let _=el.set_attribute("data-first-frame-street-radius-m",
+            &urbarium::streaming::FIRST_FRAME_STREET_RADIUS_M.to_string());
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(shown,total);
 }
 fn set_scene_detail(stage:&str) {
     #[cfg(target_arch="wasm32")]
@@ -1169,17 +1186,21 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let bridge_preview=browser_bridge_preview();
     set_bridge_preview_state(bridge_preview);
     let progressive=browser_progressive();
+    // Collision-aware spawn must be chosen before the preview mesh, so the
+    // first render contains the streets the player is actually looking at.
+    let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
+    let spawn_camera=Camera::spawn_at_street(&city,&collision,&terrain);
     let deferred_scene=if progressive {
         Some(DeferredScene{city:city.clone(),terrain:terrain.clone(),
             bridge_preview,joined:browser_joined_world()})
     }else{None};
     let (vertices,indices,batches)=if progressive {
         set_scene_detail("base");
-        coarse_city(&city,&terrain,bridge_preview)?
+        coarse_city(&city,&terrain,bridge_preview,
+            Point{x:spawn_camera.position.x as f64,z:spawn_camera.position.z as f64})?
     }else {
         combined_city(&city,&terrain,bridge_preview)?
     };
-    let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
     let primary_bounds={
         let sw=city.region.project(city.region.bbox[0],city.region.bbox[1]);
         let ne=city.region.project(city.region.bbox[2],city.region.bbox[3]);
@@ -1278,7 +1299,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     expose_gpu_details(&gpu_info,config.format,surface_is_srgb);
     surface.configure(&device,&config);
     set_collision_count(collision.obstacle_count());
-    let camera=Camera::spawn_at_street(&city,&collision,&terrain);
+    let camera=spawn_camera;
     let overview_camera=Camera::city_overview(&city,&collision,&terrain);
     set_camera_mode("street");
     let camera_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
