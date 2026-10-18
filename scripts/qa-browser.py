@@ -479,7 +479,7 @@ with sync_playwright() as p:
         assert page.locator("#geography-request-count").is_visible()
         assert page.locator("#geography-request-count").inner_text().endswith(": 2")
         assert "WASM" in page.locator("#startup-code-state").inner_text()
-        assert "s total" in page.locator("#boot-stage").inner_text()
+        assert "first frame at about" in page.locator("#boot-stage").inner_text()
         print("Cache provenance, WASM transfer telemetry, and explicit startup phase visible")
         page.locator("#hud-tab-explore").click()
 
