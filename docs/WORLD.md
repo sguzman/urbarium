@@ -126,6 +126,12 @@ the camera rises above an estimated or source-recorded roof height.
 
 The transportation generator fills only road intersections at **three or more
 connected endpoints**, producing compact asphalt patches from local road widths.
+For this pass, candidate endpoint connections must have consistent source OSM
+node identity when both provide it; endpoints with no shared node metadata
+must agree to within 10 cm, and mixed-metadata endpoints to within 2.5 cm.
+Independent OSM node identities never merge just because coordinates overlap.
+Artificial source-boundary endpoints are excluded from junction creation.
+Synthetic regression tests guard near-miss, shared-node and border cases.
 Simple centerline crossings are not automatically promoted to intersections:
 bridge, tunnel and grade separation remain unresolved without better data.
 

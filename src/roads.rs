@@ -241,6 +241,21 @@ pub(crate) fn ribbon(path:&[Point],width:f64,height:f32)->Result<Option<Mesh>,St
 struct RoadEnd {
     x:f64, z:f64, width:f64,
     direction:[f64;2],
+    node_id:Option<i64>,
+}
+
+/// Endpoint coincidence is not proof of connectivity when OSM explicitly
+/// records two different nodes (e.g. a grade-separated crossing). A shared
+/// source node wins; imported geometry without node IDs must meet a strict
+/// centimeter-scale tolerance, not the former 1-meter radius.
+fn same_road_junction(a:RoadEnd,b:RoadEnd)->bool {
+    let distance=(a.x-b.x).hypot(a.z-b.z);
+    if !distance.is_finite(){return false;}
+    match (a.node_id,b.node_id) {
+        (Some(id_a),Some(id_b))=>id_a==id_b && distance<=0.20,
+        (None,None)=>distance<=0.10,
+        _=>distance<=0.025,
+    }
 }
 
 /// Patches only real mapped *road endpoints* joining at grade. We do not
@@ -261,12 +276,17 @@ fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport
             || street.tags.get("layer").is_some_and(|v|v!="0") {
             continue;
         }
-        for (p,q) in [
-            (street.path[0],street.path[1]),
-            (street.path[street.path.len()-1],street.path[street.path.len()-2]),
+        let nodes_valid=street.osm_node_ids.len()==street.path.len();
+        for (p,q,node_id) in [
+            (street.path[0],street.path[1],
+             nodes_valid.then_some(street.osm_node_ids.first().copied()).flatten()),
+            (street.path[street.path.len()-1],street.path[street.path.len()-2],
+             nodes_valid.then_some(street.osm_node_ids.last().copied()).flatten()),
         ] {
+            // Source clipping at a region border is NOT a junction.
+            if at_region_edge(city,p){continue;}
             let Some(heading)=direction(p,q) else {continue};
-            let item=RoadEnd{x:p.x,z:p.z,width,direction:heading};
+            let item=RoadEnd{x:p.x,z:p.z,width,direction:heading,node_id};
             let cell=((p.x/2.0).floor() as i64,(p.z/2.0).floor() as i64);
             let mut found=None;
             for ox in -1..=1 {
@@ -274,7 +294,7 @@ fn add_junction_patches(city:&City, scene:&mut RoadScene, report:&mut RoadReport
                     if let Some(indices)=cells.get(&(cell.0+ox,cell.1+oz)) {
                         for &index in indices {
                             let anchor=groups[index][0];
-                            if (p.x-anchor.x).hypot(p.z-anchor.z)<1.0 {
+                            if same_road_junction(item,anchor) {
                                 found=Some(index);
                                 break;
                             }
@@ -826,6 +846,54 @@ mod tests {
         assert!(!scene.layers[&SurfaceKind::Walk].indices.is_empty());
     }
 
+    #[test]
+    fn near_miss_endpoints_do_not_invent_a_connected_junction() {
+        // The old one-meter snapping joined this disconnected spur
+        // to a three-way junction and fabricated asphalt over the gap.
+        let (scene,report)=mesh_streets(&city(vec![
+            street("residential",&[[-20.,0.],[0.,0.]]),
+            street("residential",&[[0.,0.],[20.,0.]]),
+            street("service",&[[0.6,0.],[0.6,20.]]),
+        ])).unwrap();
+        assert_eq!(report.junction_patches,0);
+        assert!(scene.layers.contains_key(&SurfaceKind::Road));
+    }
+    #[test]
+    fn distinct_osm_nodes_at_same_coordinates_are_not_connected() {
+        let mut west=street("residential",&[[-20.,0.],[0.,0.]]);
+        west.osm_node_ids=vec![10,11];
+        let mut east=street("residential",&[[0.,0.],[20.,0.]]);
+        east.osm_node_ids=vec![12,13];
+        let mut branch=street("service",&[[0.,0.],[0.,20.]]);
+        branch.osm_node_ids=vec![14,15];
+        let (_,report)=mesh_streets(&city(vec![west,east,branch])).unwrap();
+        assert_eq!(report.junction_patches,0);
+    }
+    #[test]
+    fn verified_shared_osm_node_builds_real_t_junction() {
+        let mut west=street("residential",&[[-20.,0.],[0.,0.]]);
+        west.osm_node_ids=vec![10,11];
+        let mut east=street("residential",&[[0.03,0.],[20.,0.]]);
+        east.osm_node_ids=vec![11,13];
+        let mut branch=street("service",&[[0.,0.04],[0.,20.]]);
+        branch.osm_node_ids=vec![11,15];
+        let (_,report)=mesh_streets(&city(vec![west,east,branch])).unwrap();
+        assert_eq!(report.junction_patches,1);
+    }
+    #[test]
+    fn artificial_region_border_is_not_a_junction() {
+        let region=Region{id:"test".into(),name:"test".into(),
+            origin:[0.,0.],bbox:[-0.001,-0.001,0.001,0.001]};
+        let edge=region.project(0.001,0.);
+        let mut fixture=city(vec![
+            street("residential",&[[edge.x-20.,0.],[edge.x,0.]]),
+            street("residential",&[[edge.x,0.],[edge.x,20.]]),
+            street("service",&[[edge.x,0.],[edge.x,-20.]]),
+        ]);
+        fixture.region=region;
+        let (_,report)=mesh_streets(&fixture).unwrap();
+        assert_eq!(report.junction_patches,0);
+    }
     #[test]
     fn shared_t_junction_gets_a_square_asphalt_patch() {
         let (scene,report)=mesh_streets(&city(vec![
