@@ -10,6 +10,7 @@
 use crate::geometry::{Mesh,Vertex};
 use crate::terrain::TerrainGrid;
 use crate::Region;
+use std::collections::HashMap;
 
 #[derive(Clone,Copy)]
 struct GroundVertex { x:f32,z:f32,h:f32 }
@@ -80,13 +81,49 @@ fn face_of(grid:&TerrainGrid, region:&Region, x:f32,z:f32)
     let row=(fz.floor() as usize).min(grid.height-2);
     (col,row,(fx-col as f64)+(fz-row as f64)<=1.0)
 }
-fn push_triangle(out:&mut Mesh,triangle:[Vertex;3])->Result<(),String> {
-    if area(triangle[0],triangle[1],triangle[2])<1e-7{return Ok(());}
-    let base=u32::try_from(out.vertices.len())
+// Tessellating each source triangle against DEM face boundaries creates the
+// same edge intersections repeatedly. The transport pipeline sends 52 bytes
+// per GPU vertex, so duplicating the three vertices of every small clipped
+// triangle caused a large memory/transfer regression. Indexed vertex welding
+// restores sharing across original and cut triangles. Millimeter identity is
+// below the precision of the f32 world coordinates; the y coordinate and
+// normal remain part of the identity so overlapping distinct levels do not
+// get accidentally welded together.
+type WeldKey=[i64;6];
+fn weld_key(vertex:Vertex)->Result<WeldKey,String> {
+    if !vertex.position.iter().chain(vertex.normal.iter())
+        .all(|v|v.is_finite()) {
+        return Err("non-finite terrain surface vertex".into());
+    }
+    let mut key=[0_i64;6];
+    for i in 0..3 {
+        key[i]=(vertex.position[i] as f64*1_000.0).round() as i64;
+        key[i+3]=(vertex.normal[i] as f64*100_000.0).round() as i64;
+    }
+    Ok(key)
+}
+fn intern_vertex(out:&mut Mesh,cache:&mut HashMap<WeldKey,u32>,v:Vertex)
+    ->Result<u32,String> {
+    let key=weld_key(v)?;
+    if let Some(&index)=cache.get(&key){return Ok(index);}
+    let index=u32::try_from(out.vertices.len())
         .map_err(|_|"terrain-conforming surface too large")?;
-    if base>u32::MAX-3{return Err("terrain-conforming surface too large".into());}
-    out.vertices.extend(triangle);
-    out.indices.extend([base,base+1,base+2]);
+    out.vertices.push(v);
+    cache.insert(key,index);
+    Ok(index)
+}
+fn push_triangle(out:&mut Mesh,cache:&mut HashMap<WeldKey,u32>,
+    triangle:[Vertex;3])->Result<(),String> {
+    if area(triangle[0],triangle[1],triangle[2])<1e-7{return Ok(());}
+    let ids=[
+        intern_vertex(out,cache,triangle[0])?,
+        intern_vertex(out,cache,triangle[1])?,
+        intern_vertex(out,cache,triangle[2])?,
+    ];
+    // Tiny slivers that collapse during sub-mm welding are not triangles.
+    if ids[0]!=ids[1] && ids[1]!=ids[2] && ids[0]!=ids[2] {
+        out.indices.extend(ids);
+    }
     Ok(())
 }
 
@@ -112,6 +149,7 @@ pub fn conform_to_ground(grid:&TerrainGrid,region:&Region,mesh:&Mesh)
         [[sw,nw,se],[ne,se,nw]]
     };
     let mut output=Mesh::default();
+    let mut welded=HashMap::<WeldKey,u32>::new();
     let mut reused:Vec<Option<u32>>=vec![None;mesh.vertices.len()];
     for indices in mesh.indices.chunks_exact(3) {
         let idx=[indices[0] as usize,indices[1] as usize,indices[2] as usize];
@@ -128,12 +166,10 @@ pub fn conform_to_ground(grid:&TerrainGrid,region:&Region,mesh:&Mesh)
                 let mapped=match *slot {
                     Some(mapped)=>mapped,
                     None=>{
-                        let mapped=u32::try_from(output.vertices.len())
-                            .map_err(|_|"terrain-conforming surface too large")?;
                         let mut vertex=mesh.vertices[index as usize];
                         let face=ground(faces[0].0,faces[0].1)[usize::from(!faces[0].2)];
                         vertex.position[1]+=height_on_face(vertex,face);
-                        output.vertices.push(vertex);
+                        let mapped=intern_vertex(&mut output,&mut welded,vertex)?;
                         *slot=Some(mapped);
                         mapped
                     }
@@ -159,7 +195,7 @@ pub fn conform_to_ground(grid:&TerrainGrid,region:&Region,mesh:&Mesh)
                         for vertex in &mut section {
                             vertex.position[1]+=height_on_face(*vertex,face);
                         }
-                        push_triangle(&mut output,section)?;
+                        push_triangle(&mut output,&mut welded,section)?;
                     }
                 }
             }
@@ -174,6 +210,25 @@ mod tests {
     use crate::roads::{mesh_streets_with_bridges, SurfaceKind};
     use crate::{City,Street};
     use std::collections::BTreeMap;
+    #[test]
+    fn overlapping_dem_splits_share_gpu_vertices_without_losing_triangles() {
+        let r=Region{id:"flat".into(),name:"flat".into(),
+            origin:[0.0005,0.0005],bbox:[0.,0.,0.001,0.001]};
+        let grid=TerrainGrid{schema_version:1,region_id:"flat".into(),
+            bbox:r.bbox,width:3,height:3,heights_m:vec![0.;9],
+            origin_elevation_m:0.,source:"test".into()};
+        let corners=[(-45.0,-45.0),(45.0,-45.0),(45.0,45.0),(-45.0,45.0)];
+        let mut mesh=Mesh::default();
+        for (x,z) in corners {
+            mesh.vertices.push(Vertex{position:[x,0.24,z],normal:[0.,1.,0.]});
+        }
+        mesh.indices.extend([0,3,1,1,3,2]);
+        let out=conform_to_ground(&grid,&r,&mesh).unwrap();
+        assert!(out.indices.len()>=6);
+        assert!(out.vertices.len()*2<out.indices.len(),
+            "terrain intersections must share GPU vertices, not copy every corner");
+        assert!(out.indices.iter().all(|i|(*i as usize)<out.vertices.len()));
+    }
     #[test]
     fn surface_triangles_follow_dem_faces_without_piercing_ground() {
         let region=Region{id:"slope".into(),name:"slope".into(),
