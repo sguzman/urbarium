@@ -99,14 +99,18 @@ with sync_playwright() as p:
               "preview roads",preview_count)
         page.wait_for_function("""() => document.querySelector("#status")?.dataset.firstFrameDetail==="base" """,timeout=60000)
         page.wait_for_function("""() => document.querySelector("#status")?.dataset.sceneDetail==="complete" """,timeout=60000)
-        assert page.locator("#status").get_attribute("data-chunk-streaming")=="true"
-        resident=int(page.locator("#status").get_attribute("data-chunks-resident"))
-        wanted=int(page.locator("#status").get_attribute("data-chunks-wanted"))
-        assert 0<resident==wanted<=9,(resident,wanted)
-        assert page.locator("#status").get_attribute("data-chunk-initial-complete")=="true"
         assert page.locator("#chunk-stream-status").count()==1
-        assert int(page.locator("#status").get_attribute("data-chunks-built"))==resident
-        print("Initial streamed world: independently resident camera-local GPU cells",resident)
+        if not bridge_preview:
+            assert page.locator("#status").get_attribute("data-chunk-streaming")=="true"
+            resident=int(page.locator("#status").get_attribute("data-chunks-resident"))
+            wanted=int(page.locator("#status").get_attribute("data-chunks-wanted"))
+            assert 0<resident==wanted<=9,(resident,wanted)
+            assert page.locator("#status").get_attribute("data-chunk-initial-complete")=="true"
+            assert int(page.locator("#status").get_attribute("data-chunks-built"))==resident
+            print("Initial streamed world: independently resident camera-local GPU cells",resident)
+        else:
+            assert page.locator("#status").get_attribute("data-chunk-streaming") is None, (
+                "Experimental bridge mode must retain its full-scene fallback")
         assert page.locator("#renderer-select").count() == 1
         assert page.locator("#renderer-health").count() == 1
         # Small, keyboard-accessible tabbed HUD must not restart the app,
@@ -819,19 +823,20 @@ with sync_playwright() as p:
                 Number(s.dataset.eyeClearance)>100;
         }""",timeout=15000)
         print("City overview camera switched to elevated view")
-        # A long camera relocation changes the active cell set. Verify
-        # runtime generation and eviction, not just a reduced startup mesh.
-        page.wait_for_function("""() => {
-            const s=document.querySelector("#status");
-            return Number(s?.dataset.chunksEvicted)>0 &&
-                Number(s?.dataset.chunksBuilt)>9 &&
-                Number(s?.dataset.chunksResident)<=9 &&
-                s?.dataset.sceneDetail==="complete";
-        }""",timeout=60000)
-        after_stream_move=page.locator("#status")
-        print("Camera-following streaming: built",after_stream_move.get_attribute("data-chunks-built"),
-              "evicted",after_stream_move.get_attribute("data-chunks-evicted"),
-              "resident",after_stream_move.get_attribute("data-chunks-resident"))
+        if not bridge_preview:
+            # The standard primary view streams nine or fewer cells. The
+            # experimental bridge scene intentionally follows the old path.
+            page.wait_for_function("""() => {
+                const s=document.querySelector("#status");
+                return Number(s?.dataset.chunksEvicted)>0 &&
+                    Number(s?.dataset.chunksBuilt)>9 &&
+                    Number(s?.dataset.chunksResident)<=9 &&
+                    s?.dataset.sceneDetail==="complete";
+            }""",timeout=60000)
+            after_stream_move=page.locator("#status")
+            print("Camera-following streaming: built",after_stream_move.get_attribute("data-chunks-built"),
+                  "evicted",after_stream_move.get_attribute("data-chunks-evicted"),
+                  "resident",after_stream_move.get_attribute("data-chunks-resident"))
         page.locator("#camera-street").click()
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
@@ -977,6 +982,30 @@ with sync_playwright() as p:
         assert page.url==early_url
         assert not errors,errors
         print("Progressive scene: first terrain/streets frame before full city and neighboring tile, then joined-world upgrade passed")
+        if force_webgl:
+            # Separately test the normal WebGL2 renderer, without the
+            # experimental freeway override that deliberately bypasses
+            # primary mesh streaming.
+            page.goto("http://127.0.0.1:8010/?renderer=webgl2",
+                      wait_until="domcontentloaded")
+            page.wait_for_function("""() => {
+                const s=document.querySelector("#status");
+                return s?.dataset.sceneDetail==="complete" &&
+                    s.dataset.chunkStreaming==="true" &&
+                    Number(s.dataset.chunksResident)>0 &&
+                    Number(s.dataset.chunksResident)<=9;
+            }""",timeout=90000)
+            before_eviction=int(page.locator("#status").get_attribute("data-chunks-evicted"))
+            page.locator("#camera-overview").click()
+            page.wait_for_function("""() =>
+                Number(document.querySelector("#status")?.dataset.chunksEvicted)>0 &&
+                document.querySelector("#status")?.dataset.sceneDetail==="complete"
+            """,timeout=90000)
+            assert int(page.locator("#status").get_attribute("data-chunks-evicted"))>before_eviction
+            assert int(page.locator("#status").get_attribute("data-chunks-resident"))<=9
+            assert not errors,errors
+            print("WebGL2 normal view: camera-following chunks load and evict independently")
+
         # SW must cache the exact fingerprinted WASM, then serve the same
         # build from CacheStorage on a subsequent navigation. It may not
         # intercept the first page before clients.claim(), so the first
