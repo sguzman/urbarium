@@ -65,7 +65,7 @@
       // its response clone asynchronously; do not delay the viewer to
       // register the worker or write the cache.
       const fetchBeforeWasmCache=window.fetch.bind(window);
-      const wasmFilePattern=/^urbarium-viewer-[0-9a-f]+_bg\\.wasm$/;
+      const wasmFilePattern=/^urbarium-viewer-[0-9a-f]+_bg\.wasm$/;
       const wasmRoot=new URL("./",location.href);
       const wasmEligible=req=>{
         const url=new URL(req.url);
