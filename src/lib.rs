@@ -10,6 +10,7 @@ pub mod collision;
 pub mod terrain;
 pub mod world;
 pub mod streaming;
+pub mod surface_clip;
 #[cfg(feature="viewer")]
 pub mod chunk_mesh;
 #[cfg(feature="viewer")]
