@@ -99,6 +99,14 @@ with sync_playwright() as p:
               "preview roads",preview_count)
         page.wait_for_function("""() => document.querySelector("#status")?.dataset.firstFrameDetail==="base" """,timeout=60000)
         page.wait_for_function("""() => document.querySelector("#status")?.dataset.sceneDetail==="complete" """,timeout=60000)
+        assert page.locator("#status").get_attribute("data-chunk-streaming")=="true"
+        resident=int(page.locator("#status").get_attribute("data-chunks-resident"))
+        wanted=int(page.locator("#status").get_attribute("data-chunks-wanted"))
+        assert 0<resident==wanted<=9,(resident,wanted)
+        assert page.locator("#status").get_attribute("data-chunk-initial-complete")=="true"
+        assert page.locator("#chunk-stream-status").count()==1
+        assert int(page.locator("#status").get_attribute("data-chunks-built"))==resident
+        print("Initial streamed world: independently resident camera-local GPU cells",resident)
         assert page.locator("#renderer-select").count() == 1
         assert page.locator("#renderer-health").count() == 1
         # Small, keyboard-accessible tabbed HUD must not restart the app,
@@ -811,6 +819,19 @@ with sync_playwright() as p:
                 Number(s.dataset.eyeClearance)>100;
         }""",timeout=15000)
         print("City overview camera switched to elevated view")
+        # A long camera relocation changes the active cell set. Verify
+        # runtime generation and eviction, not just a reduced startup mesh.
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return Number(s?.dataset.chunksEvicted)>0 &&
+                Number(s?.dataset.chunksBuilt)>9 &&
+                Number(s?.dataset.chunksResident)<=9 &&
+                s?.dataset.sceneDetail==="complete";
+        }""",timeout=60000)
+        after_stream_move=page.locator("#status")
+        print("Camera-following streaming: built",after_stream_move.get_attribute("data-chunks-built"),
+              "evicted",after_stream_move.get_attribute("data-chunks-evicted"),
+              "resident",after_stream_move.get_attribute("data-chunks-resident"))
         page.locator("#camera-street").click()
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');

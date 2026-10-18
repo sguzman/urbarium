@@ -55,6 +55,30 @@ uncompressed WASM decreased from 4,672,314 to 3,932,014 bytes (15.8%).
 This reduces code bytes transferred on a cold load, but does not prove any
 particular time-to-first-frame improvement on the user's connection.
 
+## Camera-following GPU mesh cells (October 18)
+
+In the normal single-region progressive browser mode, Urbarium retains one
+complete terrain mesh but builds **300-meter geometry cells on demand**.
+Each visible-neighborhood cell includes source-derived building meshes,
+clipped transportation surfaces, and corresponding landmark markers.
+The camera drives a 3-by-3 cell neighborhood (maximum nine resident chunks).
+When the player moves into another grid cell, new road/building meshes are
+constructed from their own source subsets, uploaded as independent GPU buffers,
+and no-longer-needed buffers are dropped. The total number of instantiated
+primary-city mesh cells is bounded; the full geographic city and collision
+data remain in CPU memory.
+
+The initial coarse terrain/road preview is replaced with terrain-only after
+the first active neighborhood is complete, avoiding permanent duplicate road
+draws. One new chunk is generated per rendered frame; this can still create
+main-thread CPU hitches, and true off-thread generation and LOD are future
+work. Single-region streaming is enabled by default with progressive startup,
+with `?stream=0` restoring the previous full-city enrichment. The
+joined-world preview and experimental freeway mode retain the full-scene path
+until their topology and memory behavior are separately verified. Browser QA
+checks camera relocation, chunk eviction, a maximum of nine residents, and
+the previous renderer/fallback behavior.
+
 ## Camera-local street preview (October 18)
 
 The progressive first pass now retains only source road/path polylines that

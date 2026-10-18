@@ -17,6 +17,9 @@
       document.documentElement.dataset.activeRegion=selected.id;
       document.documentElement.dataset.worldPreview=params.get("world")==="1"?"true":"false";
       document.documentElement.dataset.progressivePreview=params.get("progressive")==="0"?"false":"true";
+      // Camera-local mesh residency is the progressive default in single-
+      // section mode. stream=0 restores the old full-city enrichment.
+      document.documentElement.dataset.chunkStreaming=params.get("stream")==="0"?"false":"true";
       const requested = params.get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
@@ -455,6 +458,7 @@
       <p class="hud-field"><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
       <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
       <p id="scene-detail-stage" role="status">Scene detail: waiting for renderer</p>
+      <p id="chunk-stream-status" class="hud-hint" role="status">Camera-local geometry: initializing</p>
       <p id="startup-code-state" class="hud-hint" role="status">WebAssembly load: checking browser timings...</p>
       <p id="wasm-cache-state" class="hud-hint" role="status">WASM disk cache: checking...</p>
       <p id="geography-request-count" class="hud-hint" role="status">City/terrain network requests this visit: 0</p>
@@ -906,6 +910,14 @@
           activeSections:Number(status?.dataset.worldSections||1),
           progressivePreview,
           sceneDetail:status?.dataset.sceneDetail||"unknown",
+          chunks:{
+            streaming:status?.dataset.chunkStreaming==="true",
+            resident:Number(status?.dataset.chunksResident||0),
+            wanted:Number(status?.dataset.chunksWanted||0),
+            built:Number(status?.dataset.chunksBuilt||0),
+            evicted:Number(status?.dataset.chunksEvicted||0),
+            cellSizeMeters:Number(status?.dataset.chunkSizeM||0)
+          },
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
             new URLSearchParams(location.search).get("launch"))
             ?new URLSearchParams(location.search).get("launch"):"normal-browser",
@@ -1122,13 +1134,22 @@
         const sceneLabels={
           waiting:"Scene detail: waiting for first frame",
           base:"Terrain + streets visible · filling in buildings",
-          complete:"Full current section ready",
+          complete:"Camera-local geometry ready",
+          streaming:"Moving into adjacent mesh cells",
           neighbor:"Full current section ready · loading adjacent region",
           joined:"Full joined-world scene ready",
           error:"Scene enrichment failed (basic scene remains visible)"
         };
         document.getElementById("scene-detail-stage").textContent=
           sceneLabels[sceneDetail]||"Scene detail: "+sceneDetail;
+        const activeChunks=status?.dataset.chunkStreaming==="true";
+        const streamLine=document.getElementById("chunk-stream-status");
+        streamLine.textContent=activeChunks
+          ? "Camera-local geometry: "+(status.dataset.chunksResident||"0")+
+            " / "+(status.dataset.chunksWanted||"?")+" cells resident"+
+            " · built "+(status.dataset.chunksBuilt||"0")+
+            " · evicted "+(status.dataset.chunksEvicted||"0")
+          : "Geometry mode: full-scene fallback (or initializing)";
         if(status?.dataset.gpuDeviceLost==="true"){
           health.textContent="Graphics device lost · Copy diagnostics in Stats";
           health.classList.add("warn");

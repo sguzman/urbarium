@@ -68,9 +68,11 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 - [x] Add first-person capsule-like planar building-footprint collision with swept horizontal movement, courtyards and wall sliding.
 - [x] Limit progressive first-frame road meshing to source geometry within a
       fixed radius of the actual initial camera (full scene still loads later).
-- [ ] Add camera-tracking chunk streaming and eviction, then broad-phase
-      collision spatial indexing, culling and LOD, and terrain slope traversal
-      constraints.
+- [x] Stream source-derived road/building GPU chunks near the primary camera,
+      with capped residency and eviction as the camera crosses cells.
+- [ ] Move camera-following chunk generation off the main browser thread,
+      extend chunk residency across joined regions and implement adaptive LOD,
+      broad-phase collision indexing and terrain slope traversal constraints.
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [x] First-person street-level navigation, mouse capture, error overlay and toggleable 18× fast travel.
 - [x] Interactive north-up Downtown LA minimap with zoom, mapped buildings and camera location/heading.
