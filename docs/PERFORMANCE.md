@@ -61,9 +61,14 @@ The normal viewer still defaults to the verified local renderer. A separately
 compiled, CPU-only Rust WASM binary now runs the **same shared procedural
 chunk mesher** in a dedicated Web Worker when `?meshworker=1` is selected.
 It receives the already downloaded City and DEM JSON rather than initiating
-duplicate geography downloads. After worker initialization, one chunk is
-queued at a time; serialized vertex/index/batch results are validated and
-uploaded to GPU buffers by the ordinary rendering thread.
+duplicate geography downloads. After worker initialization, one chunk is queued at a time. Mesh results
+use a versioned **binary packet** containing the exact 52-byte GPU vertices,
+32-bit indices and compact layer/batch records. The worker transfers its
+`ArrayBuffer` ownership to the main thread instead of creating JSON strings.
+The same Rust wire codec verifies magic, counts, lengths, finite coordinates,
+indices and draw-batch bounds before the normal GPU upload. Malformed packets
+trigger the established local-mesher fallback rather than uploading damaged
+geometry.
 
 The worker changes **where triangulation and DEM draping execute**, not
 chunk ownership, building massing, camera controls, collision, draw distance,

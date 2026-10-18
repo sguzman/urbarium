@@ -79,6 +79,8 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
       Web Worker with fallback and browser regression coverage.
 - [x] Cache the off-thread worker executable by its release SHA-256
       independently of the main viewer and verify immediate reload hits.
+- [x] Replace per-chunk worker mesh JSON with versioned binary packets and
+      transferred ArrayBuffers, including strict decode and parity tests.
 - [ ] Evaluate repeated browser mesh-phase long tasks, frame-time distributions,
       cold-download cost and pixel parity before changing the default; then
       extend streaming to joined regions and introduce adaptive LOD, collision

@@ -8,6 +8,8 @@ use wasm_bindgen::prelude::*;
 use urbarium::{City,terrain::TerrainGrid,streaming::ChunkKey};
 #[cfg(target_arch="wasm32")]
 use urbarium::chunk_mesh::build_chunk_payload;
+#[cfg(target_arch="wasm32")]
+use urbarium::chunk_wire;
 
 #[cfg(target_arch="wasm32")]
 thread_local!{
@@ -30,15 +32,15 @@ pub fn initialize_worker(city_json:&str,terrain_json:&str)->Result<(),JsValue>{
 }
 #[cfg(target_arch="wasm32")]
 #[wasm_bindgen]
-pub fn mesh_chunk(x:i32,z:i32)->Result<String,JsValue>{
+pub fn mesh_chunk(x:i32,z:i32)->Result<Vec<u8>,JsValue>{
     DATA.with(|cell|{
         let guard=cell.borrow();
         let (city,terrain)=guard.as_ref()
             .ok_or_else(||JsValue::from_str("Worker was not initialized"))?;
         let payload=build_chunk_payload(city,terrain,ChunkKey{x,z})
             .map_err(|e|JsValue::from_str(&e))?;
-        serde_json::to_string(&payload)
-            .map_err(|e|JsValue::from_str(&format!("Worker serialize: {e}")))
+        chunk_wire::encode(ChunkKey{x,z},&payload)
+            .map_err(|e|JsValue::from_str(&format!("Worker encode: {e}")))
     })
 }
 fn main(){}

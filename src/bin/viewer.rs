@@ -485,7 +485,13 @@ export function start_urbarium_mesh_worker() {
       }else if(data?.type==="mesh"){
         state.pending=Math.max(0,state.pending-1);
         state.completed++;
-        state.queue.push(JSON.stringify({x:data.x,z:data.z,payload:data.payload}));
+        if(!(data.payload instanceof Uint8Array) || data.payload.byteLength<24){
+          state.status="error";
+          state.error="Invalid transferred binary mesh payload";
+          worker.terminate();
+          return;
+        }
+        state.queue.push(data.payload);
       }
     };
     worker.postMessage({type:"init",city:window.__urbariumCityJson,
@@ -512,14 +518,14 @@ export function request_urbarium_mesh_chunk(x,z){
   return true;
 }
 export function take_urbarium_mesh_chunk_result(){
-  return chunkWorkerClient?.queue.shift()||"";
+  return chunkWorkerClient?.queue.shift()||new Uint8Array(0);
 }
 "#)]
 extern "C"{
     fn start_urbarium_mesh_worker()->bool;
     fn urbarium_mesh_worker_status()->String;
     fn request_urbarium_mesh_chunk(x:i32,z:i32)->bool;
-    fn take_urbarium_mesh_chunk_result()->String;
+    fn take_urbarium_mesh_chunk_result()->Vec<u8>;
 }
 #[cfg(not(target_arch="wasm32"))]
 fn start_urbarium_mesh_worker()->bool{false}
@@ -528,7 +534,7 @@ fn urbarium_mesh_worker_status()->String{"unavailable".into()}
 #[cfg(not(target_arch="wasm32"))]
 fn request_urbarium_mesh_chunk(_:i32,_:i32)->bool{false}
 #[cfg(not(target_arch="wasm32"))]
-fn take_urbarium_mesh_chunk_result()->String{String::new()}
+fn take_urbarium_mesh_chunk_result()->Vec<u8>{Vec::new()}
 fn browser_mesh_worker_enabled()->bool {
     #[cfg(target_arch="wasm32")]
     return web_sys::window().and_then(|w|w.document())
@@ -538,8 +544,6 @@ fn browser_mesh_worker_enabled()->bool {
     #[cfg(not(target_arch="wasm32"))]
     false
 }
-#[derive(serde::Deserialize)]
-struct WorkerChunkReply {x:i32,z:i32,payload:String}
 fn expose_mesh_worker_state(active:bool,complete:u64){
     #[cfg(target_arch="wasm32")]
     if let Some(el)=web_sys::window().and_then(|w|w.document())
@@ -1162,14 +1166,9 @@ impl Graphics {
             }else if state=="ready" {
                 let message=take_urbarium_mesh_chunk_result();
                 if !message.is_empty() {
-                    let received=(||->Result<_,String>{
-                        let reply:WorkerChunkReply=serde_json::from_str(&message)
-                            .map_err(|e|format!("Worker response: {e}"))?;
-                        let key=urbarium::streaming::ChunkKey{x:reply.x,z:reply.z};
-                        let payload:ChunkMeshPayload=serde_json::from_str(&reply.payload)
-                            .map_err(|e|format!("Worker mesh data: {e}"))?;
-                        Ok((key,payload))
-                    })();
+                    // Compact POD vertices, indices and layer descriptors:
+                    // no main-thread JSON parsing or base64 conversion.
+                    let received=urbarium::chunk_wire::decode(&message);
                     match received {
                         Ok((key,payload))=>{
                             stream.worker_inflight.remove(&key);

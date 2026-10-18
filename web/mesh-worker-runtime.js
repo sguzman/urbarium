@@ -72,8 +72,13 @@ self.onmessage=async event=>{
   }
   if(data?.type==="mesh" && ready && !failed){
     try{
+      // wasm-bindgen exposes Vec<u8> as a Uint8Array with an independently
+      // owned ArrayBuffer. Transfer it instead of serializing vertex JSON
+      // or structured-cloning a second copy of a large mesh.
       const payload=engine.mesh_chunk(data.x,data.z);
-      self.postMessage({type:"mesh",x:data.x,z:data.z,payload});
+      if(!(payload instanceof Uint8Array) || payload.byteLength<24)
+        throw Error("Invalid binary mesh output");
+      self.postMessage({type:"mesh",payload},[payload.buffer]);
     }catch(error){
       failed=true;
       self.postMessage({type:"error",message:String(error)});
