@@ -1134,7 +1134,8 @@
         const sceneLabels={
           waiting:"Scene detail: waiting for first frame",
           base:"Terrain + streets visible · filling in buildings",
-          complete:"Camera-local geometry ready",
+          complete:status?.dataset.chunkStreaming==="true"
+            ?"Camera-local geometry ready":"Full current section ready",
           streaming:"Moving into adjacent mesh cells",
           neighbor:"Full current section ready · loading adjacent region",
           joined:"Full joined-world scene ready",
