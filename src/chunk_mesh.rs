@@ -3,6 +3,7 @@
 
 use crate::{City, Point, Region, Building};
 use crate::streaming::ChunkKey;
+use crate::surface_clip::clip_surface_to_bounds;
 use crate::geometry::{mesh_building, HeightPolicy, Mesh, Vertex};
 use crate::roads::{mesh_streets_with_bridges, SurfaceKind};
 use crate::terrain::TerrainGrid;
@@ -136,6 +137,24 @@ pub fn chunk_geometry(city:&City,terrain:&TerrainGrid,
     }
     let (mut roads,_)=mesh_streets_with_bridges(city,false)?;
     terrain.drape_roads_with_preview(&city.region,&mut roads,false)?;
+
+    // Source roads have full path context: preserve the genuine bend normals,
+    // widths and junction patches through meshing and terrain draping, THEN
+    // assign their finished triangles to this tile. Intersect with the region
+    // itself so edge cells do not bleed onto a neighboring joined region.
+    let sw=city.region.project(city.region.bbox[0],city.region.bbox[1]);
+    let ne=city.region.project(city.region.bbox[2],city.region.bbox[3]);
+    let tile=key.bounds();
+    let bounds=[
+        tile[0].max(sw.x),tile[1].max(sw.z),
+        tile[2].min(ne.x),tile[3].min(ne.z),
+    ];
+    if bounds[0]>=bounds[2] || bounds[1]>=bounds[3] {
+        return Err("chunk is outside its source region".into());
+    }
+    for mesh in roads.layers.values_mut() {
+        *mesh=clip_surface_to_bounds(mesh,bounds)?;
+    }
     let mut vertices=Vec::new();
     let mut indices=Vec::new();
     let mut batches=Vec::new();
