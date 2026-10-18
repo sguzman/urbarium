@@ -71,8 +71,10 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 - [x] Stream source-derived road/building GPU chunks with bounded residency.
 - [x] Preserve distant skyline geometry throughout the small Downtown pilot;
       remove the faulty nine-cell visibility cutoff.
-- [ ] Introduce conservative view-frustum draw culling and validated occlusion
-      strategies without dropping visible buildings or intersecting footprints.
+- [x] Introduce conservative frustum **draw-only** rejection using actual
+      mesh vertex bounds and pixel-parity regression at fixed camera poses.
+- [ ] Consider validated occlusion culling and screen-space LOD only after
+      demonstrated savings without visible gaps or false exclusions.
 - [ ] Move camera-following chunk generation off the main browser thread,
       extend chunk residency across joined regions and implement adaptive LOD,
       broad-phase collision indexing and terrain slope traversal constraints.

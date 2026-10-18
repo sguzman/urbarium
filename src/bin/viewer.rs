@@ -615,6 +615,25 @@ fn mark_first_frame_detail(){
     }
 }
 
+fn browser_frustum_culling()->bool {
+    #[cfg(target_arch="wasm32")]
+    return web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-frustum-culling"))
+        .as_deref()!=Some("false");
+    #[cfg(not(target_arch="wasm32"))]
+    true
+}
+fn expose_chunk_draw_telemetry(drawn:u32,culled:u32){
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")){
+        let _=el.set_attribute("data-chunks-drawn",&drawn.to_string());
+        let _=el.set_attribute("data-chunks-culled",&culled.to_string());
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(drawn,culled);
+}
 fn browser_chunk_streaming()->bool {
     #[cfg(target_arch="wasm32")]
     if let Some(value)=web_sys::window().and_then(|w|w.document())
@@ -945,6 +964,9 @@ type NeighborCpu=(
 struct ChunkBuffers{
     vertex:Option<wgpu::Buffer>,
     index:Option<wgpu::Buffer>,
+    // Actual GPU vertex bounds include tall towers and buildings crossing
+    // chunk lines: never cull based on the road-grid square alone.
+    bounds:Option<urbarium::frustum::Bounds3>,
     batches:Vec<DrawBatch>,
     bytes:usize,
 }
@@ -1208,6 +1230,8 @@ impl Graphics {
             let selected=urbarium::streaming::chunk_city(&stream.source,key);
             match chunk_geometry(&selected,&stream.terrain,key) {
                 Ok((vertices,indices,batches))=>{
+                    let bounds=urbarium::frustum::Bounds3::from_positions(
+                        vertices.iter().map(|v|v.position));
                     let bytes=vertices.len()*size_of::<GpuVertex>()+
                         indices.len()*size_of::<u32>();
                     let vertex=(!vertices.is_empty()).then(||
@@ -1222,7 +1246,9 @@ impl Graphics {
                             contents:bytemuck::cast_slice(&indices),
                             usage:wgpu::BufferUsages::INDEX,
                         }));
-                    stream.chunks.insert(key,ChunkBuffers{vertex,index,batches,bytes});
+                    stream.chunks.insert(key,ChunkBuffers{
+                        vertex,index,bounds,batches,bytes,
+                    });
                     stream.built+=1;
                     self.gpu_mesh_bytes+=bytes;
                 }
@@ -1321,6 +1347,14 @@ impl Graphics {
         let mut encoder=self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor{
             label:Some("Urbarium encoder")
         });
+        // Draw-only conservative frustum rejection. Every mesh remains on
+        // the GPU and will reappear on camera rotation without re-meshing.
+        let frustum=urbarium::frustum::ConservativeFrustum::from_clip_cols(
+            self.camera.view_projection(self.config.width,self.config.height)
+                .to_cols_array_2d());
+        let frustum_enabled=browser_frustum_culling();
+        let mut chunks_drawn=0u32;
+        let mut chunks_skipped=0u32;
         let mut drawn_calls=0u32;
         let mut drawn_triangles=0u32;
         {
@@ -1362,6 +1396,11 @@ impl Graphics {
             // is resident; the oldest cells are dropped as the camera moves.
             if let Some(stream)=&self.stream {
                 for cell in stream.chunks.values(){
+                    if frustum_enabled && !frustum.may_draw(cell.bounds) {
+                        chunks_skipped+=1;
+                        continue;
+                    }
+                    chunks_drawn+=1;
                     if let (Some(vertices),Some(indices))=(&cell.vertex,&cell.index){
                         pass.set_vertex_buffer(0,vertices.slice(..));
                         pass.set_index_buffer(indices.slice(..),wgpu::IndexFormat::Uint32);
@@ -1402,6 +1441,9 @@ impl Graphics {
         self.queue.present(frame);
         self.active_draw_calls=drawn_calls;
         self.active_triangles=drawn_triangles;
+        if self.rendered_frames % 8==0 && self.stream.is_some() {
+            expose_chunk_draw_telemetry(chunks_drawn,chunks_skipped);
+        }
         self.rendered_frames += 1;
         true
     }

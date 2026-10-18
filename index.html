@@ -20,6 +20,9 @@
       // Camera-local mesh residency is the progressive default in single-
       // section mode. stream=0 restores the old full-city enrichment.
       document.documentElement.dataset.chunkStreaming=params.get("stream")==="0"?"false":"true";
+      // Pure draw-call filtering; the 30 pilot chunks remain GPU-resident.
+      // frustum=0 is a visual parity reference and zero-culling fallback.
+      document.documentElement.dataset.frustumCulling=params.get("frustum")==="0"?"false":"true";
       const requested = params.get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
@@ -916,7 +919,10 @@
             wanted:Number(status?.dataset.chunksWanted||0),
             built:Number(status?.dataset.chunksBuilt||0),
             evicted:Number(status?.dataset.chunksEvicted||0),
-            cellSizeMeters:Number(status?.dataset.chunkSizeM||0)
+            cellSizeMeters:Number(status?.dataset.chunkSizeM||0),
+            drawn:Number(status?.dataset.chunksDrawn||0),
+            culled:Number(status?.dataset.chunksCulled||0),
+            frustumEnabled:document.documentElement.dataset.frustumCulling!=="false"
           },
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
             new URLSearchParams(location.search).get("launch"))
@@ -1149,7 +1155,9 @@
           ? "Camera-local geometry: "+(status.dataset.chunksResident||"0")+
             " / "+(status.dataset.chunksWanted||"?")+" cells resident"+
             " · built "+(status.dataset.chunksBuilt||"0")+
-            " · evicted "+(status.dataset.chunksEvicted||"0")
+            " · evicted "+(status.dataset.chunksEvicted||"0")+
+            " · drawn "+(status.dataset.chunksDrawn||"0")+
+            " · off-screen "+(status.dataset.chunksCulled||"0")
           : "Geometry mode: full-scene fallback (or initializing)";
         if(status?.dataset.gpuDeviceLost==="true"){
           health.textContent="Graphics device lost · Copy diagnostics in Stats";

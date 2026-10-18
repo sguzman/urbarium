@@ -115,6 +115,47 @@ with sync_playwright() as p:
         else:
             assert page.locator("#status").get_attribute("data-chunk-streaming") is None, (
                 "Experimental bridge mode must retain its full-scene fallback")
+        if not bridge_preview:
+            # Pixel-for-pixel A/B at the identical camera pose. No source,
+            # camera, buffer residency or meshing changes are permitted;
+            # toggle only the draw-call classifier while still rendering.
+            from io import BytesIO as _FrustumBytes
+            from PIL import Image as _FrustumImage, ImageChops as _FrustumDiff
+            def assert_frustum_visual_parity(label):
+                target=page.locator("#status")
+                canvas=page.locator("canvas:not(#minimap-canvas):not(#webgpu-control)").first
+                resident=int(target.get_attribute("data-chunks-resident"))
+                assert resident==int(target.get_attribute("data-chunks-region-total"))
+                page.evaluate("document.documentElement.dataset.frustumCulling='false'")
+                page.wait_for_function("""() => {
+                    const e=document.querySelector('#status');
+                    return Number(e?.dataset.chunksDrawn)===Number(e?.dataset.chunksResident)
+                        && Number(e?.dataset.chunksCulled)===0;
+                }""",timeout=12000)
+                page.wait_for_timeout(150)
+                unfiltered=canvas.screenshot()
+                page.evaluate("document.documentElement.dataset.frustumCulling='true'")
+                page.wait_for_function("""() => {
+                    const e=document.querySelector('#status');
+                    return Number(e?.dataset.chunksDrawn)+Number(e?.dataset.chunksCulled)
+                           ===Number(e?.dataset.chunksResident);
+                }""",timeout=12000)
+                page.wait_for_timeout(150)
+                filtered=canvas.screenshot()
+                with _FrustumImage.open(_FrustumBytes(unfiltered)) as image0, \
+                    _FrustumImage.open(_FrustumBytes(filtered)) as image1:
+                    delta=_FrustumDiff.difference(image0.convert("RGB"),image1.convert("RGB"))
+                    # Ignore slight temporal/driver dithering, but fail
+                    # conspicuous missing building/road chunks.
+                    changed=delta.convert("L").point(
+                        lambda v:255 if v>24 else 0).histogram()[255]
+                    fraction=changed/(delta.width*delta.height)
+                    assert fraction<0.005,(label,fraction,"missing visible geometry")
+                assert int(target.get_attribute("data-chunks-resident"))==resident
+                print("Frustum visual parity",label,"changed pixel fraction",round(fraction,6),
+                      "GPU chunks kept",resident,"culled",
+                      target.get_attribute("data-chunks-culled"))
+            assert_frustum_visual_parity("street")
         assert page.locator("#renderer-select").count() == 1
         assert page.locator("#renderer-health").count() == 1
         # Small, keyboard-accessible tabbed HUD must not restart the app,
@@ -844,6 +885,7 @@ with sync_playwright() as p:
                 "Relocating the camera within Downtown must not discard visible skyline")
             print("Elevated overview: all distant building chunks retained",
                   after_stream_move.get_attribute("data-chunks-resident"))
+            assert_frustum_visual_parity("elevated overview")
         page.locator("#camera-street").click()
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');

@@ -55,6 +55,27 @@ uncompressed WASM decreased from 4,672,314 to 3,932,014 bytes (15.8%).
 This reduces code bytes transferred on a cold load, but does not prove any
 particular time-to-first-frame improvement on the user's connection.
 
+## Conservative view-frustum draw-call culling (October 18)
+
+The normal single-region streaming renderer keeps the complete Downtown pilot
+GPU-resident (all 30 mesh cells), including tall buildings and distant skyline
+blocks. The frustum test uses **actual chunk mesh vertex AABBs**, never just
+nominal 300-meter grid extents, and expands each clipping plane by a
+**30-meter world-space safety margin**. Entire chunks are skipped only when
+their full bounds lie outside a camera plane plus the margin. Buildings hidden
+behind other buildings are not removed; no unsupported occlusion assumptions
+are made. Rotating the camera makes resident meshes drawable immediately,
+without downloading, generating, or uploading their geometry again.
+
+Use `?frustum=0` to disable only draw-call filtering while retaining exactly
+the same GPU-resident city. The Details view and downloadable diagnostics
+record draw-visible and rejected chunk counts separately from residency.
+Browser regression compares canvas pixels with frustum culling enabled and
+disabled at the **same fixed camera pose**, and checks the full skyline from
+the elevated overview. Joined-world and experimental freeway modes remain
+untouched. View-frustum filtering does not reduce initial mesh construction
+or WASM transfer time.
+
 ## Camera-following GPU mesh cells (October 18)
 
 In the normal single-region progressive browser mode, Urbarium retains one

@@ -131,6 +131,8 @@ jobs:
           assert offset+8+length==len(raw)
           print("GLB binary structure validated")
           PY
+      - name: Conservative frustum math regression
+        run: cargo test --features viewer --lib frustum::tests
       - name: Check native WebGPU viewer
         run: cargo check --features viewer --bin urbarium-viewer
       - name: Install WASM compilation target
