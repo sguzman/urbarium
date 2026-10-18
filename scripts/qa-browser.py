@@ -55,7 +55,8 @@ with sync_playwright() as p:
     # WebGPU validates the retired default; WebGL2 covers opt-in prototype.
     bridge_preview=force_webgl
     # CI software-Vulkan rendering is an explicit exception, not production default.
-    suffix="&bridges=1" if bridge_preview else "&allow-software=1"
+    # world=0 preserves the formerly default single-region regression suite.
+    suffix=("&bridges=1" if bridge_preview else "&allow-software=1")+"&world=0"
     # Exercise the small probe independently of the costly city rendering app.
     probe_page=browser.new_page(accept_downloads=True)
     probe_page.goto("http://127.0.0.1:8010/gpu-test.html",wait_until="domcontentloaded")
@@ -950,7 +951,7 @@ with sync_playwright() as p:
         print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
         # Real neighboring geometry loaded into a separate GPU buffer under a
         # strict residency cap, with camera crossing the geographic seam.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1&progressive=0",
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&world=0','')}&progressive=0",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
@@ -961,6 +962,20 @@ with sync_playwright() as p:
         }""",timeout=90000)
         assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
         assert page.locator("#progressive-preview-toggle").get_attribute("aria-pressed")=="false"
+        page.wait_for_function("""() => {
+            const map=document.querySelector("#minimap-canvas");
+            return map?.dataset.mapReady==="true" &&
+                map.dataset.mapJoined==="true" &&
+                Number(map.dataset.mapSections)===2 &&
+                Number(map.dataset.mapFullWidthM)>2700;
+        }""",timeout=30000)
+        map_info=page.locator("#minimap-canvas")
+        fit=float(map_info.get_attribute("data-map-full-width-m"))
+        assert float(map_info.get_attribute("data-map-width-m"))>=fit*.97
+        bounds=[float(v) for v in map_info.get_attribute(
+            "data-map-world-bounds").split(",")]
+        assert bounds[2]-bounds[0]>2700 and bounds[3]>bounds[1],bounds
+        print("Both joined regions included in geographic minimap",bounds)
         assert page.locator("#status").get_attribute("data-first-frame-detail")=="joined"
         # Joined-world startup previously displayed the misleading generic
         # "Starting application" for the neighbor-fetch stage. Ensure the
@@ -1010,7 +1025,7 @@ with sync_playwright() as p:
         # Progressive first frame must be actual terrain + street polygons
         # before buildings and the neighboring city are ready, then upgrade
         # both GPU meshes without navigation or resetting the camera.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1",
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&world=0','')}",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() => {
             const s=document.querySelector("#status");
@@ -1029,13 +1044,18 @@ with sync_playwright() as p:
                 Number(s.dataset.frameCount)>6;
         }""",timeout=90000)
         assert page.url==early_url
+        assert page.evaluate("() => document.documentElement.dataset.worldPreview")=="true"
+        page.wait_for_function("""() =>
+            Number(document.querySelector("#minimap-canvas")?.dataset.mapSections)===2
+        """,timeout=30000)
+        print("Default joined mode: progressive renderer and whole-region map")
         assert not errors,errors
         print("Progressive scene: first terrain/streets frame before full city and neighboring tile, then joined-world upgrade passed")
         if force_webgl:
             # Separately test the normal WebGL2 renderer, without the
             # experimental freeway override that deliberately bypasses
             # primary mesh streaming.
-            page.goto("http://127.0.0.1:8010/?renderer=webgl2",
+            page.goto("http://127.0.0.1:8010/?renderer=webgl2&world=0",
                       wait_until="domcontentloaded")
             page.wait_for_function("""() => {
                 const s=document.querySelector("#status");
@@ -1088,7 +1108,7 @@ with sync_playwright() as p:
         # Independent Rust CPU mesher worker integration (opt-in until proven
         # safe). Same source City and DEM; all 30 chunks must come from the
         # worker, never silently from the fallback, and the scene must render.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}&meshworker=1",
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}&world=0&meshworker=1",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() =>
             document.querySelector("#status")?.dataset.renderStage==="first-present"
