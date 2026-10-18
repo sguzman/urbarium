@@ -999,8 +999,8 @@ with sync_playwright() as p:
                 const s=document.querySelector("#status");
                 return s?.dataset.sceneDetail==="complete" &&
                     s.dataset.chunkStreaming==="true" &&
-                    Number(s.dataset.chunksResident)>0 &&
-                    Number(s.dataset.chunksResident)<=9;
+                    Number(s.dataset.chunksResident)>9 &&
+                    Number(s.dataset.chunksResident)===Number(s.dataset.chunksRegionTotal);
             }""",timeout=90000)
             page.locator("#camera-overview").click()
             page.wait_for_function("""() => {
