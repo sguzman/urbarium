@@ -34,7 +34,7 @@
     historic:"Historic"};
   const allMask=(1<<Object.keys(palette).length)-1;
   const legend=document.getElementById("landmark-legend");
-  const state={city:null,terrain:null,landmarks:[],filterMask:allMask,width:650,cache:false,
+  const state={city:null,neighbor:null,terrain:null,landmarks:[],filterMask:allMask,width:650,cache:false,
     cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0};
   function project(lon,lat,region) {
     return {x:(lon-region.origin[0])*radius*Math.cos(region.origin[1]*Math.PI/180),
@@ -52,7 +52,7 @@
       z:read("data-camera-z"),yaw:read("data-camera-yaw"),pitch:0};
   }
   function zoom(factor) {
-    state.width=Math.max(100,Math.min(2500,state.width*factor));
+    state.width=Math.max(100,Math.min(6000,state.width*factor));
     state.cache=false;
   }
   document.getElementById("map-zoom-in")?.addEventListener("click",()=>zoom(.65));
@@ -61,6 +61,44 @@
     {passive:false});
   ["click","mousedown","mouseup"].forEach(event=>
     canvas.addEventListener(event,e=>e.stopPropagation()));
+
+
+  function isJoined(){return document.documentElement.dataset.worldPreview==="true";}
+  function sections(){return state.neighbor?[state.city,state.neighbor]:[state.city];}
+  // Exactly match Rust TilePlacement: convert neighbor local meters into
+  // the primary source's geographic frame without changing the original data.
+  function toReference(point,section){
+    if(section===state.city)return point;
+    const local=section.region,ref=state.city.region;
+    const shift=project(local.origin[0],local.origin[1],ref);
+    const scale=Math.cos(ref.origin[1]*Math.PI/180)/
+      Math.cos(local.origin[1]*Math.PI/180);
+    return {x:shift.x+point.x*scale,z:shift.z+point.z};
+  }
+  function sectionBounds(section){
+    const r=section.region;
+    const sw=toReference(project(r.bbox[0],r.bbox[1],r),section);
+    const ne=toReference(project(r.bbox[2],r.bbox[3],r),section);
+    return [Math.min(sw.x,ne.x),Math.min(sw.z,ne.z),
+            Math.max(sw.x,ne.x),Math.max(sw.z,ne.z)];
+  }
+  function unionBounds(){
+    const bounds=sections().filter(Boolean).map(sectionBounds);
+    return [
+      Math.min(...bounds.map(b=>b[0])),Math.min(...bounds.map(b=>b[1])),
+      Math.max(...bounds.map(b=>b[2])),Math.max(...bounds.map(b=>b[3]))
+    ];
+  }
+  function fitWidth(){
+    if(!state.city)return 650;
+    const b=unionBounds();
+    return Math.max(650,Math.min(6000,Math.max(b[2]-b[0],b[3]-b[1])*1.16));
+  }
+  function viewCenter(camera){
+    if(!isJoined()||!state.neighbor||state.width<fitWidth()*0.97)return camera;
+    const b=unionBounds();
+    return {x:(b[0]+b[2])/2,z:(b[1]+b[3])/2};
+  }
 
   function selected(kind) {
     const bit=Object.keys(palette).indexOf(kind);
@@ -87,66 +125,66 @@
     const xy=p=>[bufferSize/2+(p.x-x)*ppm,bufferSize/2-(p.z-z)*ppm];
     bc.fillStyle="#101d27";
     bc.fillRect(0,0,bufferSize,bufferSize);
-    const sw=xy(project(city.region.bbox[0],city.region.bbox[1],city.region));
-    const ne=xy(project(city.region.bbox[2],city.region.bbox[3],city.region));
-    bc.fillStyle=colors.ground;
-    bc.fillRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
-    for(const building of city.buildings) {
-      const kind=buildingKind(building);
-      bc.fillStyle=palette[kind]||colors.buildings;
-      for(const polygon of building.polygons||[]) {
-        bc.beginPath();
-        for(const ring of polygon.rings||[]) {
-          ring.forEach((p,i)=>{
-            const pos=xy(p);
-            if(i===0)bc.moveTo(pos[0],pos[1]);
-            else bc.lineTo(pos[0],pos[1]);
-          });
-          bc.closePath();
+    for(const section of sections()){
+      const bounds=sectionBounds(section);
+      const sw=xy({x:bounds[0],z:bounds[1]});
+      const ne=xy({x:bounds[2],z:bounds[3]});
+      bc.fillStyle=colors.ground;
+      bc.fillRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
+      for(const building of section.buildings){
+        const kind=section===state.city?buildingKind(building):null;
+        bc.fillStyle=palette[kind]||colors.buildings;
+        for(const polygon of building.polygons||[]){
+          bc.beginPath();
+          for(const ring of polygon.rings||[]){
+            ring.forEach((p,i)=>{
+              const pos=xy(toReference(p,section));
+              if(i===0)bc.moveTo(pos[0],pos[1]);
+              else bc.lineTo(pos[0],pos[1]);
+            });
+            bc.closePath();
+          }
+          bc.fill("evenodd");
         }
-        bc.fill("evenodd");
       }
+      for(const street of section.streets){
+        if(!street.path||street.path.length<2)continue;
+        bc.beginPath();
+        bc.strokeStyle=kinds.has(street.kind)?colors.road:
+          street.kind==="steps"?colors.steps:
+          ["rail","tram","light_rail","funicular"].includes(street.kind)?
+            colors.rail:colors.path;
+        bc.lineWidth=kinds.has(street.kind)?1.7:.9;
+        bc.lineCap="round";
+        street.path.forEach((p,i)=>{
+          const pos=xy(toReference(p,section));
+          if(i===0)bc.moveTo(pos[0],pos[1]);
+          else bc.lineTo(pos[0],pos[1]);
+        });
+        bc.stroke();
+      }
+      if(document.documentElement.dataset.bridgePreview==="true"){
+        bc.save();
+        bc.lineWidth=3;
+        bc.lineCap="round";
+        bc.strokeStyle="#78d8fb";
+        for(const street of section.streets){
+          if(!kinds.has(street.kind)||!street.path||street.path.length<2)continue;
+          if(!(street.tags?.bridge==="yes"||Number(street.tags?.layer||0)>0)
+              ||street.tags?.tunnel==="yes")continue;
+          bc.beginPath();
+          street.path.forEach((p,i)=>{
+            const pt=xy(toReference(p,section));
+            if(i)bc.lineTo(pt[0],pt[1]);else bc.moveTo(pt[0],pt[1]);
+          });
+          bc.stroke();
+        }
+        bc.restore();
+      }
+      bc.strokeStyle="#81979b";
+      bc.lineWidth=1;
+      bc.strokeRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
     }
-    for(const street of city.streets) {
-      if(!street.path||street.path.length<2)continue;
-      bc.beginPath();
-      bc.strokeStyle=kinds.has(street.kind)?colors.road:
-        street.kind==="steps"?colors.steps:
-        ["rail","tram","light_rail","funicular"].includes(street.kind)?
-          colors.rail:colors.path;
-      bc.lineWidth=kinds.has(street.kind)?1.7:.9;
-      bc.lineCap="round";
-      street.path.forEach((p,i)=>{
-        const pos=xy(p);
-        if(i===0)bc.moveTo(pos[0],pos[1]);
-        else bc.lineTo(pos[0],pos[1]);
-      });
-      bc.stroke();
-    }
-    // Experimental bridge geometry is invisible by default. Cyan source-
-    // flagged sections only appear when the explicit prototype is enabled.
-    if(document.documentElement.dataset.bridgePreview==="true"){
-    bc.save();
-    bc.lineWidth=3.0;
-    bc.lineCap="round";
-    bc.strokeStyle="#78d8fb";
-    for(const street of city.streets){
-      if(!kinds.has(street.kind)||!street.path||street.path.length<2)continue;
-      const elevated=street.tags?.bridge==="yes"||
-        Number(street.tags?.layer||0)>0;
-      if(!elevated||street.tags?.tunnel==="yes")continue;
-      bc.beginPath();
-      street.path.forEach((p,i)=>{
-        const pt=xy(p);
-        if(i)bc.lineTo(pt[0],pt[1]);else bc.moveTo(pt[0],pt[1]);
-      });
-      bc.stroke();
-    }
-    bc.restore();
-    }
-    bc.strokeStyle="#81979b";
-    bc.lineWidth=1;
-    bc.strokeRect(sw[0],ne[1],ne[0]-sw[0],sw[1]-ne[1]);
   }
 
   function terrainHeight(x,z) {
@@ -323,15 +361,16 @@
   function draw(p) {
     if(!state.city)return;
     const ppm=size/state.width;
-    const dx=(p.x-state.cx)*ppm,dz=(p.z-state.cz)*ppm;
-    if(!state.cache||Math.abs(dx)>245||Math.abs(dz)>245)rebuild(p.x,p.z);
-    const cropX=(bufferSize-size)/2+(p.x-state.cx)*ppm;
-    const cropY=(bufferSize-size)/2-(p.z-state.cz)*ppm;
+    const center=viewCenter(p);
+    const dx=(center.x-state.cx)*ppm,dz=(center.z-state.cz)*ppm;
+    if(!state.cache||Math.abs(dx)>245||Math.abs(dz)>245)rebuild(center.x,center.z);
+    const cropX=(bufferSize-size)/2+(center.x-state.cx)*ppm;
+    const cropY=(bufferSize-size)/2-(center.z-state.cz)*ppm;
     ctx.drawImage(buffer,cropX*dpr,cropY*dpr,size*dpr,size*dpr,
       0,0,size,size);
-    drawLandmarks(p,ppm);
+    drawLandmarks(center,ppm);
     ctx.save();
-    ctx.translate(size/2,size/2);
+    ctx.translate(size/2+(p.x-center.x)*ppm,size/2-(p.z-center.z)*ppm);
     // Positive yaw means clockwise from north (+Z) toward east (+X);
     // Canvas positive rotation is clockwise too. No yaw negation.
     ctx.rotate(p.yaw);
@@ -352,6 +391,9 @@
     canvas.setAttribute("data-map-frame",String(state.frame));
     canvas.setAttribute("data-map-redraws",String(state.mapRedraws));
     canvas.setAttribute("data-map-width-m",String(state.width));
+    canvas.setAttribute("data-map-sections",String(sections().length));
+    canvas.setAttribute("data-map-full-width-m",String(fitWidth()));
+    canvas.setAttribute("data-map-world-bounds",unionBounds().map(n=>n.toFixed(2)).join(","));
     canvas.setAttribute("data-player-x",String(p.x));
     canvas.setAttribute("data-player-z",String(p.z));
     canvas.setAttribute("data-heading-east",Math.sin(p.yaw).toFixed(6));
@@ -421,7 +463,7 @@
   }
   buildingSearch?.addEventListener("input",renderNamedBuildings);
   function fillNamedBuildings(city){
-    namedBuildings=city.buildings
+    namedBuildings=sections().filter(Boolean).flatMap(c=>c.buildings)
       .filter(b=>typeof b.name==="string" && b.name.trim())
       .sort((a,b)=>a.name.localeCompare(b.name));
     if(namedCount)namedCount.textContent=String(namedBuildings.length);
@@ -444,6 +486,7 @@
     coordsLabel.textContent="Geography loaded";
     // Render an initial map even before the next animation frame.
     draw(pose());
+    useSharedNeighborCity();
     if(!landmarksStarted) {
       landmarksStarted=true;
       void loadOptionalLandmarks();
@@ -468,6 +511,32 @@
       return false;
     }
   }
+
+  function useSharedNeighborCity(){
+    if(!isJoined()||!state.city||state.neighbor)return !!state.neighbor;
+    const payload=window.__urbariumNeighborCityJson;
+    if(typeof payload!=="string")return false;
+    try {
+      const neighbor=JSON.parse(payload);
+      if(!neighbor?.region || !Array.isArray(neighbor.buildings) ||
+          !Array.isArray(neighbor.streets) ||
+          neighbor.region.id===state.city.region.id)
+        throw Error("Invalid joined-world neighbor data");
+      state.neighbor=neighbor;
+      delete window.__urbariumNeighborCityJson;
+      state.width=fitWidth(); // fit the whole joined world, not one region
+      state.cache=false;
+      canvas.dataset.mapJoined="true";
+      fillNamedBuildings(state.city);
+      draw(pose());
+      return true;
+    }catch(error){
+      console.error("Joined minimap geography failed",error);
+      canvas.dataset.mapJoined="error";
+      return false;
+    }
+  }
+
   function useSharedTerrain() {
     const payload=window.__urbariumTerrainJson;
     if(typeof payload!=="string")return false;
@@ -519,10 +588,12 @@
     }
   }
   window.addEventListener("urbarium-city-ready",useSharedCity);
+  window.addEventListener("urbarium-neighbor-city-ready",useSharedNeighborCity);
   window.addEventListener("urbarium-terrain-ready",useSharedTerrain);
   document.getElementById("map-retry")?.addEventListener("click",retryMapLoad);
   scaleLabel.textContent="Waiting for city data...";
   coordsLabel.textContent="Shares the Rust viewer's data";
   useSharedCity();
+  useSharedNeighborCity();
   useSharedTerrain();
 })();
