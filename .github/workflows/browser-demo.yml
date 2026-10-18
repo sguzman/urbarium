@@ -99,6 +99,8 @@ jobs:
           test -s dist/urbarium-mesh-worker.js
           test -s dist/urbarium-mesh-worker_bg.wasm
           echo "CPU worker bytes: $(stat -c%s dist/urbarium-mesh-worker_bg.wasm)"
+      - name: Stamp worker executable content hash for independent disk caching
+        run: python3 scripts/stamp-worker-wasm.py dist
       - name: Remove eager WASM preload so first fetch can be cached
         run: python3 scripts/remove-wasm-preload.py dist/index.html
       - name: Validate static site and scene data
@@ -133,6 +135,10 @@ jobs:
           assert (dist/"urbarium-mesh-worker.js").is_file()
           assert (dist/"urbarium-mesh-worker_bg.wasm").is_file()
           assert (dist/"mesh-worker-runtime.js").is_file()
+          worker_wasm=(dist/"urbarium-mesh-worker_bg.wasm").read_bytes()
+          worker_runtime=(dist/"mesh-worker-runtime.js").read_text()
+          assert hashlib.sha256(worker_wasm).hexdigest() in worker_runtime
+          assert "__URBARIUM_WORKER_SHA256__" not in worker_runtime
           worker=(dist/"wasm-sw.js").read_text()
           assert "urbarium-wasm-binaries-v1" in worker and "MAX_VERSIONS=2" in worker
           assert "wasm-sw.js" in (dist/"index.html").read_text()
