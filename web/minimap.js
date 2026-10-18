@@ -455,7 +455,11 @@
     if(typeof payload!=="string")return false;
     try {
       applyCity(JSON.parse(payload),"rust-shared");
-      delete window.__urbariumCityJson;
+      // The optional CPU mesh worker initializes after first presentation.
+      // Keep the original download available until it can clone the exact
+      // source data; normal mode still frees it immediately.
+      if(document.documentElement.dataset.meshWorker!=="true")
+        delete window.__urbariumCityJson;
       return true;
     }catch(error){
       console.error("Urbarium shared city parse failed",error);
@@ -469,7 +473,8 @@
     if(typeof payload!=="string")return false;
     try {
       state.terrain=JSON.parse(payload);
-      delete window.__urbariumTerrainJson;
+      if(document.documentElement.dataset.meshWorker!=="true")
+        delete window.__urbariumTerrainJson;
       for(const mark of state.landmarks)mark.y=landmarkHeight(mark);
       return true;
     }catch(error){
