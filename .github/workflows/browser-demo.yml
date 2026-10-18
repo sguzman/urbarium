@@ -198,6 +198,16 @@ jobs:
           URBARIUM_QA_FORCE_WEBGL: "1"
         run: |
           xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-browser.py
+      - name: Warm-cache main-thread versus worker mesh performance and pixel parity
+        run: |
+          xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-mesh-benchmark.py
+      - name: Retain mesh performance comparison
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: urbarium-mesh-benchmark
+          path: /tmp/urbarium-mesh-benchmark.json
+          retention-days: 14
       - name: Stage GitHub Pages site artifact after successful Chromium QA
         uses: actions/upload-pages-artifact@v4
         with:

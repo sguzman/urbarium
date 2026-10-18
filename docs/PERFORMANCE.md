@@ -74,9 +74,19 @@ Details and downloaded diagnostics distinguish `loading`, `ready`, and
 production browser suite explicitly waits for every source chunk to be
 worker-generated, with the complete skyline still resident.
 
-This opt-in mode introduces a second, lazily downloaded WASM executable;
-it is not yet enabled by default because cold-network cost, geometry
-parity and frame-time improvements need independent measurements.
+The opt-in worker executable is versioned using **its actual SHA-256 at
+package time**. Its CacheStorage bucket (`urbarium-worker-wasm-v1`) retains
+at most two complete versions, independently of the main viewer's cache.
+The worker starts compiling the fetched response without waiting for a disk
+write, and falls back to a network fetch if browser storage is inaccessible.
+An incomplete download is not advertised as cached; updates require a new
+verified content hash. Browser QA verifies first-visit storage and an actual
+cache hit after creating a new worker on page reload.
+
+This mode is still opt-in and is not yet enabled by default. A cold first
+visit has an additional ~380 KiB WASM download, so benchmark results on
+software-rendered CI are only a comparison under those specific conditions;
+they do not establish performance on Edge or a poor rural connection.
 
 ## Conservative view-frustum draw-call culling (October 18)
 

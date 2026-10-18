@@ -1117,6 +1117,42 @@ with sync_playwright() as p:
         print("CPU WASM worker: built every primary-region chunk off main render thread",
               worker_count,"GPU chunks resident")
 
+        # First opt-in visit must save the exact content-hashed worker WASM;
+        # the next visit must load that binary from persistent disk cache.
+        page.wait_for_function("""async () => {
+            const store=await caches.open("urbarium-worker-wasm-v1");
+            const keys=await store.keys();
+            return keys.length===1 && keys[0].url.includes(
+                "/urbarium-mesh-worker_bg.wasm?urbarium_sha256=");
+        }""",timeout=25000)
+        worker_disk=page.evaluate("""async () => {
+            const bucket=await caches.open("urbarium-worker-wasm-v1");
+            const keys=await bucket.keys();
+            return keys.map(key=>key.url);
+        }""")
+        import re
+        assert len(worker_disk)==1 and re.fullmatch(
+            r"http://127\.0\.0\.1:8010/urbarium-mesh-worker_bg\.wasm"
+            r"\?urbarium_sha256=[0-9a-f]{64}",worker_disk[0]),worker_disk
+        # Force a new worker process; an in-memory WASM instance cannot
+        # masquerade as a cross-navigation persistent CacheStorage hit.
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("""() =>
+            window.__urbariumWorkerCache?.kind==="hit" &&
+            document.querySelector("#status")?.dataset.meshWorkerState==="ready"
+        """,timeout=90000)
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.sceneDetail==="complete" &&
+                Number(s.dataset.meshWorkerChunks)===
+                Number(s.dataset.chunksRegionTotal) &&
+                Number(s.dataset.chunksResident)===
+                Number(s.dataset.chunksRegionTotal);
+        }""",timeout=180000)
+        assert not errors,errors
+        print("CPU mesh worker: SHA-256 WASM first download saved and next visit reused cached binary")
+
+
         assert page.locator('link[rel="preload"][type="application/wasm"]').count()==0
         # Critical cold-start regression: a fresh browser profile has no
         # service worker when the *first* WASM request starts. That very

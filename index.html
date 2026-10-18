@@ -928,7 +928,8 @@
             culled:Number(status?.dataset.chunksCulled||0),
             frustumEnabled:document.documentElement.dataset.frustumCulling!=="false",
             workerState:status?.dataset.meshWorkerState||"disabled",
-            workerChunks:Number(status?.dataset.meshWorkerChunks||0)
+            workerChunks:Number(status?.dataset.meshWorkerChunks||0),
+            workerCache:{...window.__urbariumWorkerCache}
           },
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
             new URLSearchParams(location.search).get("launch"))
@@ -1164,7 +1165,9 @@
             " · evicted "+(status.dataset.chunksEvicted||"0")+
             " · drawn "+(status.dataset.chunksDrawn||"0")+
             " · off-screen "+(status.dataset.chunksCulled||"0")+
-            " · mesher "+(status.dataset.meshWorkerState||"local")
+            " · mesher "+(status.dataset.meshWorkerState||"local")+
+            (window.__urbariumWorkerCache?.kind
+              ?" · worker WASM "+window.__urbariumWorkerCache.kind:"")
           : "Geometry mode: full-scene fallback (or initializing)";
         if(status?.dataset.gpuDeviceLost==="true"){
           health.textContent="Graphics device lost · Copy diagnostics in Stats";

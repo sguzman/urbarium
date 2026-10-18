@@ -77,10 +77,12 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
       demonstrated savings without visible gaps or false exclusions.
 - [x] Extract the shared Rust chunk mesher and create an opt-in CPU-only
       Web Worker with fallback and browser regression coverage.
-- [ ] Validate cold-download overhead, mesh parity and frame-time before
-      making background meshing the default; then extend streaming to joined
-      regions and introduce adaptive LOD, collision indexing, and terrain
-      slope traversal constraints.
+- [x] Cache the off-thread worker executable by its release SHA-256
+      independently of the main viewer and verify immediate reload hits.
+- [ ] Evaluate repeated browser mesh-phase long tasks, frame-time distributions,
+      cold-download cost and pixel parity before changing the default; then
+      extend streaming to joined regions and introduce adaptive LOD, collision
+      indexing, and terrain slope traversal constraints.
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [x] First-person street-level navigation, mouse capture, error overlay and toggleable 18× fast travel.
 - [x] Interactive north-up Downtown LA minimap with zoom, mapped buildings and camera location/heading.
