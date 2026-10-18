@@ -120,13 +120,13 @@ jobs:
           assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
           assert (dist/"wasm-sw.js").is_file(), "WASM service worker missing"
-          assert not re.search(r'<link\\b(?=[^>]*\\brel="preload")(?=[^>]*\\btype="application/wasm")',page), "Eager WASM preload bypasses first-visit caching"
           worker=(dist/"wasm-sw.js").read_text()
           assert "urbarium-wasm-binaries-v1" in worker and "MAX_VERSIONS=2" in worker
           assert "wasm-sw.js" in (dist/"index.html").read_text()
           assert "urbarium-geography-downtown-la-v1" in (dist/"data-cache.js").read_text()
           import hashlib,re
           page=(dist/"index.html").read_text()
+          assert not re.search(r'<link\b(?=[^>]*\brel="preload")(?=[^>]*\btype="application/wasm")',page), "Eager WASM preload bypasses first-visit caching"
           hashes=re.search(r'window\.__urbariumGeographyVersions\s*=\s*(\{[^;]+\});',page)
           assert hashes,"Missing geography content-version stamp in bundled HTML"
           versions=json.loads(hashes.group(1))
