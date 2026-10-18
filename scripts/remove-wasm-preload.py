@@ -11,9 +11,9 @@ import sys
 path = Path(sys.argv[1] if len(sys.argv) > 1 else "dist/index.html")
 html = path.read_text(encoding="utf-8")
 pattern = re.compile(
-    r'<link\\b(?=[^>]*\\brel="preload")(?=[^>]*\\bas="fetch")'
-    r'(?=[^>]*\\btype="application/wasm")'
-    r'(?=[^>]*\\bhref="\\./urbarium-viewer-[0-9a-f]+_bg\\.wasm")[^>]*>'
+    r'<link\b(?=[^>]*\brel="preload")(?=[^>]*\bas="fetch")'
+    r'(?=[^>]*\btype="application/wasm")'
+    r'(?=[^>]*\bhref="\./urbarium-viewer-[0-9a-f]+_bg\.wasm")[^>]*>'
 )
 links = pattern.findall(html)
 if len(links) != 1:
