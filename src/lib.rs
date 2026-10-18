@@ -480,6 +480,32 @@ pub fn buildings_from_geojson(
         if polygons.is_empty() {
             continue;
         }
+        // A complete footprint may intersect BOTH catalog regions. Loading
+        // it into both GPUs creates coplanar duplicates and Z-fighting along
+        // every future tile seam. Assign the intact footprint to exactly
+        // one half-open geographic region by its source-derived center.
+        // Do not clip its walls or roof to the artificial tile boundary.
+        let bounds = [
+            region.project(region.bbox[0],region.bbox[1]),
+            region.project(region.bbox[2],region.bbox[3]),
+        ];
+        let (mut cx,mut cz,mut samples)=(0.0,0.0,0usize);
+        for polygon in &polygons {
+            if let Some(ring)=polygon.rings.first(){
+                for p in ring {
+                    cx+=p.x;
+                    cz+=p.z;
+                    samples+=1;
+                }
+            }
+        }
+        if samples==0 {continue;}
+        cx/=samples as f64;
+        cz/=samples as f64;
+        if cx<bounds[0].x || cx>=bounds[1].x ||
+           cz<bounds[0].z || cz>=bounds[1].z {
+            continue;
+        }
         let props = feature.get("properties").and_then(Value::as_object);
         let prop = |key: &str| props.and_then(|p| p.get(key));
         let id = feature.get("id")
@@ -767,6 +793,38 @@ mod tests {
             origin: [-118.25, 34.05],
             bbox: [-118.258, 34.045, -118.242, 34.056],
         }
+    }
+
+
+    #[test]
+    fn adjacent_sections_assign_a_crossing_building_to_only_one_owner(){
+        let west=Region{
+            id:"west".into(),name:"west".into(),origin:[-118.25,34.05],
+            bbox:[-118.258,34.045,-118.242,34.056],
+        };
+        let east=Region{
+            id:"east".into(),name:"east".into(),origin:[-118.234,34.048],
+            bbox:[-118.242,34.04,-118.226,34.056],
+        };
+        let json=r#"{"type":"FeatureCollection","features":[
+            {"type":"Feature","id":"seam-crossing","properties":{"height":19},
+             "geometry":{"type":"Polygon","coordinates":[[
+                [-118.24215,34.049],[-118.24185,34.049],
+                [-118.24185,34.0492],[-118.24215,34.0492],
+                [-118.24215,34.049]]]}}
+        ]}"#;
+        let a=buildings_from_geojson(json,&west,HeightUnit::Meters).unwrap();
+        let b=buildings_from_geojson(json,&east,HeightUnit::Meters).unwrap();
+        assert_eq!(a.len()+b.len(),1,
+            "Complete border building must never be drawn twice in joined GPU meshes");
+        let building=a.first().or_else(||b.first()).unwrap();
+        let ring=&building.polygons[0].rings[0];
+        let sw=if a.is_empty(){east.project(east.bbox[0],east.bbox[1])}
+            else{west.project(west.bbox[0],west.bbox[1])};
+        let ne=if a.is_empty(){east.project(east.bbox[2],east.bbox[3])}
+            else{west.project(west.bbox[2],west.bbox[3])};
+        assert!(ring.iter().any(|p|p.x<sw.x || p.x>ne.x),
+            "Building outline must remain whole across region boundary");
     }
 
     #[test]
