@@ -69,9 +69,10 @@ artificial road endpoints at every cell border.
 
 The geometry pipeline now enforces these invariants:
 
-- Retain original street centerline paths and geographic tags throughout
-  surface generation; select candidate streets using a bounded 80-meter
-  context halo (the maximum width/miter reach plus margin).
+- Retain source-derived street centerline vertices and geographic tags;
+  select only local runs with an 80-meter context halo and one neighboring
+  control vertex at each end. This preserves the same visible miter normals
+  while avoiding repeated meshing of entire long streets in every tile.
 - Generate full-width asphalt, walking, steps and rail triangles, retaining
   real source bends, junction topology and material layering.
 - Conform transportation surfaces to the **same DEM triangles** used by the
