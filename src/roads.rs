@@ -596,13 +596,6 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
             report.segments_skipped+=1;
             continue;
         };
-        // A covered drive or below-grade segment is NOT visible asphalt in
-        // the default surface-only scene. The whole source remains in City,
-        // and the explicit bridge preview remains independently available.
-        if !detailed_bridges && source_qualified_non_surface(street) {
-            report.segments_skipped+=1;
-            continue;
-        }
         // Render-only raised surface offsets avoid coplanar Z-fighting.
         // Roads should visually cover crossing footpath ribbons on the flat
         // preview. Distinct mapping of footways is not a route overlay and
@@ -622,11 +615,12 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
         // Explicit bridge or above-ground stacking data alone qualifies a road
         // for a grade-separated visual approximation. Do not float roads
         // solely because they are classed as motorway.
-        let positive_layer=street.tags.get("layer")
-            .and_then(|s|s.parse::<i32>().ok()).is_some_and(|n|n>0);
+        // A positive level is relative stacking, NOT evidence of a bridge
+        // structure. Only an explicit bridge flag permits the preview's
+        // provisional decks, supports and barriers.
         let is_bridge=matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway) &&
             street.tags.get("tunnel").is_none_or(|s|s=="no") &&
-            (street.tags.get("bridge").is_some_and(|s|s=="yes")||positive_layer);
+            street.tags.get("bridge").is_some_and(|s|s=="yes");
         if kind==SurfaceKind::Motorway {report.motorway_sections+=1;}
         if is_bridge && street.path.len()>=2 {
             let level=street.tags.get("layer")
@@ -640,6 +634,15 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
             report.elevated_spans+=1;
             report.segments_meshed+=1;
             *report.by_surface.entry("elevated_bridge".into()).or_insert(0)+=1;
+            continue;
+        }
+        // Preserve explicitly tagged bridge geometry in RoadScene for
+        // experimental 3D, even in the normal view, but do not render it as
+        // pavement at terrain height. Covered, tunneled, and stacked (layer
+        // without a bridge flag) sources must not appear as ordinary surface
+        // asphalt in either renderer. Source linework is never deleted.
+        if source_qualified_non_surface(street) {
+            report.segments_skipped+=1;
             continue;
         }
         // Retiring only the raised meshes left ugly clipped at-grade freeway
@@ -983,6 +986,20 @@ mod tests {
         assert!(scene.layers[&SurfaceKind::Motorway].indices.len()>100);
         assert!(scene.layers[&SurfaceKind::MotorwayStripe].indices.len()>100);
         assert!(!scene.layers.contains_key(&SurfaceKind::ElevatedRoad));
+    }
+    #[test]
+    fn positive_overture_level_without_bridge_flag_never_creates_bridge_piers(){
+        let mut raised=street("service",&[[0.,0.],[0.,35.]]);
+        raised.tags.insert("layer".into(),"1".into());
+        let c=city(vec![raised]);
+        let (normal,_)=mesh_streets_with_bridges(&c,false).unwrap();
+        let (preview,_)=mesh_streets_with_bridges(&c,true).unwrap();
+        for scene in [&normal,&preview] {
+            assert!(scene.bridge_spans.is_empty());
+            assert!(scene.layers.get(&SurfaceKind::Road)
+                .is_none_or(|m|m.indices.is_empty()));
+            assert!(!scene.layers.contains_key(&SurfaceKind::BridgeSupports));
+        }
     }
     #[test]
     fn default_view_omits_all_freeway_ribbons_and_markings() {
