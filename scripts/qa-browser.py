@@ -87,6 +87,11 @@ with sync_playwright() as p:
             " || e.textContent.includes('Viewer error')); }",
             timeout=60000,
         )
+        # Progressive geometry is now the default; retain the full-scene
+        # compatibility path for explicit progressive=0 URLs.
+        assert page.evaluate("() => document.documentElement.dataset.progressivePreview")=="true"
+        page.wait_for_function("""() => document.querySelector("#status")?.dataset.firstFrameDetail==="base" """,timeout=60000)
+        page.wait_for_function("""() => document.querySelector("#status")?.dataset.sceneDetail==="complete" """,timeout=60000)
         assert page.locator("#renderer-select").count() == 1
         assert page.locator("#renderer-health").count() == 1
         # Small, keyboard-accessible tabbed HUD must not restart the app,
@@ -848,7 +853,7 @@ with sync_playwright() as p:
         print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
         # Real neighboring geometry loaded into a separate GPU buffer under a
         # strict residency cap, with camera crossing the geographic seam.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1",
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1&progressive=0",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
@@ -858,6 +863,8 @@ with sync_playwright() as p:
                 Number(s.dataset.frameCount)>3;
         }""",timeout=90000)
         assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
+        assert page.locator("#progressive-preview-toggle").get_attribute("aria-pressed")=="false"
+        assert page.locator("#status").get_attribute("data-first-frame-detail")=="joined"
         # Joined-world startup previously displayed the misleading generic
         # "Starting application" for the neighbor-fetch stage. Ensure the
         # real phase has a distinct title even after its work is complete.
@@ -906,7 +913,7 @@ with sync_playwright() as p:
         # Progressive first frame must be actual terrain + street polygons
         # before buildings and the neighboring city are ready, then upgrade
         # both GPU meshes without navigation or resetting the camera.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1&progressive=1",
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&world=1",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() => {
             const s=document.querySelector("#status");

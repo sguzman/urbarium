@@ -16,7 +16,7 @@
       const selected=choices.find(section=>section.id===params.get("region"))||choices[0];
       document.documentElement.dataset.activeRegion=selected.id;
       document.documentElement.dataset.worldPreview=params.get("world")==="1"?"true":"false";
-      document.documentElement.dataset.progressivePreview=params.get("progressive")==="1"?"true":"false";
+      document.documentElement.dataset.progressivePreview=params.get("progressive")==="0"?"false":"true";
       const requested = params.get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
@@ -382,7 +382,7 @@
       aria-labelledby="hud-tab-advanced" hidden>
       <div class="hud-field">
         <button id="progressive-preview-toggle" type="button" aria-pressed="false"
-          title="Preview early terrain/streets rendering before full buildings and the adjacent region are ready">Progressive first frame: off</button>
+          title="Show terrain and streets before buildings and adjacent region; click to use the full-scene startup fallback">Progressive first frame: on</button>
       </div>
       <div class="hud-field">
         <button id="bridge-preview-toggle" type="button" aria-pressed="false"
@@ -702,8 +702,8 @@
       progressiveToggle.textContent="Progressive first frame: "+(progressivePreview?"on":"off");
       progressiveToggle.addEventListener("click",()=>{
         const url=new URL(location.href);
-        if(progressivePreview)url.searchParams.delete("progressive");
-        else url.searchParams.set("progressive","1");
+        if(progressivePreview)url.searchParams.set("progressive","0");
+        else url.searchParams.delete("progressive");
         location.assign(url.href);
       });
       const bridgePreview=document.documentElement.dataset.bridgePreview==="true";

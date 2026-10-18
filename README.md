@@ -99,9 +99,9 @@ WASM download, and WASM compilation can take time even when bytes were
 previously cached. This should not be confused with repeated downloads of
 unchanged city and DEM JSON files.
 
-## Opt-in progressive first frame (October 17)
+## Progressive first frame (default, October 17)
 
-The Advanced tab now exposes `Progressive first frame` (`?progressive=1`).
+The Advanced tab now exposes `Progressive first frame`, enabled by default.
 Rather than blocking GPU initialization until both complete city sections
 have been triangulated, it renders real source-derived **terrain and draped
 streets** first. Only after that first GPU presentation does the browser
@@ -110,14 +110,20 @@ fetch/build the adjoining section when joined mode is enabled. GPU vertex
 and index buffers are swapped on the event loop between frames; the camera
 position and backend do not restart, and the earlier buffers are released.
 The Details panel indicates `base`, `complete`, `neighbor` or `joined`
-enrichment. Standalone non-progressive mode is preserved as fallback and
-remains the default while this path is being verified.
+enrichment. Standalone non-progressive mode remains available using `?progressive=0`
+(or disabling the Advanced toggle) as a compatibility fallback.
 
 This is real geometry staging, not a screenshot or billboard. The initial
 meshing pass currently repeats the road triangulation in the full pass:
 further optimization can partition by camera-visible chunks and avoid work
 for off-screen buildings. It also cannot eliminate a slow initial WASM
 transfer: no Rust code runs before the WASM module arrives and starts.
+
+Release builds now run `wasm-opt -Oz` with the module's required
+bulk-memory and nontrapping float-conversion features enabled. The
+uncompressed WASM decreased from 4,672,314 to 3,932,014 bytes (15.8%).
+This reduces code bytes transferred on a cold load, but does not prove any
+particular time-to-first-frame improvement on the user's connection.
 
 ## Status
 
