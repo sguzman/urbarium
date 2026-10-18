@@ -138,9 +138,10 @@ geographic JSON retains its separate SHA256 cache.
 
 The Details tab distinguishes an observed disk cache hit from a fetch whose
 Resource Timing transfer count is merely zero. The diagnostic JSON includes
-`startup.wasmCache`. On the first visit the service worker may not yet
-control the document; a controlled visit can prime the cache before later
-reloads. Browser storage eviction, private mode or disabled service workers
+`startup.wasmCache`. On the first visit the service worker may not yet control the document;
+therefore the page also intercepts the first WASM response and saves a
+clone asynchronously without waiting before 3D startup. Its next reload
+can then use the same binary directly from the service worker. Browser storage eviction, private mode or disabled service workers
 may require another download. This helps repeated WASM transfers, **not**
 first-ever WASM compilation or full-city geometry generation.
 

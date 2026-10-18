@@ -977,6 +977,40 @@ with sync_playwright() as p:
             timeout=10000)
         assert not errors,errors
         print("WASM service worker: exact hashed module served from persistent disk cache on reload")
+        # Critical cold-start regression: a fresh browser profile has no
+        # service worker when the *first* WASM request starts. That very
+        # first response must populate CacheStorage. One reload must then
+        # receive a real disk cache hit, without requiring a third visit.
+        isolated=browser.new_context(viewport={"width":1280,"height":800})
+        try:
+            first=isolated.new_page()
+            if force_webgl:
+                first.add_init_script("""
+                    Object.defineProperty(navigator, 'gpu', {
+                        configurable:true,value:undefined
+                    });
+                """)
+            first.goto(cache_url,wait_until="domcontentloaded")
+            first.wait_for_function("""() =>
+                document.querySelector("#status")?.dataset.renderStage==="first-present" &&
+                window.__urbariumWasmCache?.stores>0
+            """,timeout=90000)
+            first.wait_for_function("""() => !!navigator.serviceWorker.controller """,
+                                    timeout=30000)
+            stored=first.evaluate("""async () => {
+                const cache=await caches.open("urbarium-wasm-binaries-v1");
+                return (await cache.keys()).map(req=>new URL(req.url).pathname);
+            }""")
+            assert len(stored)==1 and stored[0].endswith("_bg.wasm"),stored
+            first.reload(wait_until="domcontentloaded")
+            first.wait_for_function("""() =>
+                document.querySelector("#status")?.dataset.renderStage==="first-present" &&
+                window.__urbariumWasmCache?.hits>0
+            """,timeout=90000)
+            assert first.evaluate("() => window.__urbariumWasmCache?.lastEvent")=="hit"
+            print("Cold browser: first WASM fetch cached, immediate next reload served from disk")
+        finally:
+            isolated.close()
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:

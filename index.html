@@ -60,6 +60,63 @@
         supported:!!sw,controlled:!!sw?.controller,registration:"checking",
         hits:0,stores:0,networkFetches:0,lastEvent:"none",file:""
       };
+      // A new page may begin downloading WASM before a newly installed
+      // service worker controls it. Observe that FIRST request and save
+      // its response clone asynchronously; do not delay the viewer to
+      // register the worker or write the cache.
+      const fetchBeforeWasmCache=window.fetch.bind(window);
+      const wasmFilePattern=/^urbarium-viewer-[0-9a-f]+_bg\\.wasm$/;
+      const wasmRoot=new URL("./",location.href);
+      const wasmEligible=req=>{
+        const url=new URL(req.url);
+        const relative=url.pathname.slice(wasmRoot.pathname.length);
+        return req.method==="GET" && !req.headers.has("Range") &&
+          url.origin===wasmRoot.origin &&
+          url.pathname.startsWith(wasmRoot.pathname) &&
+          !relative.includes("/") && !url.search &&
+          wasmFilePattern.test(relative);
+      };
+      window.fetch=(input,init)=>{
+        let req;
+        try{req=new Request(input,init);}
+        catch(_){return fetchBeforeWasmCache(input,init);}
+        // A controlled page is served by wasm-sw.js, avoiding double cache
+        // writes. A first-ever unclaimed page primes its own disk cache.
+        if(!wasmEligible(req) || sw.controller)
+          return fetchBeforeWasmCache(input,init);
+        cache.lastEvent="fetching";
+        cache.file=new URL(req.url).pathname.split("/").pop();
+        cache.networkFetches++;
+        cache.source="first-page";
+        return fetchBeforeWasmCache(input,init).then(response=>{
+          if(response.ok && response.type==="basic" && "caches" in window){
+            const copy=response.clone();
+            (async()=>{
+              try {
+                const bucket=await caches.open("urbarium-wasm-binaries-v1");
+                await bucket.put(req,copy);
+                const keys=await bucket.keys();
+                const keep=new Set([req.url]);
+                for(const key of keys.slice().reverse()){
+                  if(keep.size>=2)break;
+                  keep.add(key.url);
+                }
+                for(const key of keys){
+                  if(!keep.has(key.url))await bucket.delete(key);
+                }
+                cache.stores++;
+                cache.lastEvent="stored";
+              }catch(error){
+                cache.lastEvent="unavailable";
+                console.warn("First-page WASM cache write unavailable",error);
+              }
+            })();
+          }else{
+            cache.lastEvent="network";
+          }
+          return response;
+        });
+      };
       if(!sw){cache.registration="unsupported";return;}
       sw.addEventListener("message",event=>{
         const data=event.data;
@@ -807,7 +864,8 @@
         const stored=window.__urbariumWasmCache;
         const wasmCacheLine=document.getElementById("wasm-cache-state");
         if(stored){
-          const result=stored.lastEvent==="hit" ? "CACHE HIT (disk)" :
+          const result=stored.lastEvent==="fetching" ? "downloading WASM; first-visit cache will be saved" :
+            stored.lastEvent==="hit" ? "CACHE HIT (disk)" :
             stored.lastEvent==="stored" ? "saved for next visit" :
             stored.lastEvent==="network" ? "network response (not stored)" :
             stored.lastEvent==="unavailable" ? "browser storage unavailable" :
@@ -1050,9 +1108,15 @@
             phaseTimeline.push({phase,enteredAtMs:Math.round(now)});
         }
         const stageSecs=Math.floor((now-phaseStartedAt)/1000);
-        if(!bootInfo.classList.contains("error"))
-          bootInfo.textContent=(phases[phase]||"Preparing 3D viewer")+" · "+
-            stageSecs+"s in stage / "+age+"s total";
+        if(!bootInfo.classList.contains("error")){
+          // A running viewer should never display elapsed uptime as if
+          // it were still waiting for its first frame.
+          bootInfo.textContent=phase==="first-present"
+            ? "3D rendered · first frame at about "+
+              Math.max(0,age-stageSecs)+"s · "+age+"s since opening"
+            : (phases[phase]||"Preparing 3D viewer")+" · "+
+              stageSecs+"s in stage / "+age+"s total";
+        }
         updateStartupNetwork();
         const sceneDetail=status?.dataset.sceneDetail||"waiting";
         const sceneLabels={
