@@ -135,6 +135,7 @@ jobs:
           assert (dist/"urbarium-mesh-worker.js").is_file()
           assert (dist/"urbarium-mesh-worker_bg.wasm").is_file()
           assert (dist/"mesh-worker-runtime.js").is_file()
+          import hashlib
           worker_wasm=(dist/"urbarium-mesh-worker_bg.wasm").read_bytes()
           worker_runtime=(dist/"mesh-worker-runtime.js").read_text()
           assert hashlib.sha256(worker_wasm).hexdigest() in worker_runtime
