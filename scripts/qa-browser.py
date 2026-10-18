@@ -1106,8 +1106,13 @@ with sync_playwright() as p:
         assert worker_count==int(worker_status.get_attribute("data-chunks-region-total"))
         assert worker_status.get_attribute("data-chunks-evicted")=="0"
         before_frames=int(worker_status.get_attribute("data-frame-count") or "0")
-        page.wait_for_timeout(350)
-        assert int(worker_status.get_attribute("data-frame-count") or "0")>before_frames
+        # The frame-count DOM diagnostic updates every eighth frame, and
+        # software WebGL2 can stall temporarily during screenshot/readback.
+        # Wait for the actual counter to advance rather than sampling it
+        # after one arbitrary 350 ms sleep.
+        page.wait_for_function("""(before) =>
+            Number(document.querySelector("#status")?.dataset.frameCount)>before
+        """,arg=before_frames,timeout=15000)
         assert not errors,errors
         print("CPU WASM worker: built every primary-region chunk off main render thread",
               worker_count,"GPU chunks resident")
