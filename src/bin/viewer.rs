@@ -366,6 +366,10 @@ export function publish_city_for_minimap(data) {
     window.__urbariumCityJson = data;
     window.dispatchEvent(new Event('urbarium-city-ready'));
 }
+export function publish_neighbor_city_for_minimap(data) {
+    window.__urbariumNeighborCityJson=data;
+    window.dispatchEvent(new Event('urbarium-neighbor-city-ready'));
+}
 export function publish_terrain_for_minimap(data) {
     window.__urbariumTerrainJson = data;
     window.dispatchEvent(new Event('urbarium-terrain-ready'));
@@ -384,6 +388,7 @@ export function fallback_from_software_webgpu() {
 "#)]
 extern "C" {
     fn publish_city_for_minimap(data:&str);
+    fn publish_neighbor_city_for_minimap(data:&str);
     fn publish_terrain_for_minimap(data:&str);
     fn fallback_from_software_webgpu();
 }
@@ -637,7 +642,13 @@ async fn fetch_city(section:&str,publish:bool) -> Result<City, String> {
         // The minimap previously repeated this request independently.
         // Share this exact, already validated payload with the browser UI.
         // This prevents a second large fetch from failing on poor networks.
-        if publish { publish_city_for_minimap(&data); }
+        if publish {
+            publish_city_for_minimap(&data);
+        } else if browser_joined_world() {
+            // The neighbor is already downloaded by the 3D renderer.
+            // Share exactly that payload with the map, never refetch.
+            publish_neighbor_city_for_minimap(&data);
+        }
         Ok(city)
     }
     #[cfg(not(target_arch = "wasm32"))]
