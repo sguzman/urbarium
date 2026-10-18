@@ -110,7 +110,11 @@ fn intersection_area(a:[Point;3],b:[Point;3])->f64{
 fn conflict_area(road:&Mesh,roof:&Footprint)->f64{
     let mut area=0.0;
     for indices in road.indices.chunks_exact(3){
-        let points=indices.map(|i|from_vertex(road.vertices[i as usize].position));
+        let points=[
+            from_vertex(road.vertices[indices[0] as usize].position),
+            from_vertex(road.vertices[indices[1] as usize].position),
+            from_vertex(road.vertices[indices[2] as usize].position),
+        ];
         if !intersects(bounds(&points),roof.bounds){continue;}
         for &roof_tri in &roof.roof{
             area+=intersection_area(points,roof_tri);
