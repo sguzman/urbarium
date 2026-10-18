@@ -239,10 +239,21 @@ with sync_playwright() as p:
             "() => document.querySelector('#input-state')?.dataset.pointerLocked === 'true'",
             timeout=10000,
         )
-        before_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
+        # The legacy data-camera-yaw diagnostic is published only every
+        # eighth frame. With a freshly upgraded progressive GPU mesh, a
+        # fixed 300 ms sleep can read the same stale heading twice. Use
+        # the camera's real per-frame pose instead, and still require an
+        # actual positive heading change from pointer-lock motion.
+        def camera_heading():
+            return float(page.locator("#status").get_attribute("data-camera-pose").split(",")[3])
+        before_yaw=camera_heading()
         page.mouse.move(790,500,steps=5)
-        page.wait_for_timeout(300)
-        after_yaw=float(page.locator("#status").get_attribute("data-camera-yaw"))
+        page.wait_for_function("""(before) => {
+            const pose=document.querySelector("#status")?.dataset.cameraPose;
+            const heading=Number(pose?.split(",")[3]);
+            return Number.isFinite(heading) && heading>before+0.03;
+        }""",arg=before_yaw,timeout=12000)
+        after_yaw=camera_heading()
         assert after_yaw > before_yaw+0.03, (
             f"Right mouse must turn compass heading eastward: {before_yaw} -> {after_yaw}"
         )
