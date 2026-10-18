@@ -189,6 +189,8 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers xvfb xauth
+      - name: Validate geometry ownership and elevation seams in every packaged region
+        run: python3 scripts/qa-world-regions.py dist/assets
       - name: QA viewer in browser with WebGPU
         run: |
           python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
