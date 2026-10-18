@@ -15,7 +15,8 @@
       const choices=window.__urbariumRegionCatalog?.regions||[{id:"downtown-la",label:"Downtown LA"}];
       const selected=choices.find(section=>section.id===params.get("region"))||choices[0];
       document.documentElement.dataset.activeRegion=selected.id;
-      document.documentElement.dataset.worldPreview=params.get("world")==="1"?"true":"false";
+      // Complete Downtown + Little Tokyo is the default; world=0 for standalone.
+       document.documentElement.dataset.worldPreview=params.get("world")==="0"?"false":"true";
       document.documentElement.dataset.progressivePreview=params.get("progressive")==="0"?"false":"true";
       // Camera-local mesh residency is the progressive default in single-
       // section mode. stream=0 restores the old full-city enrichment.
@@ -565,17 +566,18 @@
       regionMenu.value=activeRegion.id;
       const joined=document.documentElement.dataset.worldPreview==="true";
       const worldToggle=document.getElementById("world-preview-toggle");
-      worldToggle.textContent="Joined world preview: "+(joined?"on":"off");
+      worldToggle.textContent="Joined Downtown + Little Tokyo: "+(joined?"on":"off");
       worldToggle.setAttribute("aria-pressed",String(joined));
       worldToggle.addEventListener("click",()=>{
         const url=new URL(location.href);
-        if(joined)url.searchParams.delete("world");
-        else url.searchParams.set("world","1");
+        if(joined)url.searchParams.set("world","0");
+        else url.searchParams.delete("world");
         location.assign(url.href);
       });
       document.getElementById("current-region-name").textContent="/ "+
         (joined?"LA · Joined preview":activeRegion.label);
-      document.getElementById("minimap-region-name").textContent=activeRegion.label.toUpperCase();
+      document.getElementById("minimap-region-name").textContent=
+         joined?"DOWNTOWN + LITTLE TOKYO":activeRegion.label.toUpperCase();
       regionMenu.addEventListener("change",()=>{
         const url=new URL(location.href);
         if(regionMenu.value==="downtown-la")url.searchParams.delete("region");
