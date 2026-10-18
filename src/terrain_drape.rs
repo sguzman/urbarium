@@ -172,7 +172,7 @@ pub fn conform_to_ground(grid:&TerrainGrid,region:&Region,mesh:&Mesh)
 mod tests {
     use super::*;
     use crate::roads::{mesh_streets_with_bridges, SurfaceKind};
-    use crate::{City,Point,Street};
+    use crate::{City,Street};
     use std::collections::BTreeMap;
     #[test]
     fn surface_triangles_follow_dem_faces_without_piercing_ground() {
@@ -194,7 +194,9 @@ mod tests {
         let draped=conform_to_ground(&grid,&region,orig).unwrap();
         assert!(draped.indices.len()>=orig.indices.len());
         for tri in draped.indices.chunks_exact(3) {
-            let verts=tri.map(|i|draped.vertices[i as usize]);
+            let verts=[draped.vertices[tri[0] as usize],
+                       draped.vertices[tri[1] as usize],
+                       draped.vertices[tri[2] as usize]];
             for weights in [[1./3.,1./3.,1./3.],
                             [0.5,0.5,0.],[0.,0.5,0.5],[0.5,0.,0.5]] {
                 let x=verts.iter().zip(weights).map(|(v,t)|v.position[0] as f64*t).sum();
