@@ -52,6 +52,32 @@
   <script>window.__urbariumGeographyVersions = null;</script>
   <!-- Install version-aware geographic fetch interception before WASM boot. -->
   <script src="./data-cache.js?v=content-hash-v2"></script>
+  <!-- Cache only fingerprinted WASM executables; never block startup on registration. -->
+  <script>
+    (() => {
+      const sw=navigator.serviceWorker;
+      const cache=window.__urbariumWasmCache={
+        supported:!!sw,controlled:!!sw?.controller,registration:"checking",
+        hits:0,stores:0,networkFetches:0,lastEvent:"none",file:""
+      };
+      if(!sw){cache.registration="unsupported";return;}
+      sw.addEventListener("message",event=>{
+        const data=event.data;
+        if(data?.type!=="urbarium-wasm-cache-v1")return;
+        cache.lastEvent=data.kind;
+        cache.file=data.file||"";
+        if(data.kind==="hit")cache.hits++;
+        if(data.kind==="stored")cache.stores++;
+        if(data.kind==="network")cache.networkFetches++;
+      });
+      sw.addEventListener("controllerchange",()=>{
+        cache.controlled=!!sw.controller;
+      });
+      sw.register("./wasm-sw.js",{scope:"./",updateViaCache:"none"})
+        .then(()=>{cache.registration="registered";cache.controlled=!!sw.controller;})
+        .catch(error=>{cache.registration="unavailable: "+String(error).slice(0,90);});
+    })();
+  </script>
   <!-- Size-optimize release WASM to reduce cold-network transfer on slow connections. -->
   <link data-trunk rel="rust" data-bin="urbarium-viewer" data-cargo-features="viewer" data-wasm-opt="z" data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int">
   <link data-trunk rel="copy-dir" href="web/assets" data-target-path="assets">
@@ -59,6 +85,7 @@
   <link data-trunk rel="copy-file" href="web/gpu-test.html">
   <link data-trunk rel="copy-file" href="web/minimap.js">
   <link data-trunk rel="copy-file" href="web/data-cache.js">
+  <link data-trunk rel="copy-file" href="web/wasm-sw.js">
   <!-- Geography cache intercepts the initial Rust download, not just reloads. -->
   <script>
     window.urbariumLandmarkPalette = Object.freeze({
@@ -372,6 +399,7 @@
       <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
       <p id="scene-detail-stage" role="status">Scene detail: waiting for renderer</p>
       <p id="startup-code-state" class="hud-hint" role="status">WebAssembly load: checking browser timings...</p>
+      <p id="wasm-cache-state" class="hud-hint" role="status">WASM disk cache: checking...</p>
       <p id="geography-request-count" class="hud-hint" role="status">City/terrain network requests this visit: 0</p>
       <div class="hud-field">
         <p id="geodata-cache-state" role="status">Geography: awaiting first asset request</p>
@@ -776,6 +804,19 @@
         }else{
           code.textContent="WASM request: not completed or not exposed by browser timing";
         }
+        const stored=window.__urbariumWasmCache;
+        const wasmCacheLine=document.getElementById("wasm-cache-state");
+        if(stored){
+          const result=stored.lastEvent==="hit" ? "CACHE HIT (disk)" :
+            stored.lastEvent==="stored" ? "saved for next visit" :
+            stored.lastEvent==="network" ? "network response (not stored)" :
+            stored.lastEvent==="unavailable" ? "browser storage unavailable" :
+            stored.controlled ? "ready; no WASM request observed" :
+            stored.supported ? "installing; subsequent visits use cache" :
+            "unsupported by browser";
+          wasmCacheLine.textContent="WASM disk cache: "+result+
+            " · "+(stored.controlled?"active":"not controlling this visit");
+        }
         const count=window.__urbariumGeoCache?.networkRequests;
         document.getElementById("geography-request-count").textContent=
           "City/terrain network requests this visit: "+
@@ -834,6 +875,7 @@
           startup:{
             pageUptimeMs:Math.round(performance.now()),
             wasmResource:wasmResourceTiming(),
+            wasmCache:{...window.__urbariumWasmCache},
             phases:phaseTimeline.slice(-32)
           },
           error:mostRecentError.slice(0,400)

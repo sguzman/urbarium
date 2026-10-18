@@ -117,6 +117,10 @@ jobs:
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
           assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
+          assert (dist/"wasm-sw.js").is_file(), "WASM service worker missing"
+          worker=(dist/"wasm-sw.js").read_text()
+          assert "urbarium-wasm-binaries-v1" in worker and "MAX_VERSIONS=2" in worker
+          assert "wasm-sw.js" in (dist/"index.html").read_text()
           assert "urbarium-geography-downtown-la-v1" in (dist/"data-cache.js").read_text()
           import hashlib,re
           page=(dist/"index.html").read_text()
@@ -240,6 +244,9 @@ jobs:
           python3 -c "import json; assert len(json.load(open('/tmp/urbarium-landmarks-live.json'))['landmarks']) == 9"
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/data-cache.js" -o /tmp/urbarium-cache-live.js
           grep -q 'urbarium-geography-downtown-la-v1' /tmp/urbarium-cache-live.js
+          curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
+            "${PAGE_URL%/}/wasm-sw.js" -o /tmp/urbarium-wasm-sw-live.js
+          grep -q 'urbarium-wasm-binaries-v1' /tmp/urbarium-wasm-sw-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/stats.js" -o /tmp/urbarium-stats-live.js
           grep -q 'gpu-mesh-bytes' /tmp/urbarium-stats-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \

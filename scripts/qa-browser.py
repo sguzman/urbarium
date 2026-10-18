@@ -949,6 +949,34 @@ with sync_playwright() as p:
         assert page.url==early_url
         assert not errors,errors
         print("Progressive scene: first terrain/streets frame before full city and neighboring tile, then joined-world upgrade passed")
+        # SW must cache the exact fingerprinted WASM, then serve the same
+        # build from CacheStorage on a subsequent navigation. It may not
+        # intercept the first page before clients.claim(), so the first
+        # controlled reload primes it when necessary.
+        page.wait_for_function("""() => !!navigator.serviceWorker?.controller &&
+            window.__urbariumWasmCache?.registration==="registered" """,timeout=25000)
+        cache_url=f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&progressive=0"
+        page.goto(cache_url,wait_until="domcontentloaded")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.renderStage==="first-present" &&
+                window.__urbariumWasmCache?.lastEvent!=="none";
+        }""",timeout=90000)
+        page.wait_for_function("""() => window.__urbariumWasmCache?.stores>0 ||
+            window.__urbariumWasmCache?.hits>0""",timeout=25000)
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.renderStage==="first-present" &&
+                window.__urbariumWasmCache?.hits>0;
+        }""",timeout=90000)
+        assert page.locator("#wasm-cache-state").count()==1
+        page.locator("#hud-tab-details").click()
+        page.wait_for_function("""() =>
+            document.querySelector("#wasm-cache-state")?.textContent.includes("CACHE HIT (disk)")""",
+            timeout=10000)
+        assert not errors,errors
+        print("WASM service worker: exact hashed module served from persistent disk cache on reload")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:

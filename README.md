@@ -125,6 +125,25 @@ uncompressed WASM decreased from 4,672,314 to 3,932,014 bytes (15.8%).
 This reduces code bytes transferred on a cold load, but does not prove any
 particular time-to-first-frame improvement on the user's connection.
 
+## Persistent WASM executable cache (October 17)
+
+The viewer now registers a scoped service worker (`wasm-sw.js`) without
+blocking the first frame. When it controls the page, it intercepts **only**
+Trunk's content-fingerprinted `urbarium-viewer-*_bg.wasm` requests. It returns
+a CacheStorage hit without a network download, or streams a network response
+immediately and saves a clone asynchronously for the next visit. At most the
+two latest WASM revisions are retained. All HTML, CSS, generated JavaScript,
+geography JSON and other requests continue through their normal paths;
+geographic JSON retains its separate SHA256 cache.
+
+The Details tab distinguishes an observed disk cache hit from a fetch whose
+Resource Timing transfer count is merely zero. The diagnostic JSON includes
+`startup.wasmCache`. On the first visit the service worker may not yet
+control the document; a controlled visit can prime the cache before later
+reloads. Browser storage eviction, private mode or disabled service workers
+may require another download. This helps repeated WASM transfers, **not**
+first-ever WASM compilation or full-city geometry generation.
+
 ## Status
 
 **Data ingestion and first 3D massing build validated on real Downtown LA data.**
