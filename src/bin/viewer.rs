@@ -10,6 +10,9 @@ use web_time::Instant;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use urbarium::geometry::{mesh_building, HeightPolicy, Mesh, Vertex};
+use urbarium::chunk_mesh::{GpuVertex,DrawBatch,SceneLayer,append_part,
+    category_index, category_rgb, building_landmark_color, landmark_disc,
+    LandmarkCatalog,chunk_geometry};
 use urbarium::roads::{mesh_streets_with_bridges, SurfaceKind};
 use urbarium::{Building, City, Point};
 use urbarium::collision::CollisionWorld;
@@ -28,15 +31,6 @@ type SharedWindow = std::rc::Rc<Window>;
 #[cfg(not(target_arch = "wasm32"))]
 type SharedWindow = std::sync::Arc<Window>;
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuVertex {
-    position: [f32; 3],
-    normal: [f32; 3],
-    color: [f32; 3],
-    category_color: [f32; 3],
-    category_id: f32,
-}
 const VERTEX_ATTRS: [wgpu::VertexAttribute; 5] =
     wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3,
                              2 => Float32x3, 3 => Float32x3, 4 => Float32];
@@ -209,110 +203,6 @@ impl Camera {
     }
 }
 
-fn append_part(
-    mesh: &Mesh, color: [f32;3], verts: &mut Vec<GpuVertex>, indices: &mut Vec<u32>
-) -> Result<(), String> {
-    let base = u32::try_from(verts.len()).map_err(|_| "too many city vertices")?;
-    if mesh.indices.iter().any(|idx| *idx as usize >= mesh.vertices.len() ||
-        idx.checked_add(base).is_none()) {
-        return Err("invalid source geometry index".into());
-    }
-    verts.extend(mesh.vertices.iter().map(|v| GpuVertex {
-        position: v.position, normal: v.normal, color,
-        category_color:[0.0;3], category_id:0.0,
-    }));
-    indices.extend(mesh.indices.iter().map(|idx| idx+base));
-    Ok(())
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SceneLayer { Ground, Buildings, Road, ElevatedRoad, BridgeStructure, Walk, Steps, Rail, Marker(u32) }
-#[derive(Clone, Copy)]
-struct DrawBatch {
-    layer: SceneLayer,
-    first_index: u32,
-    count: u32,
-}
-#[derive(serde::Deserialize)]
-struct LandmarkCatalog {
-    region_id:String,
-    landmarks:Vec<LandmarkAnchor>,
-}
-#[derive(serde::Deserialize)]
-struct LandmarkAnchor {
-    kind:String,
-    coordinates:[f64;2],
-}
-// IDs deliberately match the category palette insertion order in index.html.
-fn category_index(kind:&str)->Option<u32> {
-    match kind {
-        "civic"=>Some(0),"legal"=>Some(1),"library"=>Some(2),
-        "culture"=>Some(3),"park"=>Some(4),"railway"=>Some(5),
-        "market"=>Some(6),"historic"=>Some(7),_=>None,
-    }
-}
-fn category_rgb(kind:&str)->Option<[f32;3]> {
-    match kind {
-        "civic"=>Some([0.933,0.663,0.420]),
-        "legal"=>Some([0.467,0.827,0.812]),
-        "library"=>Some([0.506,0.749,1.0]),
-        "culture"=>Some([0.804,0.604,0.965]),
-        "park"=>Some([0.506,0.851,0.612]),
-        "railway"=>Some([0.961,0.773,0.408]),
-        "market"=>Some([0.949,0.553,0.529]),
-        "historic"=>Some([0.761,0.698,0.647]),
-        _=>None,
-    }
-}
-fn inside_ring(p:Point,ring:&[Point])->bool {
-    if ring.len()<3 {return false;}
-    let mut inside=false;
-    for i in 0..ring.len() {
-        let a=ring[i];
-        let b=ring[(i+1)%ring.len()];
-        if (a.z>p.z)!=(b.z>p.z) &&
-            p.x < (b.x-a.x)*(p.z-a.z)/(b.z-a.z)+a.x {
-            inside=!inside;
-        }
-    }
-    inside
-}
-fn building_landmark_color(building:&Building,region:&Region, marks:&[LandmarkAnchor])
-    -> Option<([f32;3],u32)>
-{
-    for mark in marks {
-        let anchor=region.project(mark.coordinates[0],mark.coordinates[1]);
-        for polygon in &building.polygons {
-            if let Some(outer)=polygon.rings.first() {
-                if inside_ring(anchor,outer) &&
-                    !polygon.rings.iter().skip(1).any(|hole|inside_ring(anchor,hole)) {
-                    return category_rgb(&mark.kind)
-                        .zip(category_index(&mark.kind));
-                }
-            }
-        }
-    }
-    None
-}
-fn landmark_disc(terrain:&TerrainGrid,region:&Region,p:Point,radius:f64)->Mesh {
-    // Small representative ground marker. NOT a surveyed park boundary.
-    let mut mesh=Mesh::default();
-    let center_y=terrain.sample_surface(region,p.x,p.z)+0.6;
-    mesh.vertices.push(Vertex{
-        position:[p.x as f32,center_y,p.z as f32],normal:[0.0,1.0,0.0]});
-    for i in 0..16 {
-        let angle=i as f64*std::f64::consts::TAU/16.0;
-        let x=p.x+radius*angle.cos();
-        let z=p.z+radius*angle.sin();
-        let y=terrain.sample_surface(region,x,z)+0.6;
-        mesh.vertices.push(Vertex{position:[x as f32,y,z as f32],
-            normal:[0.0,1.0,0.0]});
-    }
-    for i in 0..16 {
-        mesh.indices.extend([0,1+i as u32,1+(i as u32+1)%16]);
-    }
-    mesh
-}
 fn combined_city(city:&City,terrain:&TerrainGrid,bridge_preview:bool)
     ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String> {
     let catalog:LandmarkCatalog=serde_json::from_str(include_str!("../../web/landmarks.json"))
@@ -456,83 +346,6 @@ fn coarse_city(city:&City,terrain:&TerrainGrid,bridges:bool,spawn:Point)
     Ok((vertices,indices,batches))
 }
 
-
-// A cell contributes buildings, classified street fragments and source-backed
-// landmark discs, but NOT another full-region terrain mesh. Each building has
-// one canonical owner cell; each road segment is clipped to its owner cell.
-fn chunk_geometry(city:&City,terrain:&TerrainGrid,
-    key:urbarium::streaming::ChunkKey)
-    ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String>{
-    let (buildings,report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
-    if report.buildings_skipped>0 {
-        return Err(format!("{} chunk buildings could not be meshed",report.buildings_skipped));
-    }
-    let (mut roads,_)=mesh_streets_with_bridges(city,false)?;
-    terrain.drape_roads_with_preview(&city.region,&mut roads,false)?;
-    let mut vertices=Vec::new();
-    let mut indices=Vec::new();
-    let mut batches=Vec::new();
-    let mut add=|mesh:&Mesh,color:[f32;3],layer:SceneLayer|->Result<(),String>{
-        let start=u32::try_from(indices.len()).map_err(|_|"chunk index count overflow")?;
-        append_part(mesh,color,&mut vertices,&mut indices)?;
-        let end=u32::try_from(indices.len()).map_err(|_|"chunk index count overflow")?;
-        if end>start {batches.push(DrawBatch{layer,first_index:start,count:end-start});}
-        Ok(())
-    };
-    add(&buildings,[0.71,0.76,0.81],SceneLayer::Buildings)?;
-    for (kind,mesh) in roads.layers {
-        let (layer,color)=match kind {
-            SurfaceKind::Road=>(SceneLayer::Road,[0.24,0.26,0.29]),
-            SurfaceKind::Motorway=>(SceneLayer::Road,[0.14,0.19,0.23]),
-            SurfaceKind::MotorwayStripe=>(SceneLayer::Road,[0.91,0.89,0.77]),
-            SurfaceKind::Walk=>(SceneLayer::Walk,[0.60,0.58,0.51]),
-            SurfaceKind::Steps=>(SceneLayer::Steps,[0.74,0.62,0.46]),
-            SurfaceKind::Rail=>(SceneLayer::Rail,[0.40,0.52,0.61]),
-            SurfaceKind::ElevatedRoad=>(SceneLayer::ElevatedRoad,[0.26,0.29,0.32]),
-            SurfaceKind::BridgeFascia=>(SceneLayer::BridgeStructure,[0.48,0.51,0.52]),
-            SurfaceKind::BridgeSupports=>(SceneLayer::BridgeStructure,[0.61,0.63,0.62]),
-            SurfaceKind::BridgeRails=>(SceneLayer::BridgeStructure,[0.76,0.78,0.78]),
-            SurfaceKind::BridgeStripe=>(SceneLayer::ElevatedRoad,[0.91,0.89,0.77]),
-        };
-        add(&mesh,color,layer)?;
-    }
-    let mut landmarks:LandmarkCatalog=
-        serde_json::from_str(include_str!("../../web/landmarks.json"))
-            .map_err(|err|format!("bundled landmarks: {err}"))?;
-    if landmarks.region_id!=city.region.id{landmarks.landmarks.clear();}
-    // Marker ownership is canonical by source position, independently
-    // of the building that might contain the landmark.
-    for landmark in &landmarks.landmarks {
-        let [lon,lat]=landmark.coordinates;
-        let p=city.region.project(lon,lat);
-        if urbarium::streaming::ChunkKey::at(p)!=key{continue;}
-        if let Some(rgb)=category_rgb(&landmark.kind) {
-            if let Some(category)=category_index(&landmark.kind){
-                let disc=landmark_disc(terrain,&city.region,p,
-                    if landmark.kind=="park"{15.0}else{6.0});
-                add(&disc,rgb,SceneLayer::Marker(category))?;
-            }
-        }
-    }
-    // Category tint is applied to each complete, original building mesh;
-    // no polygon is cut at cell edges.
-    let mut cursor=0usize;
-    for building in &city.buildings {
-        let Ok(building_mesh)=mesh_building(building,HeightPolicy::default()) else{continue};
-        let end=cursor+building_mesh.vertices.len();
-        if end>buildings.vertices.len(){return Err("chunk building vertex ordering mismatch".into());}
-        if let Some((rgb,id))=building_landmark_color(
-            building,&city.region,&landmarks.landmarks){
-            for vertex in &mut vertices[cursor..end]{
-                vertex.category_color=rgb;
-                vertex.category_id=(id+1) as f32;
-            }
-        }
-        cursor=end;
-    }
-    if cursor!=buildings.vertices.len(){return Err("chunk building count mismatch".into());}
-    Ok((vertices,indices,batches))
-}
 
 fn info(message: &str) {
     #[cfg(target_arch = "wasm32")]

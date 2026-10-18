@@ -11,6 +11,8 @@ pub mod terrain;
 pub mod world;
 pub mod streaming;
 #[cfg(feature="viewer")]
+pub mod chunk_mesh;
+#[cfg(feature="viewer")]
 pub mod frustum;
 
 use serde::{Deserialize, Serialize};
