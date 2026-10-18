@@ -45,8 +45,8 @@ pub struct DrawBatch {
 }
 #[derive(serde::Deserialize)]
 pub struct LandmarkCatalog {
-    region_id:String,
-    landmarks:Vec<LandmarkAnchor>,
+    pub region_id:String,
+    pub landmarks:Vec<LandmarkAnchor>,
 }
 #[derive(serde::Deserialize)]
 pub struct LandmarkAnchor {
