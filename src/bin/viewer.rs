@@ -458,6 +458,9 @@ export function start_urbarium_mesh_worker() {
     const worker=new Worker(new URL("./mesh-worker-runtime.js",location.href));
     const state={worker,status:"loading",queue:[],completed:0,pending:0,
                  started:performance.now(),error:""};
+    window.__urbariumWorkerCache={
+      kind:"checking",version:"",detail:"",history:[]
+    };
     worker.onerror=event=>{
       state.status="error";
       state.error=event.message||"Mesh worker failed";
@@ -465,7 +468,17 @@ export function start_urbarium_mesh_worker() {
     };
     worker.onmessage=event=>{
       const data=event.data;
-      if(data?.type==="ready")state.status="ready";
+      if(data?.type==="cache") {
+        const info=window.__urbariumWorkerCache;
+        if(info){
+          info.kind=data.kind||"unknown";
+          info.version=data.version||"";
+          info.detail=data.detail||"";
+          info.history.push({kind:info.kind,at:performance.now()});
+          if(info.history.length>12)info.history.shift();
+        }
+      }
+      else if(data?.type==="ready")state.status="ready";
       else if(data?.type==="error"){
         state.status="error";state.error=data.message||"Rust mesh worker failed";
         worker.terminate();
