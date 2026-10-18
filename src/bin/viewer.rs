@@ -12,7 +12,7 @@ use glam::{Mat4, Vec3};
 use urbarium::geometry::{mesh_building, HeightPolicy, Mesh, Vertex};
 use urbarium::chunk_mesh::{GpuVertex,DrawBatch,SceneLayer,append_part,
     category_index, category_rgb, building_landmark_color, landmark_disc,
-    LandmarkCatalog,chunk_geometry};
+    LandmarkCatalog,chunk_geometry,ChunkMeshPayload};
 use urbarium::roads::{mesh_streets_with_bridges, SurfaceKind};
 use urbarium::{Building, City, Point};
 use urbarium::collision::CollisionWorld;
@@ -447,6 +447,98 @@ fn expose_chunk_draw_telemetry(drawn:u32,culled:u32){
     #[cfg(not(target_arch="wasm32"))]
     let _=(drawn,culled);
 }
+
+#[cfg(target_arch="wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = r#"
+let chunkWorkerClient=null;
+export function start_urbarium_mesh_worker() {
+  if(!("Worker" in window) || typeof window.__urbariumCityJson!=="string" ||
+      typeof window.__urbariumTerrainJson!=="string")return false;
+  try {
+    const worker=new Worker(new URL("./mesh-worker-runtime.js",location.href));
+    const state={worker,status:"loading",queue:[],completed:0,pending:0,
+                 started:performance.now(),error:""};
+    worker.onerror=event=>{
+      state.status="error";
+      state.error=event.message||"Mesh worker failed";
+      worker.terminate();
+    };
+    worker.onmessage=event=>{
+      const data=event.data;
+      if(data?.type==="ready")state.status="ready";
+      else if(data?.type==="error"){
+        state.status="error";state.error=data.message||"Rust mesh worker failed";
+        worker.terminate();
+      }else if(data?.type==="mesh"){
+        state.pending=Math.max(0,state.pending-1);
+        state.completed++;
+        state.queue.push(JSON.stringify({x:data.x,z:data.z,payload:data.payload}));
+      }
+    };
+    worker.postMessage({type:"init",city:window.__urbariumCityJson,
+                        terrain:window.__urbariumTerrainJson});
+    chunkWorkerClient=state;
+    return true;
+  }catch(error){console.warn("Mesh worker unavailable",error);return false;}
+}
+export function urbarium_mesh_worker_status(){
+  const s=chunkWorkerClient;
+  if(!s)return "unavailable";
+  // An extra WASM download must never stall the working viewer indefinitely.
+  if(s.status==="loading" && performance.now()-s.started>45000){
+    s.status="error";s.error="Mesh worker startup timed out";
+    s.worker.terminate();
+  }
+  return s.status;
+}
+export function request_urbarium_mesh_chunk(x,z){
+  const s=chunkWorkerClient;
+  if(!s||s.status!=="ready"||s.pending>0)return false;
+  s.pending++;
+  s.worker.postMessage({type:"mesh",x,z});
+  return true;
+}
+export function take_urbarium_mesh_chunk_result(){
+  return chunkWorkerClient?.queue.shift()||"";
+}
+"#)]
+extern "C"{
+    fn start_urbarium_mesh_worker()->bool;
+    fn urbarium_mesh_worker_status()->String;
+    fn request_urbarium_mesh_chunk(x:i32,z:i32)->bool;
+    fn take_urbarium_mesh_chunk_result()->String;
+}
+#[cfg(not(target_arch="wasm32"))]
+fn start_urbarium_mesh_worker()->bool{false}
+#[cfg(not(target_arch="wasm32"))]
+fn urbarium_mesh_worker_status()->String{"unavailable".into()}
+#[cfg(not(target_arch="wasm32"))]
+fn request_urbarium_mesh_chunk(_:i32,_:i32)->bool{false}
+#[cfg(not(target_arch="wasm32"))]
+fn take_urbarium_mesh_chunk_result()->String{String::new()}
+fn browser_mesh_worker_enabled()->bool {
+    #[cfg(target_arch="wasm32")]
+    return web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|e|e.get_attribute("data-mesh-worker"))
+        .as_deref()==Some("true");
+    #[cfg(not(target_arch="wasm32"))]
+    false
+}
+#[derive(serde::Deserialize)]
+struct WorkerChunkReply {x:i32,z:i32,payload:String}
+fn expose_mesh_worker_state(active:bool,complete:u64){
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")){
+        let status=if active{urbarium_mesh_worker_status()}else{"fallback".into()};
+        let _=el.set_attribute("data-mesh-worker-state",&status);
+        let _=el.set_attribute("data-mesh-worker-chunks",&complete.to_string());
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=(active,complete);
+}
+
 fn browser_chunk_streaming()->bool {
     #[cfg(target_arch="wasm32")]
     if let Some(value)=web_sys::window().and_then(|w|w.document())
@@ -791,6 +883,9 @@ struct ChunkStream{
     evicted:u64,
     preview_retired:bool,
     last_camera_cell:Option<urbarium::streaming::ChunkKey>,
+    worker_active:bool,
+    worker_inflight:HashSet<urbarium::streaming::ChunkKey>,
+    worker_completed:u64,
 }
 fn set_chunk_telemetry(resident:usize,wanted:usize,built:u64,evicted:u64,
     initial_complete:bool){
@@ -999,11 +1094,14 @@ impl Graphics {
         }
         #[cfg(not(target_arch="wasm32"))]
         let _=full_region_chunks;
+        let worker_active=browser_mesh_worker_enabled() && start_urbarium_mesh_worker();
         self.stream=Some(ChunkStream{
             source:job.city,terrain:job.terrain,
             chunks:BTreeMap::new(),built:0,evicted:0,
             preview_retired:false,last_camera_cell:None,
+            worker_active,worker_inflight:HashSet::new(),worker_completed:0,
         });
+        expose_mesh_worker_state(worker_active,0);
         set_bridge_mesh_triangles(0);
         set_freeway_mesh_triangles(0);
         // Keep source-grade metadata even though unfinished raised decks
@@ -1038,41 +1136,93 @@ impl Graphics {
                 stream.evicted+=1; // Dropping the buffers releases their GPU residency.
             }
         }
-        if let Some(key)=wanted.iter().copied()
-            .find(|key|!stream.chunks.contains_key(key)) {
-            let selected=urbarium::streaming::chunk_city(&stream.source,key);
-            match chunk_geometry(&selected,&stream.terrain,key) {
-                Ok((vertices,indices,batches))=>{
-                    let bounds=urbarium::frustum::Bounds3::from_positions(
-                        vertices.iter().map(|v|v.position));
-                    let bytes=vertices.len()*size_of::<GpuVertex>()+
-                        indices.len()*size_of::<u32>();
-                    let vertex=(!vertices.is_empty()).then(||
-                        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
-                            label:Some("Camera-local city vertices"),
-                            contents:bytemuck::cast_slice(&vertices),
-                            usage:wgpu::BufferUsages::VERTEX,
-                        }));
-                    let index=(!indices.is_empty()).then(||
-                        self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
-                            label:Some("Camera-local city indices"),
-                            contents:bytemuck::cast_slice(&indices),
-                            usage:wgpu::BufferUsages::INDEX,
-                        }));
-                    stream.chunks.insert(key,ChunkBuffers{
-                        vertex,index,bounds,batches,bytes,
-                    });
-                    stream.built+=1;
-                    self.gpu_mesh_bytes+=bytes;
+        // A dedicated CPU-only WASM module can do the exact same Rust mesh
+        // work on another thread. Never block a rendered frame waiting for
+        // worker download/initialization; fall back to the tested local path
+        // if the worker cannot load or reports a meshing error.
+        let mut finished:Option<(urbarium::streaming::ChunkKey,ChunkMeshPayload)>=None;
+        if stream.worker_active {
+            let state=urbarium_mesh_worker_status();
+            if state=="error" || state=="unavailable" {
+                stream.worker_active=false;
+                stream.worker_inflight.clear();
+            }else if state=="ready" {
+                let message=take_urbarium_mesh_chunk_result();
+                if !message.is_empty() {
+                    let received=(||->Result<_,String>{
+                        let reply:WorkerChunkReply=serde_json::from_str(&message)
+                            .map_err(|e|format!("Worker response: {e}"))?;
+                        let key=urbarium::streaming::ChunkKey{x:reply.x,z:reply.z};
+                        let payload:ChunkMeshPayload=serde_json::from_str(&reply.payload)
+                            .map_err(|e|format!("Worker mesh data: {e}"))?;
+                        Ok((key,payload))
+                    })();
+                    match received {
+                        Ok((key,payload))=>{
+                            stream.worker_inflight.remove(&key);
+                            stream.worker_completed+=1;
+                            if wanted.contains(&key) && !stream.chunks.contains_key(&key) {
+                                finished=Some((key,payload));
+                            }
+                        }
+                        Err(error)=>{
+                            info(&format!("Worker data rejected; local fallback: {error}"));
+                            stream.worker_active=false;
+                            stream.worker_inflight.clear();
+                        }
+                    }
                 }
-                Err(error)=>{
-                    set_scene_detail("error");
-                    info(&format!("Camera-local mesh failed in ({},{}): {error}",key.x,key.z));
-                    self.stream=None;
-                    return;
+                if stream.worker_active && stream.worker_inflight.is_empty() {
+                    if let Some(key)=wanted.iter().copied()
+                        .find(|key| !stream.chunks.contains_key(key)
+                            && finished.as_ref().is_none_or(|(done,_)|done!=key)) {
+                        if request_urbarium_mesh_chunk(key.x,key.z){
+                            stream.worker_inflight.insert(key);
+                        }
+                    }
                 }
             }
         }
+        if !stream.worker_active && finished.is_none(){
+            if let Some(key)=wanted.iter().copied()
+                .find(|key|!stream.chunks.contains_key(key)){
+                let mesh=urbarium::chunk_mesh::build_chunk_payload(
+                    &stream.source,&stream.terrain,key);
+                match mesh {
+                    Ok(payload)=>finished=Some((key,payload)),
+                    Err(error)=>{
+                        set_scene_detail("error");
+                        info(&format!("Camera-local mesh failed in ({},{}): {error}",key.x,key.z));
+                        self.stream=None;
+                        return;
+                    }
+                }
+            }
+        }
+        if let Some((key,ChunkMeshPayload{vertices,indices,batches}))=finished {
+            let bounds=urbarium::frustum::Bounds3::from_positions(
+                vertices.iter().map(|v|v.position));
+            let bytes=vertices.len()*size_of::<GpuVertex>()+
+                indices.len()*size_of::<u32>();
+            let vertex=(!vertices.is_empty()).then(||
+                self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                    label:Some("Camera-local city vertices"),
+                    contents:bytemuck::cast_slice(&vertices),
+                    usage:wgpu::BufferUsages::VERTEX,
+                }));
+            let index=(!indices.is_empty()).then(||
+                self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                    label:Some("Camera-local city indices"),
+                    contents:bytemuck::cast_slice(&indices),
+                    usage:wgpu::BufferUsages::INDEX,
+                }));
+            stream.chunks.insert(key,ChunkBuffers{
+                vertex,index,bounds,batches,bytes,
+            });
+            stream.built+=1;
+            self.gpu_mesh_bytes+=bytes;
+        }
+        expose_mesh_worker_state(stream.worker_active,stream.worker_completed);
         let complete=wanted.iter().all(|k|stream.chunks.contains_key(k));
         let retire=complete && !stream.preview_retired;
         if retire {
