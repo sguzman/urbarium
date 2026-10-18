@@ -457,7 +457,8 @@ export function start_urbarium_mesh_worker() {
   try {
     const worker=new Worker(new URL("./mesh-worker-runtime.js",location.href));
     const state={worker,status:"loading",queue:[],completed:0,pending:0,
-                 started:performance.now(),error:""};
+                 started:performance.now(),error:"",binaryBytes:0,
+                 binaryMessages:0};
     window.__urbariumWorkerCache={
       kind:"checking",version:"",detail:"",history:[]
     };
@@ -491,6 +492,8 @@ export function start_urbarium_mesh_worker() {
           worker.terminate();
           return;
         }
+        state.binaryBytes+=data.payload.byteLength;
+        state.binaryMessages++;
         state.queue.push(data.payload);
       }
     };
@@ -520,12 +523,20 @@ export function request_urbarium_mesh_chunk(x,z){
 export function take_urbarium_mesh_chunk_result(){
   return chunkWorkerClient?.queue.shift()||new Uint8Array(0);
 }
+export function urbarium_mesh_worker_binary_bytes(){
+  return chunkWorkerClient?.binaryBytes||0;
+}
+export function urbarium_mesh_worker_binary_messages(){
+  return chunkWorkerClient?.binaryMessages||0;
+}
 "#)]
 extern "C"{
     fn start_urbarium_mesh_worker()->bool;
     fn urbarium_mesh_worker_status()->String;
     fn request_urbarium_mesh_chunk(x:i32,z:i32)->bool;
     fn take_urbarium_mesh_chunk_result()->Vec<u8>;
+    fn urbarium_mesh_worker_binary_bytes()->f64;
+    fn urbarium_mesh_worker_binary_messages()->u32;
 }
 #[cfg(not(target_arch="wasm32"))]
 fn start_urbarium_mesh_worker()->bool{false}
@@ -535,6 +546,10 @@ fn urbarium_mesh_worker_status()->String{"unavailable".into()}
 fn request_urbarium_mesh_chunk(_:i32,_:i32)->bool{false}
 #[cfg(not(target_arch="wasm32"))]
 fn take_urbarium_mesh_chunk_result()->Vec<u8>{Vec::new()}
+#[cfg(not(target_arch="wasm32"))]
+fn urbarium_mesh_worker_binary_bytes()->f64{0.0}
+#[cfg(not(target_arch="wasm32"))]
+fn urbarium_mesh_worker_binary_messages()->u32{0}
 fn browser_mesh_worker_enabled()->bool {
     #[cfg(target_arch="wasm32")]
     return web_sys::window().and_then(|w|w.document())
@@ -551,6 +566,12 @@ fn expose_mesh_worker_state(active:bool,complete:u64){
         let status=if active{urbarium_mesh_worker_status()}else{"fallback".into()};
         let _=el.set_attribute("data-mesh-worker-state",&status);
         let _=el.set_attribute("data-mesh-worker-chunks",&complete.to_string());
+        let _=el.set_attribute("data-mesh-worker-format",
+            if active{"UBM1-transfer"}else{"local"});
+        let _=el.set_attribute("data-mesh-worker-bytes",
+            &urbarium_mesh_worker_binary_bytes().to_string());
+        let _=el.set_attribute("data-mesh-worker-messages",
+            &urbarium_mesh_worker_binary_messages().to_string());
     }
     #[cfg(not(target_arch="wasm32"))]
     let _=(active,complete);
