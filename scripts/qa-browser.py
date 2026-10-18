@@ -976,6 +976,24 @@ with sync_playwright() as p:
             "data-map-world-bounds").split(",")]
         assert bounds[2]-bounds[0]>2700 and bounds[3]>bounds[1],bounds
         print("Both joined regions included in geographic minimap",bounds)
+        # Pixel-level check in the EASTERN source section, not metadata alone.
+        # Missing neighbor geography used to leave background blue here.
+        painted=page.evaluate("""() => {
+            const map=document.querySelector("#minimap-canvas");
+            const b=map.dataset.mapWorldBounds.split(",").map(Number);
+            const width=Number(map.dataset.mapWidthM);
+            const x=b[0]+.83*(b[2]-b[0]),z=b[1]+.50*(b[3]-b[1]);
+            const centerX=(b[0]+b[2])/2,centerZ=(b[1]+b[3])/2;
+            const pixelX=130+(x-centerX)*260/width;
+            const pixelY=130-(z-centerZ)*260/width;
+            const sx=map.width/260,sy=map.height/260;
+            return Array.from(map.getContext("2d").getImageData(
+                Math.round(pixelX*sx),Math.round(pixelY*sy),1,1).data);
+        }""")
+        assert painted[:3] != [16,29,39],(
+            "Eastern region is still unpainted on the minimap",painted)
+        print("Joined minimap eastern geography pixel painted",painted)
+
         assert page.locator("#status").get_attribute("data-first-frame-detail")=="joined"
         # Joined-world startup previously displayed the misleading generic
         # "Starting application" for the neighbor-fetch stage. Ensure the
