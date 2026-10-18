@@ -111,6 +111,12 @@ fn owner(building:&crate::Building)->Option<ChunkKey>{
 /// Liang-Barsky clipping, using exact shared cell bounds. Endpoint-only and
 /// zero-length touches are discarded; true crossings are retained.
 fn clip_segment(a:Point,b:Point,bounds:[f64;4])->Option<(Point,Point)>{
+    // Half-open cell ownership: a segment lying exactly on a shared
+    // north/east border belongs to that neighboring cell only.
+    if ((a.x-bounds[2]).abs()<1e-9 && (b.x-bounds[2]).abs()<1e-9)
+       || ((a.z-bounds[3]).abs()<1e-9 && (b.z-bounds[3]).abs()<1e-9) {
+        return None;
+    }
     let dx=b.x-a.x;let dz=b.z-a.z;
     let mut lo:f64=0.0;let mut hi:f64=1.0;
     for (p,q) in [(-dx,a.x-bounds[0]),(dx,bounds[2]-a.x),
