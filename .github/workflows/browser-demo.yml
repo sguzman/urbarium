@@ -22,6 +22,10 @@ on:
       - src/road_grade.rs
       - src/collision.rs
       - src/terrain.rs
+      - src/terrain_drape.rs
+      - src/surface_clip.rs
+      - src/streaming.rs
+      - src/chunk_mesh.rs
       - scripts/fetch-terrain.py
       - src/gltf.rs
       - src/main.rs
