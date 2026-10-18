@@ -13,7 +13,7 @@ pipeline and a browser viewer using **WebAssembly + wgpu (WebGL2/WebGPU)**.
 - Source-derived buildings, terrain and road/path surfaces for a bounded
   **Downtown LA** area (approximately 1.5 × 1.2 km).
 - An independently acquired **Little Tokyo / northern Arts District** section;
-  optional two-section joined-world preview (`?world=1`).
+  two-section joined world **enabled by default** (`?world=0` for standalone diagnosis).
 - First-person movement, fast-travel toggle, collision against building
   footprints, and a north-up minimap with real geographic landmark anchors.
 - Progressive rendering: terrain and streets first, then buildings and

@@ -268,11 +268,11 @@ fix**. The next requested evidence after a crash is: reopen the page,
 expand Stats, select Copy diagnostics, and share the resulting report.
 
 Source footpaths are thin centerline ribbons, not surveyed sidewalk polygons.
-The importer now removes pedestrian mesh triangles intersecting a buffered
-at-grade road corridor using a 24-meter spatial hash. This prevents sidewalks
-and footpaths from visibly punching through asphalt. Source-tagged
-elevated roads and tunnels are excluded from that clipping, so their
-underlying pedestrian paths remain visible. Real pedestrian crossings
+The importer no longer deletes whole pedestrian triangles when a small
+portion overlaps buffered carriageway asphalt. That destructive removal
+created repeated jagged sidewalk gaps. Paths remain continuous; the road
+surface is rendered above pedestrian geometry at grade. Source-tagged
+elevated roads and tunnels retain independent grade behavior. Real pedestrian crossings
 and exact curb geometry require better source data and are not inferred.
 
 ## Rendering overlays, crashes, and performance diagnostics

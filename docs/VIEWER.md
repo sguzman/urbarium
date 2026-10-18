@@ -9,8 +9,12 @@ progressive mode. The entire Downtown LA skyline now stays resident,
 including distant buildings visible from the elevated overview camera.
 Details reports resident/built/evicted cell counts; use `?stream=0` for the
 historical full-city enrichment path.
-Joined-world (`?world=1`) and experimental freeways (`?bridges=1`) still
-use the separately verified full-section renderer.
+Joined Downtown LA + Little Tokyo is the **default**. Use `?world=0` only
+for standalone region diagnosis. Joined mode uses the separately verified
+full-section renderer; the experimental freeway preview (`?bridges=1`)
+remains opt-in. The minimap fits both regions, draws their real source
+geometries in the same geographic frame, and correctly locates the
+camera marker when zoomed out.
 
 ---
 

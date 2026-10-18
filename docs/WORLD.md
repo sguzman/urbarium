@@ -41,7 +41,7 @@ bridge elevations are claimed.
 
 ## Joined-world GPU preview (October 17)
 
-The `Joined world preview` toggle (`?world=1`) renders Downtown LA and
+The default joined world (`?world=0` selects standalone) renders Downtown LA and
 Little Tokyo/northern Arts District together in one WebGPU/WebGL2 scene.
 The second section retains its own indexed GPU vertex/index buffers and
 collision/terrain state. Vertex coordinates are translated to the primary
@@ -56,8 +56,12 @@ off restores the previously tested standalone region renderer.
 sections at startup, keeps both GPU buffers resident, and has no distant
 building LOD or billboard impostors yet. Those will follow after seam
 geometry, camera traversal and bounded eviction are verified. Large
-building polygons crossing an Overture section boundary can still produce
-overlapping source triangles; proper clipping/stitching remains pending.
+the two regions previously imported the same cross-boundary building into
+both GPU buffers. Footprints now have deterministic half-open geographic
+ownership by their source-derived centers, and full roofs and walls remain
+intact rather than being cut at tile borders. Catalog-wide source geometry
+and DEM seam validation now runs before deployment. Surveyed curb and
+intersection geometry remains a source-data limitation.
 
 ## Joined-world camera regression fix (October 17)
 

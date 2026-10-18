@@ -16,7 +16,11 @@
 - [ ] Capture provenance, source snapshots, and coverage metrics as a reproducible manifest.
 - [x] Assemble OSM building multipolygon relations with multi-way rings and interior courtyards.
 - [x] Clip OSM and Overture transportation centerlines at region bounds, including long external rail segments.
-- [ ] Add robust road topology and relation QA diagnostics; canonical tile ownership for whole buildings.
+- [x] Assign complete Overture building footprints to exactly one geographic
+      tile, preventing duplicate meshes and preserving cross-border shapes.
+- [x] Gate every catalog region on structural geometry, ownership and terrain
+      elevation-seam checks rather than testing Downtown alone.
+- [ ] Add robust surveyed road topology and relation-level QA diagnostics.
 
 ## P1 — Geographic fidelity
 
@@ -98,7 +102,8 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 - [x] Report actual per-asset CacheStorage hits/network downloads and startup phases rather than claiming the cache is ready before checking it.
 - [ ] Diagnose/reproduce user hardware-specific browser crashes and CPU/GPU stalls with retained telemetry, not just successful CI screenshots.
 - [x] Replace browser busy Poll loop with Wait-scheduled redraw, pause hidden-tab drawing, bound HiDPI framebuffer size, and resume drawing on visibility changes; verify browser soak.
-- [x] Mask pedestrian path mesh triangles inside actual at-grade carriageway footprints; preserve paths beneath bridges and exclude tunnels from road masking.
+- [x] Retire destructive pedestrian triangle masking so walking surfaces
+      remain continuous under asphalt and beneath surveyed-grade bridges.
 - [x] Provide source-tagged elevated road inspection camera jump and minimap visual differentiation.
 - [ ] Profile a real-user Edge/Hyprland GPU context crash: this CI runner does not reproduce intermittent hardware failures.
 - [ ] Add surveyed-grade street surfaces, map coverage beyond the pilot, and optional location jumping.

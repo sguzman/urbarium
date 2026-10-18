@@ -1067,6 +1067,27 @@ with sync_playwright() as p:
             Number(document.querySelector("#minimap-canvas")?.dataset.mapSections)===2
         """,timeout=30000)
         print("Default joined mode: progressive renderer and whole-region map")
+        # Exercise sustained joined-region rendering, not only first frame.
+        initial_frames=int(page.locator("#status").get_attribute("data-frame-count"))
+        for camera_button in ("#camera-overview","#camera-street","#camera-overview"):
+            page.locator("#hud-tab-explore").click()
+            page.locator(camera_button).click()
+            page.wait_for_timeout(1000)
+            page.wait_for_function("""() => {
+                const s=document.querySelector("#status");
+                return s?.dataset.sceneDetail==="joined" &&
+                    Number(s.dataset.worldSections)===2 &&
+                    Number(s.dataset.worldSecondaryDrawcalls)>0 &&
+                    s.dataset.gpuDeviceLost!=="true" &&
+                    s.dataset.renderStage==="first-present";
+            }""",timeout=10000)
+        page.wait_for_timeout(6000)
+        final_frames=int(page.locator("#status").get_attribute("data-frame-count"))
+        assert final_frames>initial_frames+10,(initial_frames,final_frames)
+        assert page.locator("#status").get_attribute("data-gpu-device-lost")=="false"
+        assert not errors,errors
+        print("Sustained joined-world GPU context and camera stability",
+              initial_frames,final_frames)
         assert not errors,errors
         print("Progressive scene: first terrain/streets frame before full city and neighboring tile, then joined-world upgrade passed")
         if force_webgl:
