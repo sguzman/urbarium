@@ -85,7 +85,7 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 - [ ] Profile a real-user Edge/Hyprland GPU context crash: this CI runner does not reproduce intermittent hardware failures.
 - [ ] Add surveyed-grade street surfaces, map coverage beyond the pilot, and optional location jumping.
 - [x] Reproducible browser QA in Chromium with real Downtown LA scene.
-- [ ] Public GitHub Pages URL serving the verified playable browser bundle (deployment workflow configured, live deployment pending).
+- [x] Publish the browser viewer to GitHub Pages with an automated WebGPU/WebGL2 verification and deployment workflow.
 
 ## P3 — Regional expansion
 

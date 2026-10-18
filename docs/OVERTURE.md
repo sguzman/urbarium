@@ -56,4 +56,5 @@ The live OSM Overpass workflow returned HTTP 406 from the public server;
 Overture is the confirmed real-data path. The Overture CLI currently selects
 its latest release automatically, so the retrieval timestamp alone does not
 pin an immutable source version; exact release capture is pending. The 3D
-geometry generator works, but no WebGPU browser renderer exists yet.
+geometry generator and a WASM browser renderer now exist. See the
+[viewer guide](VIEWER.md) for the current browser behavior.
