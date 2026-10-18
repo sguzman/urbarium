@@ -133,10 +133,11 @@ impl TerrainGrid {
             if matches!(kind,SurfaceKind::ElevatedRoad|SurfaceKind::BridgeFascia|
                 SurfaceKind::BridgeSupports|SurfaceKind::BridgeRails|
                 SurfaceKind::BridgeStripe){continue;}
-            for vertex in &mut mesh.vertices {
-                vertex.position[1]+=self.sample_surface(
-                    region,vertex.position[0] as f64,vertex.position[2] as f64);
-            }
+            // A centerline ribbon triangulated across several DEM faces can
+            // pierce terrain between correctly sampled vertices. Conform the
+            // entire surface to the actual ground triangles; this retains
+            // geometrically defined clearance even at steep grid diagonals.
+            *mesh=crate::terrain_drape::conform_to_ground(self,region,mesh)?;
         }
         if bridge_preview {
             crate::road_grade::build_bridge_layers(roads,|x,z|
