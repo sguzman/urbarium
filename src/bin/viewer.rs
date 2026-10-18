@@ -1162,6 +1162,20 @@ impl Graphics {
         });
         set_bridge_mesh_triangles(0);
         set_freeway_mesh_triangles(0);
+        // Keep source-grade metadata even though unfinished raised decks
+        // and freeway meshes are intentionally absent from streamed mode.
+        let elevated=self.stream.as_ref().map(|s|s.source.streets.iter()
+            .filter(|street|{
+                let road=matches!(street.kind.as_str(),
+                    "motorway"|"trunk"|"primary"|"secondary"|"tertiary"|
+                    "residential"|"unclassified"|"service"|"living_street");
+                let tagged=street.tags.get("bridge").is_some_and(|v|v=="yes") ||
+                    street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
+                    .is_some_and(|layer|layer>0);
+                road && tagged &&
+                    !street.tags.get("tunnel").is_some_and(|v|v=="yes")
+            }).count()).unwrap_or(0);
+        set_elevated_span_count(elevated);
     }
     fn update_chunks(&mut self){
         let Some(stream)=self.stream.as_mut() else{return};
