@@ -89,6 +89,8 @@ jobs:
           grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-render.sh
       - name: Compile real Rust/WebGPU WASM app
         run: trunk build --release --public-url ./
+      - name: Remove eager WASM preload so first fetch can be cached
+        run: python3 scripts/remove-wasm-preload.py dist/index.html
       - name: Validate static site and scene data
         run: |
           python3 - <<'PY'
@@ -118,6 +120,7 @@ jobs:
           assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
           assert (dist/"wasm-sw.js").is_file(), "WASM service worker missing"
+          assert not re.search(r'<link\\b(?=[^>]*\\brel="preload")(?=[^>]*\\btype="application/wasm")',page), "Eager WASM preload bypasses first-visit caching"
           worker=(dist/"wasm-sw.js").read_text()
           assert "urbarium-wasm-binaries-v1" in worker and "MAX_VERSIONS=2" in worker
           assert "wasm-sw.js" in (dist/"index.html").read_text()

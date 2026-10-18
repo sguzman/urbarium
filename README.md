@@ -140,7 +140,9 @@ The Details tab distinguishes an observed disk cache hit from a fetch whose
 Resource Timing transfer count is merely zero. The diagnostic JSON includes
 `startup.wasmCache`. On the first visit the service worker may not yet control the document;
 therefore the page also intercepts the first WASM response and saves a
-clone asynchronously without waiting before 3D startup. Its next reload
+clone asynchronously without waiting before 3D startup. Production builds
+remove Trunk's eager WASM preload, which otherwise bypasses that first
+request interception. The generated module bootstrap remains unchanged. Its next reload
 can then use the same binary directly from the service worker. Browser storage eviction, private mode or disabled service workers
 may require another download. This helps repeated WASM transfers, **not**
 first-ever WASM compilation or full-city geometry generation.

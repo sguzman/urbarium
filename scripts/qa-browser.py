@@ -977,6 +977,7 @@ with sync_playwright() as p:
             timeout=10000)
         assert not errors,errors
         print("WASM service worker: exact hashed module served from persistent disk cache on reload")
+        assert page.locator('link[rel="preload"][type="application/wasm"]').count()==0
         # Critical cold-start regression: a fresh browser profile has no
         # service worker when the *first* WASM request starts. That very
         # first response must populate CacheStorage. One reload must then
@@ -991,10 +992,18 @@ with sync_playwright() as p:
                     });
                 """)
             first.goto(cache_url,wait_until="domcontentloaded")
-            first.wait_for_function("""() =>
-                document.querySelector("#status")?.dataset.renderStage==="first-present" &&
-                window.__urbariumWasmCache?.stores>0
-            """,timeout=90000)
+            # Inspect CacheStorage itself. A cache write may come either
+            # from the first-page fetch wrapper or from the service worker
+            # if it happened to take control early; message delivery is
+            # not the authoritative measure of whether the bytes are saved.
+            first.wait_for_function("""async () => {
+                if(document.querySelector("#status")?.dataset.renderStage!=="first-present")
+                    return false;
+                const bucket=await caches.open("urbarium-wasm-binaries-v1");
+                return (await bucket.keys()).some(req=>
+                    /^urbarium-viewer-[0-9a-f]+_bg\\.wasm$/.test(
+                        new URL(req.url).pathname.split("/").pop()));
+            }""",timeout=90000)
             first.wait_for_function("""() => !!navigator.serviceWorker.controller """,
                                     timeout=30000)
             stored=first.evaluate("""async () => {
