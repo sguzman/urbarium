@@ -583,10 +583,14 @@ with sync_playwright() as p:
         # until all nine pins are inside the viewport, then inspect their
         # center pixels; the old regression rendered every pin yellow.
         minimap.evaluate("""e=>{
-            for(let i=0;i<5;i++)document.getElementById('map-zoom-out').click();
+            // Use a comparable 2.3km scale. The joined-world update allows
+            // zooming out to 6km, where nearby category pins overlap
+            // on the same raster pixels and exact center-color tests
+            // are not meaningful.
+            for(let i=0;i<3;i++)document.getElementById('map-zoom-out').click();
         }""")
         page.wait_for_function(
-            "() => Number(document.querySelector('#minimap-canvas')?.dataset.mapWidthM)>=2400",
+            "() => Number(document.querySelector('#minimap-canvas')?.dataset.mapWidthM)>=2300",
             timeout=8000,
         )
         page.wait_for_function(
