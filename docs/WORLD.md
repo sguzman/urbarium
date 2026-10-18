@@ -52,8 +52,8 @@ off restores the previously tested standalone region renderer.
 **Not yet** a completed city streaming system: the preview loads both
 sections at startup, keeps both GPU buffers resident, and has no distant
 building LOD or billboard impostors yet. Those will follow after seam
-geometry, camera traversal and bounded eviction are verified. Large
-the two regions previously imported the same cross-boundary building into
+geometry, camera traversal and bounded eviction are verified. Earlier versions of
+the two regions imported the same cross-boundary building into
 both GPU buffers. Footprints now have deterministic half-open geographic
 ownership by their source-derived centers, and full roofs and walls remain
 intact rather than being cut at tile borders. Catalog-wide source geometry
@@ -89,6 +89,11 @@ The geometry pipeline now enforces these invariants:
 - Unit tests cover bent-road surface area conservation across chunk borders,
   bend-safe source context retention, four-cell area conservation, and DEM midpoint/edge clearance even on
   steep nonplanar synthetic terrain.
+- Every region in the catalog must pass a **real-data surface ownership gate**:
+  compare every 300-meter cell's road, walk, stair and rail footprint area
+  against the corresponding slice of the complete region mesh. Fail when the
+  difference exceeds 0.2% plus 0.25 square meters per cell/material. This
+  catches coverage gaps and duplicate asphalt introduced by new regions.
 - Rust CI and both browser-renderer QA gates must pass before changes to the
   default site. All geometry source modules now trigger browser QA on push.
 

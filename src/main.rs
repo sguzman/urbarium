@@ -5,6 +5,7 @@ use std::io::BufWriter;
 use urbarium::geometry::{mesh_city, write_obj, HeightPolicy};
 use urbarium::roads::{mesh_streets, write_road_mtl, write_road_obj};
 use urbarium::gltf::write_glb;
+use urbarium::road_coverage::verify_road_coverage;
 use urbarium::{buildings_from_geojson, count_by_road_kind, from_overpass, streets_from_geojson, City, HeightUnit, Provenance, Region};
 
 fn main() {
@@ -20,6 +21,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         println!("Usage: urbarium ingest --region FILE --out FILE [--osm FILE] [--streets-geojson FILE] [--buildings-geojson FILE --height-unit meters|feet] [--source-name NAME --source-url URL --source-license LICENSE]");
         println!("       urbarium mesh --city FILE --out FILE [--missing-height M] [--meters-per-level M]");
         println!("       urbarium mesh-roads --city FILE --out FILE");
+        println!("       urbarium verify-road-cells --city FILE");
         println!("       urbarium glb --city FILE --out FILE");
         println!("All positions in output are local meters (X east, Z north).");
         return Ok(());
@@ -29,6 +31,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     if args[0] == "mesh-roads" {
         return run_roads(&args[1..]);
+    }
+    if args[0] == "verify-road-cells" {
+        return run_verify_road_cells(&args[1..]);
     }
     if args[0] == "glb" {
         return run_glb(&args[1..]);
@@ -146,6 +151,16 @@ fn run_mesh(args: &[String]) -> Result<(), Box<dyn Error>> {
     println!("Mesh: {} building(s), {} skipped, {} vertices, {} triangles, {} approximate heights; output: {}",
         report.buildings_meshed, report.buildings_skipped, report.vertices,
         report.triangles, report.buildings_with_approximate_heights, output);
+    Ok(())
+}
+
+fn run_verify_road_cells(args:&[String])->Result<(),Box<dyn Error>>{
+    if args.len()!=2 || args[0]!="--city"{
+        return Err("verify-road-cells requires --city FILE".into());
+    }
+    let city:City=serde_json::from_str(&fs::read_to_string(&args[1])?)?;
+    let report=verify_road_coverage(&city)?;
+    println!("ROAD_CELL_COVERAGE_QA {}",serde_json::to_string(&report)?);
     Ok(())
 }
 
