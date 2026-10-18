@@ -374,10 +374,9 @@ fn junction_hull(mut points:Vec<(f64,f64)>) -> Vec<(f64,f64)> {
     lower
 }
 
-// The Overture footpath dataset is centerline-only: sidewalks and pedestrian
-// linework sometimes run directly into the road asphalt. Without surveyed
-// crossing polygons, eliminate those unsightly coincident patches instead of
-// letting the pedestrian ribbon poke through the driving surface.
+// The Overture footpath dataset is centerline-only. Count at-grade overlaps
+// for diagnostics without destructively clipping out whole sidewalk triangles.
+// Depth-prioritized asphalt covers crossing centerlines in the renderer.
 // The spatial hash avoids a streets × pedestrian-triangles full scan.
 const OVERLAP_CELL_M:f64=24.0;
 
@@ -428,7 +427,7 @@ fn at_grade_motor_road(street:&Street)->bool {
         && !street.tags.get("layer").and_then(|v|v.parse::<i32>().ok())
             .is_some_and(|layer|layer!=0)
 }
-fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene,
+fn count_pedestrian_asphalt_overlap(city:&City,scene:&RoadScene,
     include_freeways:bool)->usize {
     let mut roads=Vec::<(Point,Point,f64)>::new();
     let mut buckets=BTreeMap::<(i32,i32),Vec<usize>>::new();
@@ -470,11 +469,10 @@ fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene,
     };
     let mut omitted=0usize;
     for kind in [SurfaceKind::Walk,SurfaceKind::Steps]{
-        let Some(mesh)=scene.layers.get_mut(&kind) else{continue;};
+        let Some(mesh)=scene.layers.get(&kind) else{continue;};
         let hidden=mesh.vertices.iter().map(|v|
             on_asphalt(v.position[0] as f64,v.position[2] as f64))
             .collect::<Vec<_>>();
-        let mut output=Vec::with_capacity(mesh.indices.len());
         for triangle in mesh.indices.chunks_exact(3) {
             // A connected pedestrian ribbon stays visible until it reaches
             // the carriageway's buffered footprint, leaving a clean gap.
@@ -506,9 +504,8 @@ fn remove_pedestrian_asphalt_overlap(city:&City,scene:&mut RoadScene,
                     }
                 }
             }
-            if collide {omitted+=1;}else{output.extend_from_slice(triangle);}
+            if collide {omitted+=1;}
         }
-        mesh.indices=output;
     }
     omitted
 }
@@ -609,8 +606,13 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
         *report.by_surface.entry(kind.material().into()).or_insert(0)+=1;
     }
     add_junction_patches(city,&mut scene,&mut report,detailed_bridges)?;
-    let omitted=remove_pedestrian_asphalt_overlap(city,&mut scene,detailed_bridges);
-    report.pedestrian_overlap_triangles_removed=omitted;
+    // Previously we removed a WHOLE pedestrian triangle if even one tiny
+    // corner intersected asphalt. That produced jagged voids at crossings,
+    // bends and every new catalog section. Keep the geometry continuous;
+    // depth ordering already places asphalt +0.24m above paths +0.09m.
+    // Record source overlap diagnostically; do not destroy source triangles.
+    let _overlaps=count_pedestrian_asphalt_overlap(city,&scene,detailed_bridges);
+    report.pedestrian_overlap_triangles_removed=0;
     if detailed_bridges {
         crate::road_grade::build_bridge_layers(&mut scene,|_,_|0.0)?;
     }
@@ -760,20 +762,27 @@ mod tests {
         atgrade.tags.insert("width".into(),"12m".into());
         let path=street("footway",&[[0.,-20.],[0.,20.]]);
         let (clean,report)=mesh_streets(&city(vec![atgrade,path.clone()])).unwrap();
-        assert!(report.pedestrian_overlap_triangles_removed>0);
+        assert_eq!(report.pedestrian_overlap_triangles_removed,0);
+        let original=mesh_streets_with_bridges(&city(vec![path.clone()]),false)
+            .unwrap().0;
+        assert_eq!(clean.layers[&SurfaceKind::Walk].indices.len(),
+                   original.layers[&SurfaceKind::Walk].indices.len(),
+                   "At-grade asphalt must not delete whole sidewalk triangles");
         let clean_walk=&clean.layers[&SurfaceKind::Walk];
-        for tri in clean_walk.indices.chunks_exact(3){
-            for &index in tri {
-                let z=clean_walk.vertices[index as usize].position[2];
-                assert!(z.abs()>6.0,"walk surface extended into the 12m asphalt corridor");
-            }
-        }
+        // Existing footpaths stay connected; asphalt masks crossings with
+        // distinct depth instead of creating a gap beyond road edges.
+        assert!(clean_walk.indices.iter().any(|&i|
+            clean_walk.vertices[i as usize].position[2].abs()<6.0));
+        let road_y=clean.layers[&SurfaceKind::Road].vertices[0].position[1];
+        let walk_y=clean_walk.vertices[0].position[1];
+        assert!(road_y-walk_y>0.1);
         let mut bridge=street("primary",&[[-20.,0.],[20.,0.]]);
         bridge.tags.insert("bridge".into(),"yes".into());
         let (separated,separate_report)=mesh_streets(&city(vec![bridge,path])).unwrap();
         assert_eq!(separate_report.pedestrian_overlap_triangles_removed,0);
-        assert!(separated.layers[&SurfaceKind::Walk].indices.len()>
-            clean_walk.indices.len(),"elevated road must not erase path underneath");
+        assert_eq!(separated.layers[&SurfaceKind::Walk].indices.len(),
+                   clean_walk.indices.len(),
+                   "At-grade crossings and elevated paths must both retain continuity");
     }
     #[test]
     fn pedestrian_triangle_crossing_asphalt_without_any_vertex_inside_is_removed() {
