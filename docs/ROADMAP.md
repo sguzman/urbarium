@@ -75,9 +75,12 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
       mesh vertex bounds and pixel-parity regression at fixed camera poses.
 - [ ] Consider validated occlusion culling and screen-space LOD only after
       demonstrated savings without visible gaps or false exclusions.
-- [ ] Move camera-following chunk generation off the main browser thread,
-      extend chunk residency across joined regions and implement adaptive LOD,
-      broad-phase collision indexing and terrain slope traversal constraints.
+- [x] Extract the shared Rust chunk mesher and create an opt-in CPU-only
+      Web Worker with fallback and browser regression coverage.
+- [ ] Validate cold-download overhead, mesh parity and frame-time before
+      making background meshing the default; then extend streaming to joined
+      regions and introduce adaptive LOD, collision indexing, and terrain
+      slope traversal constraints.
 - [x] WebGPU renderer through `wgpu`, compiled to WASM; keyboard/pointer flythrough controls validated in headless Chromium.
 - [x] First-person street-level navigation, mouse capture, error overlay and toggleable 18× fast travel.
 - [x] Interactive north-up Downtown LA minimap with zoom, mapped buildings and camera location/heading.

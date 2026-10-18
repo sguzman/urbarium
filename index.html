@@ -23,6 +23,9 @@
       // Pure draw-call filtering; the 30 pilot chunks remain GPU-resident.
       // frustum=0 is a visual parity reference and zero-culling fallback.
       document.documentElement.dataset.frustumCulling=params.get("frustum")==="0"?"false":"true";
+      // Off-thread Rust meshing is isolated until the browser A/B checks
+      // prove it reproduces the same source geometry without losing cells.
+      document.documentElement.dataset.meshWorker=params.get("meshworker")==="1"?"true":"false";
       const requested = params.get("renderer");
       const mode = requested === "webgpu" ? "webgpu" : "webgl2";
       document.documentElement.dataset.rendererChoice = mode;
@@ -923,7 +926,9 @@
             cellSizeMeters:Number(status?.dataset.chunkSizeM||0),
             drawn:Number(status?.dataset.chunksDrawn||0),
             culled:Number(status?.dataset.chunksCulled||0),
-            frustumEnabled:document.documentElement.dataset.frustumCulling!=="false"
+            frustumEnabled:document.documentElement.dataset.frustumCulling!=="false",
+            workerState:status?.dataset.meshWorkerState||"disabled",
+            workerChunks:Number(status?.dataset.meshWorkerChunks||0)
           },
           launchVariant:["x11-vulkan-render","wayland-vulkan-render"].includes(
             new URLSearchParams(location.search).get("launch"))
@@ -1158,7 +1163,8 @@
             " · built "+(status.dataset.chunksBuilt||"0")+
             " · evicted "+(status.dataset.chunksEvicted||"0")+
             " · drawn "+(status.dataset.chunksDrawn||"0")+
-            " · off-screen "+(status.dataset.chunksCulled||"0")
+            " · off-screen "+(status.dataset.chunksCulled||"0")+
+            " · mesher "+(status.dataset.meshWorkerState||"local")
           : "Geometry mode: full-scene fallback (or initializing)";
         if(status?.dataset.gpuDeviceLost==="true"){
           health.textContent="Graphics device lost · Copy diagnostics in Stats";

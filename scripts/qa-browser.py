@@ -1084,6 +1084,34 @@ with sync_playwright() as p:
             timeout=10000)
         assert not errors,errors
         print("WASM service worker: exact hashed module served from persistent disk cache on reload")
+
+        # Independent Rust CPU mesher worker integration (opt-in until proven
+        # safe). Same source City and DEM; all 30 chunks must come from the
+        # worker, never silently from the fallback, and the scene must render.
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}&meshworker=1",
+                  wait_until="domcontentloaded")
+        page.wait_for_function("""() =>
+            document.querySelector("#status")?.dataset.renderStage==="first-present"
+        """,timeout=90000)
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.sceneDetail==="complete" &&
+                s.dataset.meshWorkerState==="ready" &&
+                Number(s.dataset.meshWorkerChunks)===Number(s.dataset.chunksRegionTotal) &&
+                Number(s.dataset.chunksResident)===Number(s.dataset.chunksRegionTotal) &&
+                Number(s.dataset.chunksResident)>9;
+        }""",timeout=180000)
+        worker_status=page.locator("#status")
+        worker_count=int(worker_status.get_attribute("data-mesh-worker-chunks"))
+        assert worker_count==int(worker_status.get_attribute("data-chunks-region-total"))
+        assert worker_status.get_attribute("data-chunks-evicted")=="0"
+        before_frames=int(worker_status.get_attribute("data-frame-count") or "0")
+        page.wait_for_timeout(350)
+        assert int(worker_status.get_attribute("data-frame-count") or "0")>before_frames
+        assert not errors,errors
+        print("CPU WASM worker: built every primary-region chunk off main render thread",
+              worker_count,"GPU chunks resident")
+
         assert page.locator('link[rel="preload"][type="application/wasm"]').count()==0
         # Critical cold-start regression: a fresh browser profile has no
         # service worker when the *first* WASM request starts. That very

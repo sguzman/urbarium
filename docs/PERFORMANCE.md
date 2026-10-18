@@ -55,6 +55,29 @@ uncompressed WASM decreased from 4,672,314 to 3,932,014 bytes (15.8%).
 This reduces code bytes transferred on a cold load, but does not prove any
 particular time-to-first-frame improvement on the user's connection.
 
+## CPU-only Rust mesh worker (experimental, October 18)
+
+The normal viewer still defaults to the verified local renderer. A separately
+compiled, CPU-only Rust WASM binary now runs the **same shared procedural
+chunk mesher** in a dedicated Web Worker when `?meshworker=1` is selected.
+It receives the already downloaded City and DEM JSON rather than initiating
+duplicate geography downloads. After worker initialization, one chunk is
+queued at a time; serialized vertex/index/batch results are validated and
+uploaded to GPU buffers by the ordinary rendering thread.
+
+The worker changes **where triangulation and DEM draping execute**, not
+chunk ownership, building massing, camera controls, collision, draw distance,
+or frustum culling. If the worker fails or times out, the viewer falls back
+to the existing local mesh path instead of leaving missing buildings.
+Details and downloaded diagnostics distinguish `loading`, `ready`, and
+`fallback` and count chunks actually completed by the worker. The
+production browser suite explicitly waits for every source chunk to be
+worker-generated, with the complete skyline still resident.
+
+This opt-in mode introduces a second, lazily downloaded WASM executable;
+it is not yet enabled by default because cold-network cost, geometry
+parity and frame-time improvements need independent measurements.
+
 ## Conservative view-frustum draw-call culling (October 18)
 
 The normal single-region streaming renderer keeps the complete Downtown pilot
