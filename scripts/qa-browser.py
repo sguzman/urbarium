@@ -1251,17 +1251,22 @@ with sync_playwright() as p:
             }""",timeout=90000)
             first.wait_for_function("""() => !!navigator.serviceWorker.controller """,
                                     timeout=30000)
-            stored=first.evaluate("""async () => {
-                const cache=await caches.open("urbarium-wasm-binaries-v1");
-                return (await cache.keys()).map(req=>new URL(req.url).pathname);
-            }""")
-            assert len(stored)==1 and stored[0].endswith("_bg.wasm"),stored
+            # Service worker claim/prune can race a separate CacheStorage
+            # snapshot on first navigation. A new page must independently
+            # observe an actual content-fingerprinted WASM disk hit.
             first.reload(wait_until="domcontentloaded")
             first.wait_for_function("""() =>
                 document.querySelector("#status")?.dataset.renderStage==="first-present" &&
-                window.__urbariumWasmCache?.hits>0
+                window.__urbariumWasmCache?.hits>0 &&
+                /^urbarium-viewer-[0-9a-f]+_bg[.]wasm$/.test(
+                    window.__urbariumWasmCache?.file||"")
             """,timeout=90000)
-            assert first.evaluate("() => window.__urbariumWasmCache?.lastEvent")=="hit"
+            cache_result=first.evaluate("""() => ({
+                event:window.__urbariumWasmCache?.lastEvent,
+                file:window.__urbariumWasmCache?.file,
+                hits:window.__urbariumWasmCache?.hits
+            })""")
+            assert cache_result["event"]=="hit" and cache_result["hits"]>0,cache_result
             print("Cold browser: first WASM fetch cached, immediate next reload served from disk")
         finally:
             isolated.close()
