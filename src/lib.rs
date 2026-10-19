@@ -144,6 +144,15 @@ pub struct Building {
     pub parts:Vec<BuildingPart>,
 }
 
+impl Building {
+    /// Only a source-provided metric clearance establishes a road-level void.
+    /// min_floor is a storey index, and its converted meters are render-only.
+    /// Missing, non-finite and negative heights never qualify as evidence.
+    pub fn has_measured_road_clearance(&self) -> bool {
+        self.min_height_m.is_some_and(|m|m.is_finite() && m>0.6)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Provenance {
     pub name: String,
