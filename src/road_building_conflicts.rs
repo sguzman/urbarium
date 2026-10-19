@@ -448,7 +448,7 @@ mod tests {
         let mut rings=vec![vec![p(0.,0.),p(10.,0.),p(10.,10.),p(0.,10.)]];
         if hole{rings.push(vec![p(3.,3.),p(7.,3.),p(7.,7.),p(3.,7.)]);}
         Building{source_id:"building".into(),name:None,
-            height_m:Some(10.0),levels:None,
+            height_m:Some(10.0),levels:None,parts:Vec::new(),
             min_height_m:None,min_floor:None,polygons:vec![Polygon{rings}]}
     }
     #[test]
