@@ -159,7 +159,10 @@ fn cells(b:Bounds) -> impl Iterator<Item=(i32,i32)> {
 fn clipped(walk: &Mesh, roads: &[RoadTriangle],
            grid: &BTreeMap<(i32,i32),Vec<usize>>) -> Result<(Mesh,usize),String> {
     if walk.indices.len()%3!=0 {return Err("invalid pedestrian index count".into());}
-    let mut output=Mesh::default();
+    // Reuse the indexed source vertices and triangles whenever they never
+    // intersect asphalt. Only intersection fragments need new vertices.
+    // This avoids exploding normal footpath GPU memory/draw work.
+    let mut output=Mesh{vertices:walk.vertices.clone(),indices:Vec::new()};
     let mut affected=0;
     for indices in walk.indices.chunks_exact(3) {
         let original=triangle(walk,indices)?;
@@ -169,6 +172,10 @@ fn clipped(walk: &Mesh, roads: &[RoadTriangle],
             if let Some(list)=grid.get(&cell) {
                 candidates.extend(list.iter().copied());
             }
+        }
+        if candidates.is_empty(){
+            output.indices.extend_from_slice(indices);
+            continue;
         }
         let mut pieces=vec![original.to_vec()];
         for id in candidates {
@@ -184,8 +191,11 @@ fn clipped(walk: &Mesh, roads: &[RoadTriangle],
         let retained_area:f64=pieces.iter().map(|p|signed_area(p).abs()).sum();
         if signed_area(&original).abs()-retained_area>MIN_AREA_M2 {
             affected+=1;
+            for piece in pieces {emit(&piece,&mut output)?;}
+        }else{
+            // No positive-area crossing; keep original compact indexed mesh.
+            output.indices.extend_from_slice(indices);
         }
-        for piece in pieces {emit(&piece,&mut output)?;}
     }
     Ok((output,affected))
 }
