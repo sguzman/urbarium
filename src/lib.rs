@@ -21,6 +21,8 @@ pub mod chunk_mesh;
 #[cfg(feature="viewer")]
 pub mod chunk_wire;
 #[cfg(feature="viewer")]
+pub mod far_lod;
+#[cfg(feature="viewer")]
 pub mod frustum;
 
 use serde::{Deserialize, Serialize};
