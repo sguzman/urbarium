@@ -109,9 +109,18 @@ pub struct Polygon {
 pub struct Building {
     pub source_id: String,
     pub name: Option<String>,
-    /// Surveyed height only. Missing values stay None, never invented in ingestion.
+    /// Source building HEIGHT: distance between the building's bottom and roof.
+    /// Never replace it with an invented ground-to-roof altitude.
     pub height_m: Option<f64>,
     pub levels: Option<f64>,
+    /// Source clearance between local ground and the bottom of the building.
+    /// Overture min_height / OSM min_height; null means unknown, not zero.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub min_height_m: Option<f64>,
+    /// Overture min_floor / OSM building:min_level. A floor count, NOT meters.
+    /// May be used as an explicitly approximate render-only base height.
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub min_floor: Option<u32>,
     pub polygons: Vec<Polygon>,
 }
 
@@ -215,6 +224,9 @@ pub fn from_overpass(json: &str, region: Region) -> Result<City, String> {
                     height_m: tags.get("height").and_then(Value::as_str).and_then(parse_osm_height),
                     levels: tags.get("building:levels").and_then(Value::as_str)
                         .and_then(parse_positive),
+                    min_height_m: tags.get("min_height").and_then(Value::as_str).and_then(parse_osm_height),
+                    min_floor: tags.get("building:min_level").and_then(Value::as_str)
+                        .and_then(parse_positive_floor),
                     polygons: vec![Polygon { rings: vec![ring] }],
                 });
             }
@@ -368,6 +380,9 @@ fn osm_multipolygon_building(element: &Value, region: &Region) -> Option<(Buildi
         name: string_prop(tags.get("name")),
         height_m: tags.get("height").and_then(Value::as_str).and_then(parse_osm_height),
         levels: tags.get("building:levels").and_then(Value::as_str).and_then(parse_positive),
+        min_height_m: tags.get("min_height").and_then(Value::as_str).and_then(parse_osm_height),
+        min_floor: tags.get("building:min_level").and_then(Value::as_str)
+            .and_then(parse_positive_floor),
         polygons,
     }, used))
 }
@@ -448,6 +463,15 @@ fn string_prop(value: Option<&Value>) -> Option<String> {
 
 fn parse_positive(s: &str) -> Option<f64> {
     s.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0)
+}
+
+fn parse_positive_floor(s:&str)->Option<u32>{
+    s.trim().parse::<u32>().ok().filter(|&floor|floor>0)
+}
+fn positive_floor(value:Option<&Value>)->Option<u32>{
+    value.and_then(number_value)
+        .filter(|v|v.is_finite()&&*v>0.0&&v.fract()==0.0&&*v<=u32::MAX as f64)
+        .map(|v|v as u32)
 }
 
 fn parse_osm_height(raw: &str) -> Option<f64> {
@@ -535,11 +559,18 @@ pub fn buildings_from_geojson(
         });
         let levels = prop("num_floors").or_else(|| prop("building:levels"))
             .and_then(number_value).filter(|v| *v > 0.0);
+        let min_height_m=prop("min_height").or_else(||prop("MIN_HEIGHT"))
+            .and_then(number_value)
+            .filter(|v|v.is_finite()&&*v>=0.0)
+            .map(|v|match unit{HeightUnit::Meters=>v,HeightUnit::Feet=>v*0.3048});
+        let min_floor=positive_floor(prop("min_floor").or_else(||prop("building:min_level")));
         buildings.push(Building {
             source_id: format!("geojson:{id}"),
             name: prop("name").and_then(Value::as_str).map(str::to_owned),
             height_m,
             levels,
+            min_height_m,
+            min_floor,
             polygons,
         });
     }
@@ -900,6 +931,39 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].polygons[0].rings.len(), 2);
         assert!((result[0].height_m.unwrap() - 30.48).abs() < 1e-8);
+    }
+
+    #[test]
+    fn source_building_base_metadata_survives_geojson_and_city_round_trip() {
+        let input=r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","id":"raised","properties":{
+            "height":50,"min_height":12,"min_floor":2},
+            "geometry":{"type":"Polygon","coordinates":[[
+              [-118.25,34.05],[-118.249,34.05],
+              [-118.249,34.051],[-118.25,34.05]
+            ]]}},
+          {"type":"Feature","id":"ordinary","properties":{"height":10},
+            "geometry":{"type":"Polygon","coordinates":[[
+              [-118.248,34.05],[-118.247,34.05],
+              [-118.247,34.051],[-118.248,34.05]
+            ]]}}
+        ]}"#;
+        let buildings=buildings_from_geojson(input,&downtown(),HeightUnit::Feet).unwrap();
+        assert_eq!(buildings.len(),2);
+        assert_eq!(buildings[0].min_floor,None);
+        assert_eq!(buildings[0].min_height_m,None);
+        assert_eq!(buildings[1].min_floor,Some(2));
+        assert!((buildings[1].min_height_m.unwrap()-3.6576).abs()<1e-8);
+        assert!((buildings[1].height_m.unwrap()-15.24).abs()<1e-8);
+        let encoded=serde_json::to_string(&buildings).unwrap();
+        let decoded:Vec<Building>=serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded[1].min_floor,Some(2));
+        assert!((decoded[1].min_height_m.unwrap()-3.6576).abs()<1e-8);
+        let legacy=r#"{"source_id":"legacy","name":null,"height_m":10,
+            "levels":null,"polygons":[]}"#;
+        let old:Building=serde_json::from_str(legacy).unwrap();
+        assert_eq!(old.min_height_m,None);
+        assert_eq!(old.min_floor,None);
     }
 
     #[test]

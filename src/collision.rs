@@ -5,6 +5,7 @@
 
 use crate::{City, Point};
 use crate::terrain::TerrainGrid;
+use crate::geometry::HeightPolicy;
 
 #[derive(Debug)]
 struct Obstacle {
@@ -33,10 +34,13 @@ impl CollisionWorld {
             bounds: [lower.x,lower.z,upper.x,upper.z],
         };
         for building in &city.buildings {
-            let height = building.height_m
-                .or_else(|| building.levels.map(|levels| levels*3.1))
-                .unwrap_or(9.0);
-            if !height.is_finite() || height <= 0.0 { continue; }
+            let policy=HeightPolicy::default();
+            let height=building.height_m
+                .or_else(||building.levels.map(|n|n*policy.meters_per_level))
+                .unwrap_or(policy.fallback_m);
+            let clearance=policy.base_for(building);
+            if !height.is_finite()||height<=0.0||
+                !clearance.is_finite()||clearance<0.0 {continue;}
             for polygon in &building.polygons {
                 if polygon.rings.is_empty() || polygon.rings[0].len()<3 { continue; }
                 let mut bbox = [f64::INFINITY,f64::INFINITY,f64::NEG_INFINITY,f64::NEG_INFINITY];
@@ -52,7 +56,7 @@ impl CollisionWorld {
                 let center_x=polygon.rings[0].iter().map(|p|p.x).sum::<f64>()/polygon.rings[0].len() as f64;
                 let center_z=polygon.rings[0].iter().map(|p|p.z).sum::<f64>()/polygon.rings[0].len() as f64;
                 let base_m=terrain.map(|grid|grid.sample(&city.region,center_x,center_z) as f64)
-                    .unwrap_or(0.0);
+                    .unwrap_or(0.0)+clearance;
                 world.obstacles.push(Obstacle {
                     rings:polygon.rings.clone(), bounds:bbox, height_m:height, base_m
                 });
@@ -73,7 +77,10 @@ impl CollisionWorld {
             return true;
         }
         self.obstacles.iter().any(|building| {
-            if eye_y > building.base_m + building.height_m + 0.3 {return false;}
+            // A suspended building is air above an entry driveway:
+            // a walking camera below its measured lower wall is unblocked.
+            if eye_y<building.base_m-0.3 ||
+               eye_y>building.base_m+building.height_m+0.3 {return false;}
             let [a,b,c,d]=building.bounds;
             if x+radius < a || x-radius > c || z+radius < b || z-radius > d {
                 return false;
@@ -167,6 +174,7 @@ mod tests {
             schema_version:1,region,provenance:vec![],streets:vec![],
             buildings:vec![Building {
                 source_id:"b".into(),name:None,height_m:Some(15.0),levels:None,
+                min_height_m:None,min_floor:None,
                 polygons:vec![Polygon {rings:vec![outer,hole]}]
             }],
         })
@@ -180,6 +188,15 @@ mod tests {
         assert!(w.blocked(3.2,5.0,1.7,0.35)); // courtyard wall
         assert!(!w.blocked(-2.0,5.0,1.7,0.35));
         assert!(!w.blocked(5.0,1.0,20.0,0.35)); // fly above roof
+    }
+    #[test]
+    fn floating_building_allows_entry_road_below_but_blocks_at_wall_elevation(){
+        let mut w=world();
+        w.obstacles[0].base_m=4.0; // same measured clearance used by source mesh
+        assert!(!w.blocked(2.0,2.0,1.7,0.35));
+        assert!(!w.blocked(3.2,5.0,1.7,0.35));
+        assert!(w.blocked(2.0,2.0,6.0,0.35));
+        assert!(!w.blocked(5.0,5.0,6.0,0.35));
     }
     #[test]
     fn swept_movement_does_not_tunnel_through_walls() {

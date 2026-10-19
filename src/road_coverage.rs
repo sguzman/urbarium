@@ -137,7 +137,7 @@ mod tests {
         // the road jump from narrowed to unnarrowed at x=300.
         city.buildings.push(Building{
             source_id:"border-wall".into(),name:None,height_m:Some(12.),
-            levels:None,polygons:vec![Polygon{rings:vec![vec![
+            levels:None,min_height_m:None,min_floor:None,polygons:vec![Polygon{rings:vec![vec![
                 Point{x:296.,z:2.},Point{x:312.,z:2.},
                 Point{x:312.,z:15.},Point{x:296.,z:15.}]]}],
         });

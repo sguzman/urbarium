@@ -43,6 +43,8 @@ pub struct Conflict {
 pub struct ConflictReport {
     pub region_id:String,
     pub buildings_checked:usize,
+    /// Source-qualified raised volumes cannot collide with surface asphalt.
+    pub raised_buildings_excluded:usize,
     pub at_grade_streets_checked:usize,
     pub conflict_pairs:usize,
     pub sum_triangle_overlap_m2:f64,
@@ -295,8 +297,10 @@ fn candidates(street:&Street,width:f64,roofs:&[Footprint])->Vec<usize>{
 /// floor-aware topology. A 0.25m2 report threshold avoids point-touch noise.
 /// This diagnostic does NOT claim that the road or footprint should be cut.
 pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
+    let grounded=|b:&&Building|HeightPolicy::default().base_for(b)<=0.6;
     let roofs:Vec<Footprint>=city.buildings.iter()
-        .map(building_roof).collect::<Result<_,_>>()?;
+        .filter(grounded).map(building_roof).collect::<Result<_,_>>()?;
+    let raised_buildings_excluded=city.buildings.len()-roofs.len();
     let clearance=ClearanceIndex::new(&city.buildings);
     let mut checked=0usize;
     let mut conflicts=Vec::new();
@@ -341,7 +345,8 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
     for area in area_m2_by_cause.values_mut(){*area=(*area*1000.0).round()/1000.0;}
     Ok(ConflictReport{
         region_id:city.region.id.clone(),
-        buildings_checked:roofs.len(),at_grade_streets_checked:checked,
+        buildings_checked:roofs.len(),raised_buildings_excluded,
+        at_grade_streets_checked:checked,
         conflict_pairs:conflicts.len(),
         sum_triangle_overlap_m2:(total*1000.0).round()/1000.0,
         by_cause,area_m2_by_cause,
@@ -371,7 +376,8 @@ mod tests {
         let mut rings=vec![vec![p(0.,0.),p(10.,0.),p(10.,10.),p(0.,10.)]];
         if hole{rings.push(vec![p(3.,3.),p(7.,3.),p(7.,7.),p(3.,7.)]);}
         Building{source_id:"building".into(),name:None,
-            height_m:Some(10.0),levels:None,polygons:vec![Polygon{rings}]}
+            height_m:Some(10.0),levels:None,
+            min_height_m:None,min_floor:None,polygons:vec![Polygon{rings}]}
     }
     #[test]
     fn crossing_carriageway_reports_real_area_not_point_contact(){
@@ -379,6 +385,26 @@ mod tests {
         let report=audit_road_buildings(&c).unwrap();
         assert_eq!(report.conflict_pairs,1);
         assert!((report.sum_triangle_overlap_m2-20.0).abs()<0.02);
+    }
+    #[test]
+    fn measured_overpass_building_no_longer_counts_as_asphalt_collision(){
+        let mut floating=building(false);
+        floating.min_height_m=Some(4.0);
+        let c=city(street(p(-5.,5.),p(15.,5.),2.0),floating);
+        let report=audit_road_buildings(&c).unwrap();
+        assert_eq!(report.raised_buildings_excluded,1);
+        assert_eq!(report.conflict_pairs,0);
+        assert_eq!(report.sum_triangle_overlap_m2,0.0);
+    }
+    #[test]
+    fn min_floor_only_is_flagged_as_an_approximate_suspended_base(){
+        let mut floating=building(false);
+        floating.min_floor=Some(2);
+        let c=city(street(p(-5.,5.),p(15.,5.),2.0),floating);
+        let report=audit_road_buildings(&c).unwrap();
+        assert_eq!(report.raised_buildings_excluded,1);
+        assert_eq!(report.conflict_pairs,0);
+        assert!(c.buildings[0].min_height_m.is_none());
     }
     #[test]
     fn distinct_path_outside_building_reports_zero(){

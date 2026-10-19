@@ -325,6 +325,7 @@ mod tests {
         let mut city=sample_city();
         city.buildings.push(crate::Building{
             source_id:"b1".into(),name:None,height_m:Some(10.0),levels:None,
+            min_height_m:None,min_floor:None,
             polygons:vec![crate::Polygon{rings:vec![vec![
                 Point{x:290.0,z:12.0},Point{x:320.0,z:12.0},
                 Point{x:320.0,z:40.0},Point{x:290.0,z:40.0},

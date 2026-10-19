@@ -23,7 +23,8 @@ INSTALL spatial; LOAD spatial;
 INSTALL httpfs; LOAD httpfs;
 SET s3_region = 'us-west-2';
 COPY (
-  SELECT id, names.primary AS name, height, level AS num_floors, geometry
+  SELECT id, names.primary AS name, height, num_floors,
+         min_height, min_floor, geometry
   FROM read_parquet(
     's3://overturemaps-us-west-2/release/$release/theme=buildings/type=building/*',
     filename=true, hive_partitioning=1

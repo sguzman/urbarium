@@ -29,6 +29,13 @@ impl HeightPolicy {
             .or_else(|| building.levels.map(|n| n * self.meters_per_level))
             .unwrap_or(self.fallback_m)
     }
+    /// Measured source clearance is authoritative; floor count is an explicitly
+    /// approximate fallback only when the metric clearance was not observed.
+    pub(crate) fn base_for(self,building:&Building)->f64 {
+        building.min_height_m.unwrap_or_else(||
+            building.min_floor.map(|floor|floor as f64*self.meters_per_level)
+            .unwrap_or(0.0))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -83,8 +90,11 @@ pub fn mesh_city(city: &City, policy: HeightPolicy) -> Result<(Mesh, MeshReport)
 pub fn mesh_building(building: &Building, policy: HeightPolicy) -> Result<Mesh, String> {
     policy.validate()?;
     let height = policy.height_for(building);
-    if !height.is_finite() || height <= 0.0 {
-        return Err(format!("{} has an invalid geometry height", building.source_id));
+    let base=policy.base_for(building);
+    let roof=base+height;
+    if !height.is_finite()||height<=0.0||!base.is_finite()||
+       base<0.0||!roof.is_finite()||roof<=base{
+        return Err(format!("{} has an invalid geometry height/base", building.source_id));
     }
     let mut mesh = Mesh::default();
     for polygon in &building.polygons {
@@ -112,10 +122,22 @@ pub fn mesh_building(building: &Building, policy: HeightPolicy) -> Result<Mesh, 
         let offset = u32::try_from(mesh.vertices.len()).map_err(|_| "mesh too large")?;
         for p in &points {
             mesh.vertices.push(Vertex {
-                position: [p.x as f32, height as f32, p.z as f32],
+                position: [p.x as f32, roof as f32, p.z as f32],
                 normal: [0.0, 1.0, 0.0],
             });
         }
+        // Suspended buildings need a physical underside for upward views.
+        // Ground-standing buildings retain their original wall and roof count.
+        let under_offset=if base>0.0 {
+            let start=u32::try_from(mesh.vertices.len()).map_err(|_|"mesh too large")?;
+            for p in &points {
+                mesh.vertices.push(Vertex{
+                    position:[p.x as f32,base as f32,p.z as f32],
+                    normal:[0.0,-1.0,0.0],
+                });
+            }
+            Some(start)
+        }else{None};
         for tri in triangles.chunks_exact(3) {
             let (a,b,c) = (points[tri[0]],points[tri[1]],points[tri[2]]);
             let signed_area = (b.x-a.x)*(c.z-a.z) - (b.z-a.z)*(c.x-a.x);
@@ -126,6 +148,9 @@ pub fn mesh_building(building: &Building, policy: HeightPolicy) -> Result<Mesh, 
                 [tri[0], tri[1], tri[2]]
             };
             mesh.indices.extend(inds.into_iter().map(|i| offset + i as u32));
+            if let Some(under)=under_offset {
+                mesh.indices.extend(inds.into_iter().rev().map(|i|under+i as u32));
+            }
         }
         for (ring_id, ring) in polygon.rings.iter().enumerate() {
             let area: f64 = ring.iter().zip(ring.iter().cycle().skip(1))
@@ -147,10 +172,10 @@ pub fn mesh_building(building: &Building, policy: HeightPolicy) -> Result<Mesh, 
                 ];
                 let v = u32::try_from(mesh.vertices.len()).map_err(|_| "mesh too large")?;
                 mesh.vertices.extend([
-                    Vertex { position: [a.x as f32, 0.0, a.z as f32], normal },
-                    Vertex { position: [b.x as f32, 0.0, b.z as f32], normal },
-                    Vertex { position: [b.x as f32, height as f32, b.z as f32], normal },
-                    Vertex { position: [a.x as f32, height as f32, a.z as f32], normal },
+                    Vertex { position: [a.x as f32, base as f32, a.z as f32], normal },
+                    Vertex { position: [b.x as f32, base as f32, b.z as f32], normal },
+                    Vertex { position: [b.x as f32, roof as f32, b.z as f32], normal },
+                    Vertex { position: [a.x as f32, roof as f32, a.z as f32], normal },
                 ]);
                 if wall_sign > 0.0 {
                     mesh.indices.extend([v, v+2, v+1, v, v+3, v+2]);
@@ -195,7 +220,7 @@ mod tests {
     fn square(name: &str, rings: Vec<Vec<Point>>, height: Option<f64>) -> Building {
         Building {
             source_id:name.into(), name:None, height_m:height, levels:None,
-            polygons:vec![Polygon { rings }]
+            min_height_m:None,min_floor:None,polygons:vec![Polygon { rings }]
         }
     }
     fn ring(points: &[[f64;2]]) -> Vec<Point> {
@@ -212,6 +237,45 @@ mod tests {
         assert_eq!(mesh.indices.len() / 3, 10); // two roof + eight wall triangles
         assert!(mesh.vertices.iter().take(4).all(|v| v.normal == [0.,1.,0.]));
         assert!(mesh.indices.iter().all(|&i| (i as usize) < mesh.vertices.len()));
+    }
+
+    #[test]
+    fn measured_building_clearance_lifts_walls_and_roof_without_ground_walls(){
+        let mut b=square("over-driveway",vec![ring(&[
+            [0.,0.],[10.,0.],[10.,10.],[0.,10.]])],Some(9.0));
+        b.min_height_m=Some(4.0);
+        b.min_floor=Some(3); // measured meters win over the floor proxy
+        let mesh=mesh_building(&b,HeightPolicy::default()).unwrap();
+        let upper:Vec<_>=mesh.vertices.iter()
+            .filter(|v|v.normal[1]>0.9).collect();
+        let walls:Vec<_>=mesh.vertices.iter()
+            .filter(|v|v.normal[1].abs()<0.1).collect();
+        assert!(upper.iter().all(|v|(v.position[1]-13.0).abs()<0.0001));
+        let underside:Vec<_>=mesh.vertices.iter().filter(|v|v.normal[1]<-0.9).collect();
+        assert_eq!(underside.len(),4);
+        assert!(underside.iter().all(|v|(v.position[1]-4.0).abs()<0.0001));
+        assert!(walls.iter().all(|v|
+            (v.position[1]-4.0).abs()<0.0001 ||
+            (v.position[1]-13.0).abs()<0.0001));
+        assert_eq!(mesh.indices.len()/3,12);
+    }
+    #[test]
+    fn min_floor_fallback_is_only_a_render_time_height_assumption(){
+        let mut b=square("floor-proxy",vec![ring(&[
+            [0.,0.],[10.,0.],[10.,10.],[0.,10.]])],Some(8.0));
+        b.min_floor=Some(2);
+        let mesh=mesh_building(&b,HeightPolicy::default()).unwrap();
+        assert!((mesh.vertices[0].position[1]-14.2).abs()<0.0002);
+        assert_eq!(b.min_height_m,None);
+        assert_eq!(b.min_floor,Some(2));
+    }
+    #[test]
+    fn no_source_clearance_retains_existing_ground_level_mesh(){
+        let b=square("old",vec![ring(&[
+            [0.,0.],[10.,0.],[10.,10.],[0.,10.]])],Some(8.0));
+        let mesh=mesh_building(&b,HeightPolicy::default()).unwrap();
+        assert!(mesh.vertices.iter().any(|v|v.normal[1]==0.0 && v.position[1]==0.0));
+        assert!(mesh.vertices.iter().any(|v|v.normal[1]==0.0 && v.position[1]==8.0));
     }
 
     #[test]

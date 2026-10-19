@@ -13,7 +13,7 @@
 //! to repair an ambiguous covered/internal road: preserve it for audit.
 
 use crate::{Building,Point,Street};
-use crate::geometry::Mesh;
+use crate::geometry::{Mesh,HeightPolicy};
 
 const WALL_MARGIN_M:f64=0.12;
 const MIN_EDGE_M:f64=0.025;
@@ -87,6 +87,10 @@ impl ClearanceIndex {
     pub fn new(buildings:&[Building])->Self {
         let mut walls=Vec::new();
         for building in buildings {
+            // A raised volume does not have solid walls at pavement level.
+            // Do not narrow an under-building service road against its
+            // roofprint; unknown base elevations remain conservatively solid.
+            if HeightPolicy::default().base_for(building)>0.6 {continue;}
             for polygon in &building.polygons {
                 let Some(outer)=polygon.rings.first() else{continue;};
                 if outer.len()<3 || polygon.rings.iter().flatten()
@@ -176,7 +180,8 @@ mod tests {
     fn building(outer:Vec<Point>,holes:Vec<Vec<Point>>)->Building{
         let mut rings=vec![outer];rings.extend(holes);
         Building{source_id:"test".into(),name:None,height_m:Some(9.),
-            levels:None,polygons:vec![Polygon{rings}]}
+            levels:None,min_height_m:None,min_floor:None,
+            polygons:vec![Polygon{rings}]}
     }
     fn service(coords:&[(f64,f64)])->Street{
         Street{source_id:"street".into(),name:None,kind:"service".into(),
@@ -200,6 +205,17 @@ mod tests {
                 "opposite street edge is not affected by a north-side building");
         }
         assert_eq!(mesh.indices,original.indices);
+    }
+    #[test]
+    fn raised_building_roofprint_does_not_narrow_underpass_road(){
+        let mut wall=building(vec![p(-10.,0.),p(10.,0.),p(10.,10.),p(-10.,10.)],vec![]);
+        wall.min_height_m=Some(5.0);
+        let index=ClearanceIndex::new(&[wall]);
+        let street=service(&[(-8.,-2.),(8.,-2.)]);
+        let mut strip=ribbon(&street.path,5.5,0.24).unwrap().unwrap();
+        let before=strip.vertices.iter().map(|v|v.position).collect::<Vec<_>>();
+        index.constrain(&street,5.5,&mut strip);
+        assert_eq!(strip.vertices.iter().map(|v|v.position).collect::<Vec<_>>(),before);
     }
     #[test]
     fn measured_width_is_preserved_even_with_nearby_walls(){

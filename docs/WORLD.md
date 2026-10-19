@@ -13,6 +13,25 @@ How source geography is transformed into sections, coordinate frames, DEM-aware 
 - Roads are tagged centerlines, not surveyed curb edges or navigable pavement meshes. Source node IDs preserve future junction connectivity, and selected tags retain sidewalk, lane, bridge/tunnel and access information.
 - Buildings are polygon/multipolygon footprints with holes supported in GeoJSON.
 - Height is optional and represents a known reported measurement; **missing height is not silently guessed**.
+- Import measured `min_height` as bottom clearance above ground, and optional
+  `min_floor` as an integer source floor index, not metric height. A missing
+  `min_height` stays `None`; only `HeightPolicy.meters_per_level` may use
+  `min_floor` as an explicitly **render-only** approximate clearance.
+  Source `height` is the vertical extent **from bottom to roof**, so raised
+  roofs render at `min_height + height` rather than merely `height`.
+- Raised building volume meshes have side walls starting at the source base
+  and a downward-facing underside. They no longer add fictitious solid walls
+  through a ground-level driveway. Walking collisions and road-clearance
+  envelopes follow the same source base. Ground-based buildings still extend
+  foundations below terrain to prevent slope clipping.
+- If bottom clearance is source-qualified and more than 0.6 m, the planar
+  overlap audit does **not** misclassify its roofprint as an asphalt collision;
+  it records excluded raised buildings. Unknown-base buildings remain
+  conservative, and 2D overlap without vertical data is not resolved by
+  deleting roads or inventing elevations. Building parts are not yet
+  independently reconstructed.
+- The Downtown Overture extractor must use the actual `num_floors` column:
+  `level` means visual ordering, **not** number of floors.
 - Mesh generation, terrain, collision, traffic and rendering belong in later stages, using this data as input.
 - The data layer retains source IDs and attribution so future updates can reconcile features.
 

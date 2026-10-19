@@ -198,8 +198,13 @@ impl TerrainGrid {
                     }
                 }
             }
+            let suspended=policy.base_for(building)>0.0;
             for vertex in &mut mesh.vertices {
-                if vertex.position[1].abs()<1e-4 && vertex.normal[1]==0.0 {
+                if !suspended && vertex.position[1].abs()<1e-4 &&
+                    vertex.normal[1]==0.0 {
+                    // Only truly ground-based buildings get buried bases.
+                    // Extending floating walls downward fabricates an
+                    // obstruction through the source-defined driveway.
                     vertex.position[1]=low-0.6;
                 }else{
                     vertex.position[1]+=high;
@@ -297,12 +302,38 @@ mod tests {
         assert!(g.validate(&region()).is_err());
     }
     #[test]
+    fn measured_raised_building_keeps_its_base_above_entire_terrain() {
+        let r=region();
+        let polygon=Polygon{rings:vec![vec![
+            Point{x:-100.0,z:-100.0},Point{x:100.0,z:-100.0},
+            Point{x:100.0,z:100.0},Point{x:-100.0,z:100.0}]]};
+        let building=Building{
+            source_id:"bridge-over-road".into(),name:None,height_m:Some(8.0),
+            levels:None,min_height_m:Some(4.0),min_floor:None,
+            polygons:vec![polygon],
+        };
+        let city=City{schema_version:1,region:r.clone(),provenance:vec![],
+            streets:vec![],buildings:vec![building]};
+        let grid=grid();
+        let (mesh,report)=grid.mesh_buildings(&city,HeightPolicy::default()).unwrap();
+        assert_eq!(report.buildings_skipped,0);
+        let lowest=mesh.vertices.iter().map(|v|v.position[1])
+            .fold(f32::INFINITY,f32::min);
+        let highest_terrain=city.buildings[0].polygons[0].rings[0].iter()
+            .map(|p|grid.sample_surface(&r,p.x,p.z))
+            .fold(f32::NEG_INFINITY,f32::max);
+        assert!(lowest>=highest_terrain+3.99,
+            "source metric clearance should never be filled with fake walls");
+        assert!(mesh.vertices.iter().any(|v|v.normal[1]<-0.9));
+    }
+    #[test]
     fn building_roof_keeps_one_foundation_elevation() {
         let r=region();
         let city=City {
             schema_version:1,region:r.clone(),provenance:vec![],streets:vec![],
             buildings:vec![Building {
                 source_id:"synthetic".into(),name:None,height_m:Some(12.0),levels:None,
+                min_height_m:None,min_floor:None,
                 polygons:vec![Polygon { rings:vec![vec![
                     Point{x:-100.0,z:-100.0},Point{x:100.0,z:-100.0},
                     Point{x:100.0,z:100.0},Point{x:-100.0,z:100.0}
