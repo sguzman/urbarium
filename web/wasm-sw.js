@@ -48,21 +48,33 @@ self.addEventListener("fetch",event=>{
   const req=event.request;
   const clientId=event.clientId;
   event.respondWith((async()=>{
+    // CacheStorage can be exceptionally slow or stuck on a stressed
+    // multi-tab browser. Do not let its lookup gate the entire WASM loader.
+    // A bounded cache lookup preserves fast hits and falls back to normal
+    // HTTP-cache-aware network fetching instead of waiting indefinitely.
     let cache=null;
+    let slowCache=false;
     try {
-      cache=await caches.open(CACHE_NAME);
-      const saved=await cache.match(req);
-      if(saved){
+      const lookup=(async()=>{
+        const opened=await caches.open(CACHE_NAME);
+        return {cache:opened,saved:await opened.match(req)};
+      })();
+      const timeout=new Promise(resolve=>
+        setTimeout(()=>resolve({cache:null,saved:null,slow:true}),1500));
+      const result=await Promise.race([lookup,timeout]);
+      slowCache=!!result.slow;
+      cache=result.cache;
+      if(result.saved){
         event.waitUntil(tell(clientId,"hit",req.url));
-        return saved;
+        return result.saved;
       }
     }catch(error){
-      // A disabled/full browser cache must never prevent a working viewer.
       console.warn("Urbarium WASM cache unavailable",error);
     }
-    // Serve network bytes immediately. Disk caching is performed as an
-    // extension of the fetch event, not on the viewer's critical path.
+    // No valid disk hit within 1.5 seconds? Fetch the actual current binary.
+    // This bypasses a stalled service-worker lookup, not the usual HTTP cache.
     const response=await fetch(req);
+    if(slowCache)event.waitUntil(tell(clientId,"slow-cache-bypass",req.url));
     if(response.ok && response.type==="basic" && cache){
       const copy=response.clone();
       event.waitUntil((async()=>{
