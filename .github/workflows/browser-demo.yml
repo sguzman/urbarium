@@ -29,6 +29,7 @@ on:
       - src/surface_clip.rs
       - src/pedestrian_clip.rs
       - src/streaming.rs
+      - src/far_lod.rs
       - src/chunk_mesh.rs
       - scripts/fetch-terrain.py
       - src/gltf.rs
