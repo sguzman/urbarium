@@ -81,7 +81,20 @@ with sync_playwright() as p:
                     Number(s.dataset.meshWorkerChunks)===
                     Number(s.dataset.chunksRegionTotal);
             }""",timeout=180000)
-        page.wait_for_timeout(400)  # flush trailing longtask observations
+        # Full chunk residency is a CPU/upload milestone; it does NOT
+        # guarantee the final GPU scene was presented on screen. On CI's
+        # software WebGL2 backend, a frame can take >200ms, so a fixed 400ms
+        # sleep occasionally screenshots two DIFFERENT presentation stages.
+        # Require 12 completed render frames after all chunks are resident.
+        completed_frame=int(page.locator("#status").get_attribute(
+            "data-frame-count") or "0")
+        page.wait_for_function("""(start) => {
+            const s=document.querySelector("#status");
+            return s?.dataset.sceneDetail==="complete" &&
+                Number(s.dataset.chunksResident)===
+                Number(s.dataset.chunksRegionTotal) &&
+                Number(s.dataset.frameCount)>=start+12;
+        }""",arg=completed_frame,timeout=45000)
         raw=page.evaluate("""() => {
             const r=window.__urbariumBench;
             const s=document.querySelector("#status");
@@ -92,7 +105,11 @@ with sync_playwright() as p:
                 workerCache:window.__urbariumWorkerCache?.kind||"disabled",
                 workerFormat:s.dataset.meshWorkerFormat||"local",
                 workerBytes:Number(s.dataset.meshWorkerBytes||0),
-                workerMessages:Number(s.dataset.meshWorkerMessages||0)};
+                workerMessages:Number(s.dataset.meshWorkerMessages||0),
+                cameraPose:s.dataset.cameraPose||"",
+                gpuBackend:s.dataset.gpuBackend||"",
+                sceneDetail:s.dataset.sceneDetail||"",
+                renderFrame:Number(s.dataset.frameCount||0)};
         }""")
         assert raw["firstFrameAt"] is not None and raw["completeAt"] is not None
         interval=raw["completeAt"]-raw["firstFrameAt"]
@@ -112,7 +129,10 @@ with sync_playwright() as p:
             "workerCache":raw["workerCache"],
             "workerFormat":raw["workerFormat"],
             "workerTransferredBytes":raw["workerBytes"],
-            "workerMessages":raw["workerMessages"]
+            "workerMessages":raw["workerMessages"],
+            "cameraPose":raw["cameraPose"],
+            "gpuBackend":raw["gpuBackend"],
+            "renderFrame":raw["renderFrame"]
         }
         if mode=="worker":
             assert result["workerFormat"]=="UBM1-transfer",result
@@ -127,11 +147,25 @@ with sync_playwright() as p:
     run("worker","worker-warmup")
     local,local_img=run("local","local-measured")
     worker,worker_img=run("worker","worker-measured")
+    # Preserve the actual pair on CI failure. Previously a bad comparison
+    # left only a numeric assertion, not enough to distinguish camera drift,
+    # missed final presents or genuine worker mesh differences.
+    Path("/tmp/urbarium-benchmark-local.png").write_bytes(local_img)
+    Path("/tmp/urbarium-benchmark-worker.png").write_bytes(worker_img)
     with Image.open(BytesIO(local_img)) as a,Image.open(BytesIO(worker_img)) as b:
         delta=ImageChops.difference(a.convert("RGB"),b.convert("RGB"))
         diff=delta.convert("L").point(lambda v:255 if v>24 else 0)
         fraction=diff.histogram()[255]/(a.width*a.height)
-    assert fraction<0.005,("Worker changed visible geometry",fraction)
+        diff.save("/tmp/urbarium-benchmark-diff.png")
+    local_pose=[float(v) for v in local["cameraPose"].split(",")]
+    worker_pose=[float(v) for v in worker["cameraPose"].split(",")]
+    assert len(local_pose)==len(worker_pose)==5,(local,worker)
+    assert max(abs(a-b) for a,b in zip(local_pose,worker_pose))<0.005,(
+        "Local/worker screenshots used different camera poses",
+        local_pose,worker_pose)
+    assert local["gpuBackend"]==worker["gpuBackend"]== "Gl",(
+        "Screenshot renderer mismatch",local,worker)
+    assert fraction<0.005,("Worker changed visible geometry",fraction,local,worker)
     assert local["resident"]==worker["resident"]==30
     output={
         "renderer":"Chromium software WebGL2",
