@@ -26,6 +26,19 @@ pub enum ConflictCause {
     /// miter intrudes into the building wall.
     InferredWidthEnvelope,
 }
+/// Topology of the source centerline relative to the solid roofprint.
+#[derive(Debug,Clone,Copy,Serialize,PartialEq,Eq)]
+#[serde(rename_all="snake_case")]
+pub enum SourceLinePattern {
+    /// The source line begins and ends outside but penetrates in between.
+    ThroughFootprint,
+    /// Source line comes from outdoors and terminates within this footprint.
+    EndsInsideFootprint,
+    /// Source line begins inside and exits the footprint.
+    StartsInsideFootprint,
+    /// Both source endpoints lie in the solid footprint.
+    BothEndsInsideFootprint,
+}
 /// A source building part intersecting the road footprint. Part volumes are
 /// not yet substituted for the parent geometry; evidence must be reviewed
 /// before treating apparent underpasses as open spaces.
@@ -43,11 +56,17 @@ pub struct PartEvidence {
 pub struct Conflict {
     pub building_id:String,
     pub street_id:String,
+    pub street_name:Option<String>,
     pub road_kind:String,
     pub overlap_m2:f64,
     pub cause:ConflictCause,
     pub centerline_inside_m:f64,
     pub centerline_length_m:f64,
+    /// Interpret source line endpoints strictly inside the roofprint; this
+    /// distinguishes terminal internal service roads from through crossings.
+    /// Neither pattern proves a surveyed open passage.
+    #[serde(skip_serializing_if="Option::is_none")]
+    pub source_line_pattern:Option<SourceLinePattern>,
     /// WGS84 longitude, latitude of the affected source-line position;
     /// never a made-up building address or manually inferred grade.
     pub focus_lonlat:[f64;2],
@@ -286,6 +305,17 @@ fn source_line_length(street:&Street)->f64 {
     street.path.windows(2)
         .map(|s|(s[1].x-s[0].x).hypot(s[1].z-s[0].z)).sum()
 }
+fn source_line_pattern(street:&Street,roof:&Footprint)
+    ->Option<SourceLinePattern> {
+    let start=in_solid_interior(*street.path.first()?,roof);
+    let end=in_solid_interior(*street.path.last()?,roof);
+    Some(match (start,end){
+        (false,false)=>SourceLinePattern::ThroughFootprint,
+        (false,true)=>SourceLinePattern::EndsInsideFootprint,
+        (true,false)=>SourceLinePattern::StartsInsideFootprint,
+        (true,true)=>SourceLinePattern::BothEndsInsideFootprint,
+    })
+}
 fn classify_overlap(street:&Street,centerline_m:f64)->ConflictCause {
     if centerline_m>0.05 {ConflictCause::CenterlineInsideFootprint}
     else if street.tags.contains_key("width")||street.tags.contains_key("lanes"){
@@ -403,10 +433,13 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
             conflicts.push(Conflict{
                 building_id:roofs[i].source_id.clone(),
                 street_id:street.source_id.clone(),
+                street_name:street.name.clone(),
                 road_kind:street.kind.clone(),
                 overlap_m2:(area*1000.0).round()/1000.0,
                 cause,centerline_inside_m:(inside_m*1000.0).round()/1000.0,
                 centerline_length_m:(source_line_length(street)*1000.0).round()/1000.0,
+                source_line_pattern:(inside_m>0.05).then(||
+                    source_line_pattern(street,&roofs[i])).flatten(),
                 focus_lonlat:city.region.unproject(focus),
                 source_part_evidence:part_evidence,
             });
@@ -546,6 +579,27 @@ mod tests {
     fn courtyard_hole_never_becomes_fake_collision(){
         let c=city(street(p(3.5,5.),p(6.5,5.),1.0),building(true));
         assert_eq!(audit_road_buildings(&c).unwrap().conflict_pairs,0);
+    }
+    #[test]
+    fn source_line_pattern_distinguishes_terminal_driveway_from_through_street(){
+        let roof=building_roof(&building(false)).unwrap();
+        let through=street(p(-5.,5.),p(15.,5.),2.0);
+        assert_eq!(source_line_pattern(&through,&roof),
+            Some(SourceLinePattern::ThroughFootprint));
+        let end=street(p(-5.,5.),p(5.,5.),2.0);
+        assert_eq!(source_line_pattern(&end,&roof),
+            Some(SourceLinePattern::EndsInsideFootprint));
+        let start=street(p(5.,5.),p(15.,5.),2.0);
+        assert_eq!(source_line_pattern(&start,&roof),
+            Some(SourceLinePattern::StartsInsideFootprint));
+        let interior=street(p(2.,5.),p(8.,5.),2.0);
+        assert_eq!(source_line_pattern(&interior,&roof),
+            Some(SourceLinePattern::BothEndsInsideFootprint));
+        // A courtyard void is not part of the solid roofprint.
+        let courtyard=building_roof(&building(true)).unwrap();
+        assert_eq!(source_line_pattern(
+            &street(p(4.,5.),p(6.,5.),2.0),&courtyard),
+            Some(SourceLinePattern::ThroughFootprint));
     }
     #[test]
     fn classifies_real_centerline_penetration_not_merely_a_wide_road(){
