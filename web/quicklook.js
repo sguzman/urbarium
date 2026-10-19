@@ -72,24 +72,49 @@
     const camera=chooseCamera(city);
     const yaw=camera.yaw;
     const cs=Math.cos(yaw),sn=Math.sin(yaw);
-    const scale=Math.min(1.25,Math.max(.48,Math.min(w/820,h/610)));
-    // The viewpoint is centered on the real spawn area, but elevated for
-    // legibility; full Rust camera pose arrives with the real first frame.
-    const project=(p,y=0)=>{
+    // The real Rust viewer starts looking horizontally from a 1.7 m walking
+    // eye at 68° vertical FOV. Match that perspective. The old orthographic
+    // elevated sketch made startup look like a flyover followed by a teleport.
+    const eye=1.7,near=2.0;
+    const focal=h/(2*Math.tan(68*Math.PI/360));
+    const view=(p,y=0)=>{
       const dx=p.x-camera.x,dz=p.z-camera.z;
-      const right=dx*cs-dz*sn;
-      const forward=dx*sn+dz*cs;
-      return [w*.50+right*scale,h*.66-forward*scale*.57-y*scale*1.55];
+      return {right:dx*cs-dz*sn,depth:dx*sn+dz*cs,height:y-eye};
     };
-    const path=(points,y=0)=>{
-      if(points.length<2)return false;
-      const [x,z]=project(points[0],y);
-      context.beginPath();context.moveTo(x,z);
-      for(let i=1;i<points.length;i++){
-        const [px,pz]=project(points[i],y);
-        context.lineTo(px,pz);
+    const screen=v=>[w*.5+v.right*focal/v.depth,h*.5-v.height*focal/v.depth];
+    const clipNear=(a,b)=>{
+      if(a.depth<near && b.depth<near)return null;
+      if(a.depth<near||b.depth<near){
+        const t=(near-a.depth)/(b.depth-a.depth);
+        const cut={right:a.right+(b.right-a.right)*t,
+          depth:near,height:a.height+(b.height-a.height)*t};
+        if(a.depth<near)a=cut;else b=cut;
       }
-      return true;
+      return [a,b];
+    };
+    const clipPolygon=vertices=>{
+      const out=[];
+      if(!vertices.length)return out;
+      let previous=vertices[vertices.length-1];
+      for(const current of vertices){
+        const prevIn=previous.depth>=near,currIn=current.depth>=near;
+        if(prevIn!==currIn){
+          const t=(near-previous.depth)/(current.depth-previous.depth);
+          out.push({right:previous.right+(current.right-previous.right)*t,
+            depth:near,height:previous.height+(current.height-previous.height)*t});
+        }
+        if(currIn)out.push(current);
+        previous=current;
+      }
+      return out;
+    };
+    const face=(vertices,color)=>{
+      const clipped=clipPolygon(vertices);
+      if(clipped.length<3)return;
+      context.fillStyle=color;
+      context.beginPath();context.moveTo(...screen(clipped[0]));
+      for(const point of clipped.slice(1))context.lineTo(...screen(point));
+      context.closePath();context.fill();
     };
     const local=p=>Number.isFinite(p?.x)&&Number.isFinite(p?.z) &&
       distance(p,camera)<530;
@@ -102,15 +127,21 @@
     }
     context.lineCap="round";context.lineJoin="round";
     const paintRoad=(s)=>{
-      if(!path(s.points,0.04))return;
       const roads={motorway:15,trunk:12,primary:11,secondary:9,
         tertiary:8,residential:7,unclassified:6,service:4,
         living_street:5,pedestrian:3,footway:2,path:1.6,steps:1.4};
       const wide=roads[s.kind]||2;
-      context.lineWidth=Math.max(1.2,wide*scale);
       context.strokeStyle=["footway","path","steps","pedestrian"].includes(s.kind)
         ? "#a7a597" : "#343b3e";
-      context.stroke();
+      for(let i=1;i<s.points.length;i++){
+        const segment=clipNear(view(s.points[i-1],0.04),view(s.points[i],0.04));
+        if(!segment)continue;
+        const [a,b]=segment;
+        context.lineWidth=Math.min(110,Math.max(1.2,
+          wide*focal/Math.max(near,(a.depth+b.depth)*.5)));
+        context.beginPath();context.moveTo(...screen(a));
+        context.lineTo(...screen(b));context.stroke();
+      }
     };
     for(const road of clipped){
       if(["footway","path","steps","pedestrian"].includes(road.kind))paintRoad(road);
@@ -137,20 +168,14 @@
     }
     entries.sort((a,b)=>b.depth-a.depth);
     for(const {ring,height} of entries){
-      const hgt=height;
+      if(!ring.some(p=>view(p).depth>near))continue;
       for(let i=0;i<ring.length;i++){
         const next=ring[(i+1)%ring.length];
-        const a=project(ring[i]),b=project(next);
-        const c=project(next,hgt),d=project(ring[i],hgt);
-        context.fillStyle=i%2?"#81908e":"#748281";
-        context.beginPath();context.moveTo(...a);context.lineTo(...b);
-        context.lineTo(...c);context.lineTo(...d);context.closePath();context.fill();
+        face([view(ring[i]),view(next),
+          view(next,height),view(ring[i],height)],
+          i%2?"#81908e":"#748281");
       }
-      const cap=ring.map(p=>project(p,hgt));
-      context.fillStyle="#a4aca8";
-      context.beginPath();context.moveTo(...cap[0]);
-      for(const p of cap.slice(1))context.lineTo(...p);
-      context.closePath();context.fill();
+      face(ring.map(p=>view(p,height)),"#a4aca8");
       buildings++;
     }
     const x=16,y=h-32;
@@ -159,6 +184,7 @@
     context.fillStyle="#c4dedb";
     context.font="12px system-ui,sans-serif";
     context.fillText("Nearby real streets + buildings · simplified early view",x,y+6);
+    status.dataset.bootstrapPreviewCamera="street";
     status.dataset.bootstrapPreview="ready";
     status.dataset.bootstrapPreviewStreets=String(clipped.length);
     status.dataset.bootstrapPreviewBuildings=String(buildings);
