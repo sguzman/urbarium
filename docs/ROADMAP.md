@@ -102,8 +102,10 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 - [x] Report actual per-asset CacheStorage hits/network downloads and startup phases rather than claiming the cache is ready before checking it.
 - [ ] Diagnose/reproduce user hardware-specific browser crashes and CPU/GPU stalls with retained telemetry, not just successful CI screenshots.
 - [x] Replace browser busy Poll loop with Wait-scheduled redraw, pause hidden-tab drawing, bound HiDPI framebuffer size, and resume drawing on visibility changes; verify browser soak.
-- [x] Retire destructive pedestrian triangle masking so walking surfaces
-      remain continuous under asphalt and beneath surveyed-grade bridges.
+- [x] Enforce geometric asphalt priority: subtract visible at-grade road
+      footprints from pedestrian and stair meshes without deleting their
+      surviving outside-road fragments; never carve paths under hidden
+      freeways or source-qualified raised bridges.
 - [x] Provide source-tagged elevated road inspection camera jump and minimap visual differentiation.
 - [ ] Profile a real-user Edge/Hyprland GPU context crash: this CI runner does not reproduce intermittent hardware failures.
 - [ ] Add surveyed-grade street surfaces, map coverage beyond the pilot, and optional location jumping.
@@ -112,7 +114,32 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 
 ## P3 — Regional expansion
 
+**Direction (October 19, 2026):** Grow outward from the established Downtown
+LA / Little Tokyo pilot, while allowing separately requested destination
+regions without requiring every intervening block to render. Destination
+targets will be selected by the user later; do not assume them. Prioritize
+documented, source-backed geographic acquisition over speculative new
+procedural physical-world features. Region addition must preserve the
+previously validated asphalt-first pedestrian rules, source ownership,
+terrain seams and browser performance. Geographic regions are not zoning
+overlays. Zoning and the broader "information world" remain deferred.
+
 - [ ] Expand from Downtown LA to neighborhood-sized chunks across Los Angeles County.
+- [ ] Support user-selected destination regions without requiring a contiguous
+      rendered corridor; maintain consistent independent source/provenance
+      manifests, navigation and joined-world coordinate transforms.
+- [ ] Inventory and evaluate available *physical-world* source layers for
+      each region (roads, buildings and building parts, higher-resolution
+      terrain, hydrography, vegetation or other source-backed features).
+      Record coverage, coordinate system, provenance, licenses and gaps
+      before implementing a new renderer.
+- [ ] Add **minimal water volumes** only when a selected geographic region
+      contains relevant sourced water geometry: static translucent blue
+      volumes with a bounded depth, walk-through collision behavior, and no
+      swimming simulation, waves, fluid physics or elaborate shader effects.
+      Source water boundaries rather than invent them. Keep implementation
+      small and verify with focused synthetic/unit and one browser smoke
+      check; do not make water a prolonged separate QA project.
 - [ ] Add Orange, Ventura, Riverside and San Bernardino counties with consistent tile format.
 - [ ] Quality dashboards for completeness, stale features, LOD budget and gap analysis.
 - [ ] Deploy streamed, offline-cacheable regional datasets; keep original-source attribution visible.
