@@ -1129,6 +1129,27 @@ with sync_playwright() as p:
             assert int(page.locator("#status").get_attribute("data-chunks-evicted"))==0
             assert not errors,errors
             print("WebGL2 skyline: complete primary-city chunk set persists across overview")
+            # Live low-memory experiment: the GPU must evict detailed geometry
+            # but keep visible, compact building masses for the missing cells.
+            page.locator("#hud-tab-advanced").click()
+            detail=page.locator("#detail-cell-limit")
+            assert detail.is_enabled()
+            detail.select_option("6")
+            page.wait_for_function("""() => {
+                const s=document.querySelector("#status");
+                return Number(s?.dataset.detailChunkLimit)===6 &&
+                    Number(s?.dataset.chunksResident)===6 &&
+                    Number(s?.dataset.farMassingCells)>0 &&
+                    Number(s?.dataset.farMassingBytes)>0 &&
+                    s?.dataset.gpuDeviceLost!=="true";
+            }""",timeout=25000)
+            assert page.locator("#detail-cell-note").is_visible()
+            assert "distant silhouettes" in page.locator("#detail-cell-note").inner_text()
+            page.locator("#hud-tab-explore").click()
+            page.wait_for_timeout(600)
+            assert int(page.locator("#status").get_attribute("data-frame-count"))>0
+            print("Live 6-cell detail budget retains distant source-backed skyline",
+                  page.locator("#status").get_attribute("data-far-massing-cells"))
 
         # SW must cache the exact fingerprinted WASM, then serve the same
         # build from CacheStorage on a subsequent navigation. It may not
