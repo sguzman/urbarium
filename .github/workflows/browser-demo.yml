@@ -337,7 +337,7 @@ jobs:
           grep -q 'urbarium-geography-downtown-la-v1' /tmp/urbarium-cache-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
             "${PAGE_URL%/}/wasm-sw.js" -o /tmp/urbarium-wasm-sw-live.js
-          grep -q 'urbarium-wasm-binaries-v1' /tmp/urbarium-wasm-sw-live.js
+          grep -q 'NO fetch event listener' /tmp/urbarium-wasm-sw-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error "${PAGE_URL%/}/stats.js" -o /tmp/urbarium-stats-live.js
           grep -q 'gpu-mesh-bytes' /tmp/urbarium-stats-live.js
           curl --fail --retry 5 --retry-delay 3 --location --silent --show-error \
