@@ -28,6 +28,7 @@ with sync_playwright() as playwright:
             streets:Number(s.dataset.bootstrapPreviewStreets),
             buildings:Number(s.dataset.bootstrapPreviewBuildings),
             delayMs:Number(s.dataset.bootstrapPreviewMs),
+            camera:s.dataset.bootstrapPreviewCamera,
             visible:!!c?.isConnected&&getComputedStyle(c).display!=="none",
             firstFrame:s.dataset.renderStage==="first-present",
             firstLabel:c.getAttribute("aria-label")
@@ -38,6 +39,8 @@ with sync_playwright() as playwright:
     # instant is proof of the intended independent startup, not a failure.
     assert info["width"]>=600 and info["height"]>=400,info
     assert info["visible"] and not info["firstFrame"],info
+    assert info["camera"]=="street",(
+        "pre-WASM first paint must use walking perspective, never a bird's-eye map",info)
     assert info["streets"]>0 and info["buildings"]>0,info
     assert info["delayMs"]<30000,info
     assert "Simplified source-backed" in info["firstLabel"],info
