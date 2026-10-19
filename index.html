@@ -27,7 +27,13 @@
       }
       // Complete Downtown + Little Tokyo is the default; world=0 for standalone.
        document.documentElement.dataset.worldPreview=params.get("world")==="0"?"false":"true";
-      document.documentElement.dataset.progressivePreview=params.get("progressive")==="0"?"false":"true";
+      // The joined city must never block its first frame on the complete
+      // geometry build. Preserve progressive=0 only for standalone or the
+      // explicitly experimental bridge preview used for diagnostics.
+      const joinedDefault=params.get("world")!=="0" &&
+        params.get("bridges")!=="1";
+      document.documentElement.dataset.progressivePreview=
+        (joinedDefault || params.get("progressive")!=="0")?"true":"false";
       // Camera-local mesh residency is the progressive default in single-
       // section mode. stream=0 restores the old full-city enrichment.
       document.documentElement.dataset.chunkStreaming=params.get("stream")==="0"?"false":"true";
@@ -925,8 +931,17 @@
       const progressivePreview=document.documentElement.dataset.progressivePreview==="true";
       const progressiveToggle=document.getElementById("progressive-preview-toggle");
       progressiveToggle.setAttribute("aria-pressed",String(progressivePreview));
-      progressiveToggle.textContent="Progressive first frame: "+(progressivePreview?"on":"off");
+      const protectedJoined=joined &&
+        document.documentElement.dataset.bridgePreview!=="true";
+      progressiveToggle.textContent=protectedJoined
+        ?"Progressive loading: on (joined world)"
+        :"Progressive first frame: "+(progressivePreview?"on":"off");
+      progressiveToggle.disabled=protectedJoined;
+      progressiveToggle.title=protectedJoined
+        ?"Joined-world startup always presents terrain and nearby roads before loading full detail."
+        :"Toggle between staged loading and slower complete-scene startup.";
       progressiveToggle.addEventListener("click",()=>{
+        if(protectedJoined)return;
         const url=new URL(location.href);
         if(progressivePreview)url.searchParams.set("progressive","0");
         else url.searchParams.delete("progressive");
@@ -935,10 +950,14 @@
       const cellLimit=document.getElementById("detail-cell-limit");
       cellLimit.value=document.documentElement.dataset.detailChunkLimit||"96";
       const cellNote=document.getElementById("detail-cell-note");
-      cellNote.textContent=joined
-        ? "Joined preview keeps both regions fully resident. To experiment with live chunk memory limits, turn Joined world off; there are no abrupt distance cuts."
-        : "Changes apply live in progressive single-region mode. Low-poly building silhouettes remain for evicted detailed cells.";
-      cellLimit.disabled=joined || !progressivePreview;
+      const experimentalBridges=document.documentElement.dataset.bridgePreview==="true";
+      const streamActive=document.documentElement.dataset.chunkStreaming==="true";
+      cellNote.textContent=!progressivePreview || !streamActive || experimentalBridges
+        ? "Cell limits require progressive loading without experimental bridge meshes."
+        : joined
+          ? "Changes apply live to Downtown detail; distant buildings retain compact silhouettes. The neighboring region still uses full geometry until joined-region streaming is complete."
+          : "Changes apply live. Low-poly building silhouettes remain for distant detailed cells.";
+      cellLimit.disabled=!progressivePreview || !streamActive || experimentalBridges;
       cellLimit.addEventListener("change",()=>{
         const value=cellLimit.value;
         document.documentElement.dataset.detailChunkLimit=value;
