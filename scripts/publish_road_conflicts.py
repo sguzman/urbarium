@@ -26,9 +26,11 @@ def manifest_from_reports(reports):
         items = [item for item in source_items
                  if item["cause"] == "centerline_inside_footprint"]
         if len(items) != total:
+            problem = ("truncated audit report" if complete is None
+                       else "inconsistent audit report")
             raise ValueError(
-                f"{region_id}: only {len(items)} of {total} centerline conflicts "
-                "included in truncated or inconsistent audit report")
+                f"{region_id}: {problem}: only {len(items)} of {total} "
+                "source centerline conflicts are present")
         regions.append({"region_id": region_id, "centerline_conflicts": total})
         for item in items:
             lon, lat = item["focus_lonlat"]
