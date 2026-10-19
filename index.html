@@ -34,6 +34,13 @@
         params.get("bridges")!=="1";
       document.documentElement.dataset.progressivePreview=
         (joinedDefault || params.get("progressive")!=="0")?"true":"false";
+      // Remove stale slow-start links rather than carrying progressive=0
+      // into a later switch to standalone mode.
+      if(joinedDefault && params.get("progressive")==="0"){
+        const clean=new URL(location.href);
+        clean.searchParams.delete("progressive");
+        history.replaceState(null,"",clean.href);
+      }
       // Camera-local mesh residency is the progressive default in single-
       // section mode. stream=0 restores the old full-city enrichment.
       document.documentElement.dataset.chunkStreaming=params.get("stream")==="0"?"false":"true";
