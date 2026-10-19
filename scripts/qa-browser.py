@@ -1329,6 +1329,17 @@ with sync_playwright() as p:
             !document.querySelector("#road-conflicts-open").disabled &&
             document.querySelector("#road-conflicts-select").options.length===expected
         """,arg=len(cases),timeout=30000)
+        # The selected audit case must expose its actual source identities
+        # and cautious vertical-evidence interpretation before navigation.
+        evidence=page.locator("#road-conflicts-evidence")
+        assert evidence.is_visible()
+        assert cases[0]["street_id"] in evidence.inner_text()
+        assert cases[0]["building_id"] in evidence.inner_text()
+        if len(cases)>1:
+            page.locator("#road-conflicts-select").select_option("1")
+            assert cases[1]["street_id"] in evidence.inner_text()
+            page.locator("#road-conflicts-select").select_option("0")
+            assert cases[0]["street_id"] in evidence.inner_text()
         # UI selection builds a canonical standalone-region URL instead of
         # relying on the joined world's unrelated secondary coordinate origin.
         selected=cases[0]
