@@ -1378,6 +1378,12 @@ impl Graphics {
         let built=stream.built;
         let evicted=stream.evicted;
         let initialized=stream.preview_retired;
+        // Finish reading the streaming borrow before touching the primary
+        // scene buffers. In particular, telemetry must not hold the mutable
+        // chunk map borrow across set_primary_mesh.
+        let distant=self.far.as_ref().map_or(0,|lod|
+            lod.cells.iter().filter(|(key,_,_)|
+                !stream.chunks.contains_key(key)).count());
         if retire {
             // Drop the temporary terrain+road preview only after every
             // requested chunk is resident. Keep exactly one terrain mesh.
@@ -1399,9 +1405,6 @@ impl Graphics {
         if let Some(el)=web_sys::window().and_then(|w|w.document())
             .and_then(|d|d.get_element_by_id("status")){
             let _=el.set_attribute("data-detail-chunk-limit",&limit.to_string());
-            let distant=self.far.as_ref().map_or(0,|lod|
-                lod.cells.iter().filter(|(key,_,_)|
-                    !stream.chunks.contains_key(key)).count());
             let _=el.set_attribute("data-far-massing-cells",&distant.to_string());
             let _=el.set_attribute("data-far-massing-bytes",
                 &self.far.as_ref().map_or(0,|far|far.bytes).to_string());
