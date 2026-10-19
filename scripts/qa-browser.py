@@ -82,12 +82,17 @@ with sync_playwright() as p:
     )
     try:
         page.wait_for_selector("canvas:not(#minimap-canvas)", timeout=30000)
-        page.wait_for_function(
-            "() => { const e=document.querySelector('#status');"
-            " return e && (e.textContent.includes('Downtown LA ready')"
-            " || e.textContent.includes('Viewer error')); }",
-            timeout=60000,
-        )
+        # The status text is a progress log and can legitimately change
+        # after the first frame (for example to building triangle counts).
+        # Require real rendered frames, not a transient "ready" phrase.
+        page.wait_for_function("""() => {
+            const e=document.querySelector('#status');
+            return e && ((e.dataset.renderStage==='first-present' &&
+                Number(e.dataset.frameCount)>0) ||
+                e.textContent.includes('Viewer error'));
+        }""",timeout=60000)
+        assert page.locator("#status").get_attribute(
+            "data-render-stage")=="first-present",page.locator("#status").inner_text()
         # Progressive geometry is now the default; retain the full-scene
         # compatibility path for explicit progressive=0 URLs.
         assert page.evaluate("() => document.documentElement.dataset.progressivePreview")=="true"
