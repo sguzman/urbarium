@@ -111,6 +111,19 @@ The geometry pipeline now enforces these invariants:
   while avoiding repeated meshing of entire long streets in every tile.
 - Generate full-width asphalt, walking, steps and rail triangles, retaining
   real source bends, junction topology and material layering.
+- **Asphalt always owns overlapping ground-level pedestrian surface area.**
+  After the visible road ribbons and junction patches are fully formed, subtract
+  the actual road triangle footprints from walking and stair triangles. Split
+  and keep their non-overlapping fragments on both sides of the carriageway.
+  This is a true mesh boolean difference, not a terrain-Z offset, draw-order
+  trick, or whole-path deletion. Exclude hidden freeway ribbons and elevated
+  bridge decks, which must not make holes in ordinary footways.
+- Use a coarse road-triangle spatial index and preserve original vertex
+  indices for untouched pedestrian triangles. Build the cut once on continuous
+  source-local surfaces **before** geographic chunk ownership and DEM
+  conformance, so intersections cannot reappear when terrain bends or a
+  source crosses a chunk seam. Source pedestrian centerlines are retained
+  for later route/topology work; this rule governs rendered ground surfaces.
 - Import full Overture `level_rules` where `between: null` denotes the
   entire feature. Split fractional `is_covered` intervals before clipping
   the region and retain `covered=yes` on their derived spans. Treat source
