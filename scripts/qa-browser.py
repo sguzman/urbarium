@@ -1309,6 +1309,72 @@ with sync_playwright() as p:
                   cache_result,wasm_responses)
         finally:
             isolated.close()
+        # Source-generated forensic review: the five currently unresolved
+        # centerline conflicts must be individually reachable in actual 3D.
+        # Do not skip tests when future regions change the number of cases.
+        from pathlib import Path
+        manifest=json.loads(Path("dist/assets/road-conflict-locations.json")
+                            .read_text(encoding="utf-8"))
+        cases=manifest["cases"]
+        assert len(cases)==sum(x["centerline_conflicts"]
+                              for x in manifest["regions"]),manifest
+        assert len({item["region_id"] for item in cases})>=2,manifest
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}",
+                  wait_until="domcontentloaded")
+        page.wait_for_function("() => document.querySelector('#hud-tab-details')",
+                               timeout=12000)
+        page.locator("#hud-tab-details").click()
+        page.locator("#road-conflicts-load").click()
+        page.wait_for_function("""(expected) =>
+            !document.querySelector("#road-conflicts-open").disabled &&
+            document.querySelector("#road-conflicts-select").options.length===expected
+        """,arg=len(cases),timeout=30000)
+        # UI selection builds a canonical standalone-region URL instead of
+        # relying on the joined world's unrelated secondary coordinate origin.
+        selected=cases[0]
+        page.locator("#road-conflicts-open").click()
+        page.wait_for_function("""([region,lon,lat]) => {
+            const s=document.querySelector("#status");
+            const u=new URL(location.href);
+            return s?.dataset.reviewFocusActive==="true" &&
+                s.dataset.regionId===region &&
+                u.searchParams.get("world")==="0" &&
+                Math.abs(Number(u.searchParams.get("focus").split(",")[0])-lon)<1e-7 &&
+                Math.abs(Number(u.searchParams.get("focus").split(",")[1])-lat)<1e-7 &&
+                s.dataset.renderStage==="first-present";
+        }""",arg=[selected["region_id"],*selected["focus_lonlat"]],timeout=90000)
+        import math
+        earth=6371008.8
+        for region_case in [
+            next(x for x in cases if x["region_id"]==region)
+            for region in sorted({x["region_id"] for x in cases})
+        ]:
+            lon,lat=region_case["focus_lonlat"]
+            region_id=region_case["region_id"]
+            page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}"+
+                      ("&allow-software=1" if not force_webgl else "")+
+                      f"&world=0&region={region_id}&focus={lon:.9f},{lat:.9f}",
+                      wait_until="domcontentloaded")
+            page.wait_for_function("""() => {
+                const s=document.querySelector("#status");
+                return s?.dataset.reviewFocusActive==="true" &&
+                    s.dataset.renderStage==="first-present" &&
+                    Number(s.dataset.frameCount)>2;
+            }""",timeout=90000)
+            city=json.loads(Path("dist/assets",region_id+".json").read_text())
+            origin=city["region"]["origin"]
+            focus_x=math.radians(lon-origin[0])*earth*math.cos(math.radians(origin[1]))
+            focus_z=math.radians(lat-origin[1])*earth
+            pose=[float(v) for v in page.locator("#status")
+                  .get_attribute("data-camera-pose").split(",")]
+            assert math.hypot(pose[0]-focus_x,pose[2]-focus_z)<120.0,(
+                "Camera did not arrive at audited source location",region_id,pose)
+            assert pose[4]<-0.15,("Expected downward-looking elevated camera",pose)
+            assert float(page.locator("#status")
+                         .get_attribute("data-eye-clearance"))>90.0
+            assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
+            assert not errors,errors
+        print("Source-driven road conflicts: explicit 3D review links for both regions passed")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
     except Exception:

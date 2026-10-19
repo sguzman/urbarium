@@ -171,6 +171,29 @@ or joined-region transition is clean. Real-geography browser verification,
 bounded frame/GPU memory performance, and recorded visible defects remain
 mandatory before calling any road release visually complete.
 
+## Source-backed road conflict inspection (October 19)
+
+The `audit-road-buildings` CLI remains the authority for real road/building
+triangle overlap. During packaging, `scripts/publish_road_conflicts.py`
+runs that exact Rust auditor on each catalog region and publishes the
+**centerline-penetration** cases to
+`assets/road-conflict-locations.json`. Export rejects truncated audit top-20
+lists, so new conflicts cannot silently vanish from the review UI.
+
+**Details → Inspect road conflicts** loads this optional small manifest only
+when requested. **Show in 3D** opens the chosen region with
+`?region=REGION&world=0&focus=LONGITUDE,LATITUDE`; it uses a reproducible,
+elevated Rust camera pointed at the geographic source locus. The loader
+validates finite coordinates and region bounds. Normal joined-world starts do
+not request the manifest or change camera behavior. No roads, buildings or
+source tags are changed by this feature.
+
+An overlap is not by itself a mapping error: roads may be internal/covered,
+or source geometries may be misregistered. This tool helps inspect the five
+currently outstanding centerline cases, not fabricate tunnels or repair source
+data without vertical evidence. Browser QA opens the review UI and flies to
+one conflict in each catalog region with actual WebGPU and WebGL2 rendering.
+
 ## Joined-world camera regression fix (October 17)
 
 Joined-world preview now shares the same WASD/arrow/E/Q control-vector

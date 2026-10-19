@@ -42,6 +42,8 @@ on:
       - index.html
       - scripts/qa-browser.py
       - scripts/qa-mesh-benchmark.py
+      - scripts/publish_road_conflicts.py
+      - scripts/test_publish_road_conflicts.py
   workflow_dispatch:
 
 # Prioritize the latest verified commit; do not queue obsolete full WASM builds.
@@ -76,6 +78,13 @@ jobs:
           python3 scripts/fetch-terrain.py --region regions/little-tokyo-east.json --out data/processed/little-tokyo-east-terrain.json
           cp data/processed/little-tokyo-east.json web/assets/little-tokyo-east.json
           cp data/processed/little-tokyo-east-terrain.json web/assets/little-tokyo-east-terrain.json
+      - name: Build source-backed 3D conflict review locations
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_publish_road_conflicts.py'
+          python3 scripts/publish_road_conflicts.py \
+            --city data/processed/downtown-la.json \
+            --city data/processed/little-tokyo-east.json \
+            --out web/assets/road-conflict-locations.json
       - name: Install pinned Trunk WebAssembly bundler
         run: |
           curl -fLS --retry 2 \
@@ -120,6 +129,12 @@ jobs:
           assert (dist/"index.html").is_file()
           assert (dist/"assets"/"downtown-la.json").is_file()
           assert (dist/"assets"/"little-tokyo-east.json").is_file()
+          conflict_review=json.loads((dist/"assets"/"road-conflict-locations.json").read_text())
+          assert conflict_review["schema_version"]==1
+          assert len(conflict_review["regions"])==2
+          assert sum(r["centerline_conflicts"] for r in conflict_review["regions"])==len(conflict_review["cases"])
+          assert all(c["centerline_inside_m"]>0.05 for c in conflict_review["cases"])
+          assert all(len(c["focus_lonlat"])==2 for c in conflict_review["cases"])
           east=json.loads((dist/"assets"/"little-tokyo-east.json").read_text())
           assert east["region"]["id"]=="little-tokyo-east"
           assert len(east["streets"]) > 100 and len(east["buildings"]) > 50, (len(east["streets"]),len(east["buildings"]))

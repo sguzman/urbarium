@@ -124,6 +124,33 @@ impl Camera {
         camera
     }
 
+    /// Deterministic elevated inspection view for an explicit WGS84
+    /// coordinate in this region. It never changes the source road, building,
+    /// DEM or collision geometry, only the camera's initial pose.
+    fn focus_on(city:&City,terrain:&TerrainGrid,lon:f64,lat:f64)->Option<Self>{
+        if !lon.is_finite()||!lat.is_finite() {return None;}
+        let [west,south,east,north]=city.region.bbox;
+        if !(west..=east).contains(&lon)||!(south..=north).contains(&lat){
+            return None;
+        }
+        let target=city.region.project(lon,lat);
+        let sw=city.region.project(west,south);
+        let ne=city.region.project(east,north);
+        let x=(target.x-60.0).clamp(sw.x+2.0,ne.x-2.0);
+        let z=(target.z-60.0).clamp(sw.z+2.0,ne.z-2.0);
+        let ground=terrain.sample_surface(&city.region,x,z);
+        let focus_ground=terrain.sample_surface(&city.region,target.x,target.z);
+        let eye=(ground+115.0).max(focus_ground+90.0);
+        let dx=(target.x-x) as f32;
+        let dz=(target.z-z) as f32;
+        let horiz=dx.hypot(dz).max(0.1);
+        Some(Self{
+            position:Vec3::new(x as f32,eye,z as f32),
+            yaw:dx.atan2(dz),
+            pitch:((focus_ground+6.0-eye)/horiz).atan(),
+            speed:3.4,eye_clearance:eye-ground,fast_mode:false,
+        })
+    }
     fn forward(&self) -> Vec3 {
         Vec3::new(self.yaw.sin() * self.pitch.cos(), self.pitch.sin(),
             self.yaw.cos() * self.pitch.cos())
@@ -629,6 +656,21 @@ fn browser_region_id()->String {
     "downtown-la".into()
 }
 
+/// The HTML bootstrap validates shape before copying this query value to
+/// a DOM attribute. Validate finite coordinates and region bounds again in
+/// Rust; never interpret an arbitrary query parameter as a GPU-space offset.
+fn browser_review_focus()->Option<[f64;2]>{
+    #[cfg(target_arch="wasm32")]
+    if let Some(value)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|e|e.get_attribute("data-review-focus")){
+        let (lon,lat)=value.split_once(',')?;
+        let (Ok(lon),Ok(lat))=(lon.parse::<f64>(),lat.parse::<f64>())
+            else{return None;};
+        if lon.is_finite()&&lat.is_finite(){return Some([lon,lat]);}
+    }
+    None
+}
 async fn fetch_city(section:&str,publish:bool) -> Result<City, String> {
     #[cfg(target_arch = "wasm32")]
     {
@@ -1494,7 +1536,20 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     // Collision-aware spawn must be chosen before the preview mesh, so the
     // first render contains the streets the player is actually looking at.
     let collision=CollisionWorld::from_city_with_terrain(&city,Some(&terrain));
-    let spawn_camera=Camera::spawn_at_street(&city,&collision,&terrain);
+    let spawn_camera=browser_review_focus()
+        .and_then(|[lon,lat]|Camera::focus_on(&city,&terrain,lon,lat))
+        .unwrap_or_else(||Camera::spawn_at_street(&city,&collision,&terrain));
+    if let Some([lon,lat])=browser_review_focus() {
+        #[cfg(target_arch="wasm32")]
+        if let Some(el)=web_sys::window().and_then(|w|w.document())
+            .and_then(|d|d.get_element_by_id("status")){
+            if Camera::focus_on(&city,&terrain,lon,lat).is_some(){
+                let _=el.set_attribute("data-review-focus-active","true");
+                let _=el.set_attribute("data-review-focus-lonlat",&format!("{lon},{lat}"));
+            }
+        }
+        #[cfg(not(target_arch="wasm32"))] let _=(lon,lat);
+    }
     let deferred_scene=if progressive {
         Some(DeferredScene{city:city.clone(),terrain:terrain.clone(),
             bridge_preview,joined:browser_joined_world()})
@@ -2401,6 +2456,32 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_conflict_focus_uses_geographic_target_not_arbitrary_world_offset(){
+        let r=Region{
+            id:"fixture".into(),name:"Fixture".into(),
+            origin:[-118.25,34.05],
+            bbox:[-118.26,34.04,-118.24,34.06],
+        };
+        let terrain=TerrainGrid{
+            schema_version:1,region_id:r.id.clone(),bbox:r.bbox,
+            width:2,height:2,heights_m:vec![0.0;4],
+            origin_elevation_m:0.0,
+        };
+        let city=City{schema_version:1,region:r,
+            provenance:vec![],streets:vec![],buildings:vec![]};
+        let focus=city.region.project(-118.251,34.052);
+        let camera=Camera::focus_on(&city,&terrain,-118.251,34.052).unwrap();
+        assert!(camera.eye_clearance>=90.0);
+        let look=camera.forward();
+        let to_target=Vec3::new(
+            focus.x as f32-camera.position.x,
+            terrain.sample_surface(&city.region,focus.x,focus.z)+6.0-camera.position.y,
+            focus.z as f32-camera.position.z).normalize();
+        assert!(look.dot(to_target)>0.999,"camera must look toward actual source conflict");
+        assert!(Camera::focus_on(&city,&terrain,-117.0,34.052).is_none());
+        assert!(Camera::focus_on(&city,&terrain,f64::NAN,34.052).is_none());
+    }
     #[test]
     fn right_mouse_turns_clockwise_from_geographic_north() {
         let mut camera=Camera::default();

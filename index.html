@@ -15,6 +15,16 @@
       const choices=window.__urbariumRegionCatalog?.regions||[{id:"downtown-la",label:"Downtown LA"}];
       const selected=choices.find(section=>section.id===params.get("region"))||choices[0];
       document.documentElement.dataset.activeRegion=selected.id;
+      // A review coordinate is a camera request, not a geometry mutation.
+      // Keep it finite and bound it again against the loaded region in Rust.
+      const focusText=params.get("focus");
+      if(focusText && /^-?\d{1,3}(?:\.\d{1,12})?,-?\d{1,2}(?:\.\d{1,12})?$/.test(focusText)){
+        const [lon,lat]=focusText.split(",").map(Number);
+        if(Number.isFinite(lon)&&Number.isFinite(lat)&&
+           lon>=-180&&lon<=180&&lat>=-90&&lat<=90){
+          document.documentElement.dataset.reviewFocus=focusText;
+        }
+      }
       // Complete Downtown + Little Tokyo is the default; world=0 for standalone.
        document.documentElement.dataset.worldPreview=params.get("world")==="0"?"false":"true";
       document.documentElement.dataset.progressivePreview=params.get("progressive")==="0"?"false":"true";
@@ -463,6 +473,19 @@
           title="Save renderer adapter, FPS, frame timing and fault state as JSON">Download 3D rendering report</button>
       </div>
       <p id="render-report-status" role="status" class="scene-note">Let the city render for 15 seconds before downloading.</p>
+      <div class="hud-field" id="road-conflict-review">
+        <button id="road-conflicts-load" type="button"
+          title="Load source-backed coordinates of roads crossing building footprints">Inspect road conflicts</button>
+        <label for="road-conflicts-select" id="road-conflicts-picker" hidden>
+          Source conflict
+          <select id="road-conflicts-select" aria-label="Road/building conflict location"></select>
+        </label>
+        <button id="road-conflicts-open" type="button" hidden disabled
+          title="Open this conflict in a region-local elevated 3D camera">Show in 3D</button>
+      </div>
+      <p id="road-conflicts-status" class="hud-hint" role="status">
+        Source-line/building overlaps are unresolved evidence, not verified road errors.
+      </p>
       <p class="hud-field"><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
       <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
       <p id="scene-detail-stage" role="status">Scene detail: waiting for renderer</p>
@@ -635,6 +658,61 @@
       };
       document.getElementById("camera-overview").addEventListener("click",()=>requestCamera("overview"));
       document.getElementById("camera-street").addEventListener("click",()=>requestCamera("street"));
+      // No extra diagnostic network request on ordinary page visits.
+      // Load the compact audited conflict manifest only on explicit request.
+      const conflictStatus=document.getElementById("road-conflicts-status");
+      const conflictLoad=document.getElementById("road-conflicts-load");
+      const conflictMenu=document.getElementById("road-conflicts-select");
+      const conflictOpen=document.getElementById("road-conflicts-open");
+      let inspectedCases=[];
+      conflictLoad.addEventListener("click",async()=>{
+        conflictLoad.disabled=true;
+        conflictStatus.textContent="Loading audited source coordinates...";
+        try{
+          const response=await fetch("./assets/road-conflict-locations.json");
+          if(!response.ok)throw new Error("HTTP "+response.status);
+          const data=await response.json();
+          if(data.schema_version!==1||!Array.isArray(data.cases))throw new Error("invalid audit schema");
+          inspectedCases=data.cases.filter(item=>
+            regionCatalog.some(region=>region.id===item.region_id)&&
+            Array.isArray(item.focus_lonlat)&&item.focus_lonlat.length===2&&
+            item.focus_lonlat.every(Number.isFinite)&&
+            item.focus_lonlat[0]>=-180&&item.focus_lonlat[0]<=180&&
+            item.focus_lonlat[1]>=-90&&item.focus_lonlat[1]<=90&&
+            item.cause===undefined);
+          conflictMenu.replaceChildren();
+          inspectedCases.forEach((item,index)=>{
+            const label=(regionCatalog.find(r=>r.id===item.region_id)?.label||item.region_id)+
+              " · "+Number(item.overlap_m2).toFixed(1)+" m² · "+item.road_kind;
+            conflictMenu.add(new Option(label,String(index)));
+          });
+          document.getElementById("road-conflicts-picker").hidden=!inspectedCases.length;
+          conflictOpen.hidden=!inspectedCases.length;
+          conflictOpen.disabled=!inspectedCases.length;
+          conflictStatus.textContent=inspectedCases.length+
+            " disputed source centerlines. Locations are inspection evidence, not confirmed mapping mistakes.";
+        }catch(error){
+          inspectedCases=[];
+          conflictStatus.textContent="Conflict report unavailable: "+error.message;
+          conflictLoad.disabled=false;
+        }
+      });
+      conflictOpen.addEventListener("click",()=>{
+        const item=inspectedCases[Number(conflictMenu.value)];
+        if(!item)return;
+        const url=new URL(location.href);
+        url.searchParams.set("region",item.region_id);
+        // Region-local coordinates make the camera exact and the view cheap.
+        url.searchParams.set("world","0");
+        url.searchParams.set("focus",item.focus_lonlat.map(x=>x.toFixed(9)).join(","));
+        location.assign(url.href);
+      });
+      if(document.documentElement.dataset.reviewFocus){
+        conflictStatus.textContent="Viewing source conflict at "+
+          document.documentElement.dataset.reviewFocus+
+          ". This 3D location is an audit viewpoint, not a confirmed mapping error.";
+      }
+
       const fallbackMessage=document.getElementById("gpu-fallback-message");
       try {
         const notice=JSON.parse(sessionStorage.getItem("urbarium-webgpu-fallback-v1")||"null");
