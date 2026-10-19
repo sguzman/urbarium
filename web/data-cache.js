@@ -125,10 +125,20 @@
     if(inFlight.has(req.url))return inFlight.get(req.url).then(r=>r.clone());
     const pending=load(req);
     inFlight.set(req.url,pending);
-    pending.finally(()=>inFlight.delete(req.url)).catch(()=>{});
+    // Keep a successful recent response briefly so early JavaScript preview
+    // and later Rust startup share the same downloaded bytes, even though
+    // asynchronous CacheStorage writes have not finished yet.
+    pending.then(()=>{
+      setTimeout(()=>{
+        if(inFlight.get(req.url)===pending)inFlight.delete(req.url);
+      },10000);
+    },()=>{
+      if(inFlight.get(req.url)===pending)inFlight.delete(req.url);
+    });
     return pending.then(r=>r.clone());
   };
   window.urbariumClearGeography=async()=>{
+    inFlight.clear();
     if(!("caches" in window))return false;
     const removed=await caches.delete(name);
     for(const key of Object.keys(states))delete states[key];
