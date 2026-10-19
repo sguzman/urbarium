@@ -194,14 +194,30 @@ validates finite coordinates and region bounds. Selecting a case shows its
 original road and building IDs, centerline penetration length and any
 building-part evidence, explicitly distinguishing measured raised clearance
 from missing evidence. Normal joined-world starts do not request the manifest
-or change camera behavior. No roads, buildings or source tags are changed by
-this feature.
+or change camera behavior. Source-line reports also preserve observed street
+names and distinguish a road terminating inside a footprint from one crossing
+through it (strict polygon-interior endpoint tests). That distinction describes
+source geometry, **not** whether a surveyed doorway, tunnel or road exists.
+No roads, buildings or source tags are changed by this feature.
 
 An overlap is not by itself a mapping error: roads may be internal/covered,
 or source geometries may be misregistered. This tool helps inspect the five
 currently outstanding centerline cases, not fabricate tunnels or repair source
 data without vertical evidence. Browser QA opens the review UI and flies to
 one conflict in each catalog region with actual WebGPU and WebGL2 rendering.
+
+### October 19, 2026 source snapshot (commit 8f2b50ef)
+
+The [packaged real-region artifact](https://github.com/sguzman/urbarium/actions/runs/39280235220)
+contains **five** centerline/roofprint conflicts: three in Downtown LA,
+two in Little Tokyo / northern Arts District. Four are service roads; one is
+North Main Street (primary). The largest service road contains **56.405 m** of
+source centerline within a parent building footprint, and its source endpoint
+terminates inside the footprint; the other four cases have both endpoints
+outside their implicated footprint. None of the five has matching
+building-part evidence of a measured opening. These are planar source
+observations, **not** verified erroneous polygons, drivable passages or
+authorization to erase roads. Reacquisition may change the counts.
 
 ## Joined-world camera regression fix (October 17)
 
