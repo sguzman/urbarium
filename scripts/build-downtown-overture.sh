@@ -50,7 +50,7 @@ manifest = {
     "buildings_with_parts": sum(bool(b.get("parts")) for b in data["buildings"]),
     "measured_raised_parts": sum(
         p.get("min_height_m",0) is not None and (p.get("min_height_m") or 0)>0
-        for b in data["buildings"] for p in b.get("parts",[]")
+        for b in data["buildings"] for p in b.get("parts",[])
     ),
     "recorded_building_heights": sum(b["height_m"] is not None for b in data["buildings"]),
     "street_classes": dict(__import__("collections").Counter(s["kind"] for s in data["streets"]).most_common()),
