@@ -286,7 +286,7 @@ mod tests {
         assert!(area(walk)>0.0,"walking surface outside the street survives");
         assert!(intersection_area(walk,asphalt)<0.002,
             "no pedestrian pavement can remain within rendered asphalt");
-        assert!(walk.indices.iter().any(|&i|walk.vertices[i as usize].position[2]<-4.0));
+        assert!(walk.indices.iter().any(|&i|walk.vertices[i as usize].position[2]< -4.0));
         assert!(walk.indices.iter().any(|&i|walk.vertices[i as usize].position[2]>4.0));
     }
     #[test]
