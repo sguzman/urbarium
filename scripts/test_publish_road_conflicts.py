@@ -37,6 +37,26 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(result["regions"][1]["centerline_conflicts"], 0)
         self.assertIn("Not proof", result["interpretation"])
 
+    def test_complete_source_report_survives_top_twenty_cap(self):
+        r = report("downtown-la")
+        r["by_cause"]["centerline_inside_footprint"] = 25
+        r["source_centerline_conflicts"] = [
+            {**r["largest"][0], "street_id": f"street-{n:02}"}
+            for n in range(25)
+        ]
+        r["largest"] = r["source_centerline_conflicts"][:20]
+        result = module.manifest_from_reports([r])
+        self.assertEqual(len(result["cases"]), 25)
+        self.assertEqual(result["regions"][0]["centerline_conflicts"], 25)
+        self.assertEqual(len({c["street_id"] for c in result["cases"]}), 25)
+
+    def test_inconsistent_complete_source_report_is_rejected(self):
+        r = report("downtown-la")
+        r["by_cause"]["centerline_inside_footprint"] = 2
+        r["source_centerline_conflicts"] = r["largest"]
+        with self.assertRaisesRegex(ValueError, "inconsistent audit"):
+            module.manifest_from_reports([r])
+
     def test_capped_source_report_is_rejected(self):
         r = report("downtown-la")
         r["by_cause"]["centerline_inside_footprint"] = 2
