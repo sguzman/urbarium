@@ -1144,7 +1144,7 @@ with sync_playwright() as p:
                     s?.dataset.gpuDeviceLost!=="true";
             }""",timeout=25000)
             assert page.locator("#detail-cell-note").is_visible()
-            assert "distant silhouettes" in page.locator("#detail-cell-note").inner_text()
+            assert "building silhouettes" in page.locator("#detail-cell-note").inner_text()
             page.locator("#hud-tab-explore").click()
             page.wait_for_timeout(600)
             assert int(page.locator("#status").get_attribute("data-frame-count"))>0
