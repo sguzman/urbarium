@@ -18,14 +18,17 @@ def manifest_from_reports(reports):
     for report in reports:
         region_id = report["region_id"]
         total = report["by_cause"].get("centerline_inside_footprint", 0)
-        items = [item for item in report["largest"]
+        # New Rust audits provide a complete source-centerline evidence set.
+        # Old audits expose only a top-20 display: retain compatibility, but
+        # fail closed if its list is truncated. Never silently omit a case.
+        complete = report.get("source_centerline_conflicts")
+        source_items = complete if complete is not None else report["largest"]
+        items = [item for item in source_items
                  if item["cause"] == "centerline_inside_footprint"]
-        # largest is capped at 20. Fail rather than publish a silently
-        # incomplete locator list when more conflicts appear in new regions.
         if len(items) != total:
             raise ValueError(
                 f"{region_id}: only {len(items)} of {total} centerline conflicts "
-                "included in truncated audit report")
+                "included in truncated or inconsistent audit report")
         regions.append({"region_id": region_id, "centerline_conflicts": total})
         for item in items:
             lon, lat = item["focus_lonlat"]
