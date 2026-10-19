@@ -70,22 +70,32 @@
     }
     const key=keyedRequest(req,sha);
     let cache;
-    try {cache=await caches.open(name);}
-    catch(error){
+    try{
+      // CacheStorage may be locked for a long time on a stressed browser.
+      // Avoid blocking BOTH the early source preview and the Rust loader
+      // while waiting for a cache hit that never arrives.
+      const lookup=(async()=>{
+        const opened=await caches.open(name);
+        return {cache:opened,saved:await opened.match(key)};
+      })();
+      const timeout=new Promise(resolve=>
+        setTimeout(()=>resolve({cache:null,saved:null,slow:true}),1500));
+      const result=await Promise.race([lookup,timeout]);
+      if(result.slow){
+        emit(req,"CACHE LOOKUP SLOW: fetching source");
+        telemetry.networkRequests++;
+        return nativeFetch(key);
+      }
+      cache=result.cache;
+      if(result.saved){
+        telemetry.cacheHits++;
+        emit(req,"CACHE HIT",Number(result.saved.headers.get("content-length"))||null);
+        return result.saved;
+      }
+    }catch(error){
       emit(req,"browser cache unavailable",null,String(error));
       telemetry.networkRequests++;
       return nativeFetch(key);
-    }
-    try{
-      // Strict match: never use an older URL-only cached city from v1.
-      const saved=await cache.match(key);
-      if(saved){
-        telemetry.cacheHits++;
-        emit(req,"CACHE HIT",Number(saved.headers.get("content-length"))||null);
-        return saved;
-      }
-    }catch(error){
-      console.warn("Urbarium geography cache read failed",error);
     }
     emit(req,"NETWORK DOWNLOAD");
     telemetry.networkRequests++;
