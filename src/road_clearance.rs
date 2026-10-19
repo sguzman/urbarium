@@ -13,7 +13,7 @@
 //! to repair an ambiguous covered/internal road: preserve it for audit.
 
 use crate::{Building,Point,Street};
-use crate::geometry::{Mesh,HeightPolicy};
+use crate::geometry::Mesh;
 
 const WALL_MARGIN_M:f64=0.12;
 const MIN_EDGE_M:f64=0.025;
@@ -90,7 +90,7 @@ impl ClearanceIndex {
             // A raised volume does not have solid walls at pavement level.
             // Do not narrow an under-building service road against its
             // roofprint; unknown base elevations remain conservatively solid.
-            if HeightPolicy::default().base_for(building)>0.6 {continue;}
+            if building.has_measured_road_clearance() {continue;}
             for polygon in &building.polygons {
                 let Some(outer)=polygon.rings.first() else{continue;};
                 if outer.len()<3 || polygon.rings.iter().flatten()
@@ -216,6 +216,19 @@ mod tests {
         let before=strip.vertices.iter().map(|v|v.position).collect::<Vec<_>>();
         index.constrain(&street,5.5,&mut strip);
         assert_eq!(strip.vertices.iter().map(|v|v.position).collect::<Vec<_>>(),before);
+    }
+    #[test]
+    fn floor_index_alone_does_not_open_a_road_level_passage(){
+        let mut wall=building(vec![p(-10.,0.),p(10.,0.),p(10.,10.),p(-10.,10.)],vec![]);
+        wall.min_floor=Some(2);
+        assert!(!wall.has_measured_road_clearance());
+        let index=ClearanceIndex::new(&[wall]);
+        let road=service(&[(-8.,-2.),(8.,-2.)]);
+        let mut strip=ribbon(&road.path,5.5,0.24).unwrap().unwrap();
+        let original=strip.vertices[0].position;
+        index.constrain(&road,5.5,&mut strip);
+        assert!(strip.vertices[0].position[2]<=-0.10);
+        assert_ne!(strip.vertices[0].position,original);
     }
     #[test]
     fn measured_width_is_preserved_even_with_nearby_walls(){
