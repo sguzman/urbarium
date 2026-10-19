@@ -107,6 +107,12 @@ fn squared_distance_to_cell(p:Point,key:ChunkKey)->f64{
     dx*dx+dz*dz
 }
 pub fn desired_chunks(camera:Point,region:&crate::Region)->Vec<ChunkKey>{
+    desired_chunks_with_limit(camera,region,MAX_RESIDENT_CHUNKS)
+}
+/// User-adjustable GPU detail residency. Outside these cells the standalone
+/// viewer draws compact distant massing instead of making buildings vanish.
+pub fn desired_chunks_with_limit(camera:Point,region:&crate::Region,
+    max_detailed_chunks:usize)->Vec<ChunkKey>{
     let mut chunks=all_region_chunks(region);
     // Conservative AABB distance rather than a view-direction cone:
     // an elevated/rotating camera must not make background buildings vanish.
@@ -116,7 +122,7 @@ pub fn desired_chunks(camera:Point,region:&crate::Region)->Vec<ChunkKey>{
             .total_cmp(&squared_distance_to_cell(camera,*b))
             .then_with(||a.cmp(b))
     });
-    chunks.truncate(MAX_RESIDENT_CHUNKS);
+    chunks.truncate(max_detailed_chunks.clamp(1,MAX_RESIDENT_CHUNKS));
     chunks
 }
 
@@ -219,6 +225,21 @@ mod tests {
         }
     }
 
+    #[test]
+    fn detailed_chunk_budget_is_camera_local_and_bounded(){
+        let mut region=crate::Region{
+            id:"large".into(),name:"large".into(),
+            origin:[-118.25,34.05],bbox:[-118.30,34.00,-118.20,34.10]
+        };
+        assert!(all_region_chunks(&region).len()>24);
+        let selected=desired_chunks_with_limit(Point{x:0.,z:0.},&region,12);
+        assert_eq!(selected.len(),12);
+        assert!(selected.contains(&ChunkKey::at(Point{x:0.,z:0.})));
+        assert_eq!(desired_chunks_with_limit(Point{x:0.,z:0.},&region,100000).len()<=MAX_RESIDENT_CHUNKS,true);
+        region.bbox=[-118.255,34.045,-118.245,34.055];
+        let small=desired_chunks_with_limit(Point{x:0.,z:0.},&region,12);
+        assert!(small.len()<=12);
+    }
     #[test]
     fn chunks_follow_camera_and_remain_strictly_bounded() {
         let city=sample_city();
