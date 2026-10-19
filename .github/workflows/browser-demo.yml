@@ -46,6 +46,7 @@ on:
       - index.html
       - scripts/qa-browser.py
       - scripts/qa-quicklook.py
+      - scripts/qa-startup.py
       - scripts/qa-mesh-benchmark.py
       - scripts/publish_road_conflicts.py
       - scripts/test_publish_road_conflicts.py
@@ -124,8 +125,6 @@ jobs:
           echo "CPU worker bytes: $(stat -c%s dist/urbarium-mesh-worker_bg.wasm)"
       - name: Stamp worker executable content hash for independent disk caching
         run: python3 scripts/stamp-worker-wasm.py dist
-      - name: Remove eager WASM preload so first fetch can be cached
-        run: python3 scripts/remove-wasm-preload.py dist/index.html
       - name: Validate static site and scene data
         run: |
           python3 - <<'PY'
@@ -160,7 +159,7 @@ jobs:
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
           assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
-          assert (dist/"quicklook.js").is_file(), "Pre-WASM geographic renderer missing"
+          assert 'src="./quicklook.js"' not in (dist/"index.html").read_text(), "Static fake city preview must stay disabled"
           assert (dist/"wasm-sw.js").is_file(), "WASM service worker missing"
           assert (dist/"urbarium-mesh-worker.js").is_file()
           assert (dist/"urbarium-mesh-worker_bg.wasm").is_file()
@@ -171,12 +170,13 @@ jobs:
           assert hashlib.sha256(worker_wasm).hexdigest() in worker_runtime
           assert "__URBARIUM_WORKER_SHA256__" not in worker_runtime
           worker=(dist/"wasm-sw.js").read_text()
-          assert "urbarium-wasm-binaries-v1" in worker and "MAX_VERSIONS=2" in worker
+          assert 'addEventListener("fetch"' not in worker, "WASM worker must not intercept network"
+          assert 'self.clients.claim()' in worker
           assert "wasm-sw.js" in (dist/"index.html").read_text()
           assert "urbarium-geography-downtown-la-v1" in (dist/"data-cache.js").read_text()
           import hashlib,re
           page=(dist/"index.html").read_text()
-          assert not re.search(r'<link\b(?=[^>]*\brel="preload")(?=[^>]*\btype="application/wasm")',page), "Eager WASM preload bypasses first-visit caching"
+          assert re.search(r'<link\b(?=[^>]*\brel="preload")(?=[^>]*\btype="application/wasm")',page), "Restore browser-native WASM preload"
           hashes=re.search(r'window\.__urbariumGeographyVersions\s*=\s*(\{[^;]+\});',page)
           assert hashes,"Missing geography content-version stamp in bundled HTML"
           versions=json.loads(hashes.group(1))
@@ -200,7 +200,7 @@ jobs:
           assert (dist/"stats.js").is_file(), "Stats JavaScript missing from published site"
           page=(dist/"index.html").read_text()
           assert 'quicklook.js' in page
-          assert 'startup-preview' in page
+          assert 'startup-preview' not in page, "Static fake city canvas must not ship"
           assert 'minimap-canvas' in page
           assert 'map-zoom-in' in page
           assert 'landmark-legend' in page and 'landmarks-show-all' in page
@@ -236,10 +236,10 @@ jobs:
           while IFS= read -r rid; do
             cargo run --quiet -- audit-road-buildings --city "dist/assets/$rid.json"
           done
-      - name: QA viewer draws source geography before WASM can initialize
+      - name: QA direct preloaded WASM startup and report cold/warm first frames
         run: |
           python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
-          xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-quicklook.py
+          xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-startup.py
       - name: QA viewer in browser with WebGPU
         run: |
           xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-browser.py

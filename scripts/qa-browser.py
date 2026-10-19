@@ -1193,34 +1193,13 @@ with sync_playwright() as p:
             print("Live 6-cell detail budget retains distant source-backed skyline",
                   page.locator("#status").get_attribute("data-far-massing-cells"))
 
-        # SW must cache the exact fingerprinted WASM, then serve the same
-        # build from CacheStorage on a subsequent navigation. It may not
-        # intercept the first page before clients.claim(), so the first
-        # controlled reload primes it when necessary.
-        page.wait_for_function("""() => !!navigator.serviceWorker?.controller &&
-            window.__urbariumWasmCache?.registration==="registered" """,timeout=25000)
-        cache_url=f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&progressive=0"
-        page.goto(cache_url,wait_until="domcontentloaded")
-        page.wait_for_function("""() => {
-            const s=document.querySelector("#status");
-            return s?.dataset.renderStage==="first-present" &&
-                window.__urbariumWasmCache?.lastEvent!=="none";
-        }""",timeout=90000)
-        page.wait_for_function("""() => window.__urbariumWasmCache?.stores>0 ||
-            window.__urbariumWasmCache?.hits>0""",timeout=25000)
-        page.reload(wait_until="domcontentloaded")
-        page.wait_for_function("""() => {
-            const s=document.querySelector("#status");
-            return s?.dataset.renderStage==="first-present" &&
-                window.__urbariumWasmCache?.hits>0;
-        }""",timeout=90000)
+        # Native preload and direct HTTP must not be replaced by a custom
+        # fetch wrapper or a cache-first service worker.
+        assert page.locator('link[rel="preload"][type="application/wasm"]').count()==1
+        assert page.evaluate("() => window.__urbariumWasmCache?.source")=="native-http"
         assert page.locator("#wasm-cache-state").count()==1
-        page.locator("#hud-tab-details").click()
-        page.wait_for_function("""() =>
-            document.querySelector("#wasm-cache-state")?.textContent.includes("CACHE HIT (disk)")""",
-            timeout=10000)
         assert not errors,errors
-        print("WASM service worker: exact hashed module served from persistent disk cache on reload")
+        print("Fingerprint-addressed WASM uses native HTTP preload/cache")
 
         # Independent Rust CPU mesher worker integration (opt-in until proven
         # safe). Same source City and DEM; all 30 chunks must come from the
@@ -1296,80 +1275,27 @@ with sync_playwright() as p:
         print("CPU mesh worker: SHA-256 WASM first download saved and next visit reused cached binary")
 
 
-        assert page.locator('link[rel="preload"][type="application/wasm"]').count()==0
-        # Critical cold-start regression: a fresh browser profile has no
-        # service worker when the *first* WASM request starts. That very
-        # first response must populate CacheStorage. One reload must then
-        # receive a real disk cache hit, without requiring a third visit.
+        # Real browser warm navigation must still render while bypassing
+        # custom WASM CacheStorage and service-worker response interception.
         isolated=browser.new_context(viewport={"width":1280,"height":800})
         try:
             first=isolated.new_page()
-            # Browser response provenance is more authoritative than the SW
-            # postMessage counter, which can race early WASM initialization.
             wasm_responses=[]
-            def record_wasm_response(response):
-                if "urbarium-viewer-" in response.url and response.url.split("?")[0].endswith("_bg.wasm"):
-                    wasm_responses.append({
-                        "url":response.url,
-                        "serviceWorker":bool(response.from_service_worker),
-                    })
-            first.on("response",record_wasm_response)
+            first.on("response",lambda response:
+                wasm_responses.append((response.url,response.from_service_worker))
+                if "urbarium-viewer-" in response.url and
+                   response.url.split("?")[0].endswith("_bg.wasm") else None)
             if force_webgl:
-                first.add_init_script("""
-                    Object.defineProperty(navigator, 'gpu', {
-                        configurable:true,value:undefined
-                    });
-                """)
+                first.add_init_script("""Object.defineProperty(navigator,'gpu',{
+                    configurable:true,value:undefined});""")
             first.goto(cache_url,wait_until="domcontentloaded")
-            # Inspect CacheStorage itself. A cache write may come either
-            # from the first-page fetch wrapper or from the service worker
-            # if it happened to take control early; message delivery is
-            # not the authoritative measure of whether the bytes are saved.
-            first.wait_for_function("""async () => {
-                if(document.querySelector("#status")?.dataset.renderStage!=="first-present")
-                    return false;
-                const bucket=await caches.open("urbarium-wasm-binaries-v1");
-                return (await bucket.keys()).some(req=>
-                    /^urbarium-viewer-[0-9a-f]+_bg\\.wasm$/.test(
-                        new URL(req.url).pathname.split("/").pop()));
-            }""",timeout=90000)
-            first.wait_for_function("""() => !!navigator.serviceWorker.controller """,
-                                    timeout=30000)
-            # Service worker claim/prune can race a separate CacheStorage
-            # snapshot on first navigation. A new page must independently
-            # observe an actual content-fingerprinted WASM disk hit.
-            wasm_responses.clear()
-            first.reload(wait_until="domcontentloaded")
             first.wait_for_function("""() =>
                 document.querySelector("#status")?.dataset.renderStage==="first-present"
             """,timeout=90000)
-            cache_result=first.evaluate("""async () => {
-                const files=await (await caches.open("urbarium-wasm-binaries-v1")).keys();
-                return {
-                    event:window.__urbariumWasmCache?.lastEvent,
-                    file:window.__urbariumWasmCache?.file,
-                    hits:window.__urbariumWasmCache?.hits||0,
-                    cached:files.map(req=>new URL(req.url).pathname.split("/").pop())
-                };
-            }""")
-            # The page response must actually have been fulfilled by the
-            # service worker, and its fingerprinted URL must be present in
-            # CacheStorage. The worker's fetch event is cache-FIRST. Together
-            # these observations prove the loaded WASM came through the
-            # persistent fingerprinted disk cache; a lost postMessage must
-            # not fail a working application.
-            cached=set(cache_result["cached"])
-            was_cached=any(
-                response["serviceWorker"] and
-                response["url"].split("?")[0].split("/")[-1] in cached
-                for response in wasm_responses
-            )
-            assert was_cached,(
-                "Reload did not load fingerprinted WASM through the cache-first service worker",
-                cache_result,wasm_responses
-            )
-            print("Cold browser: first WASM fetch cached, immediate reload served by cache-first SW",
-                  cache_result,wasm_responses)
+            assert wasm_responses and all(not via_worker for _,via_worker in wasm_responses),wasm_responses
+            assert first.locator("#startup-preview").count()==0
+            print("Native browser WASM response without service worker interception",
+                  wasm_responses)
         finally:
             isolated.close()
         # Source-generated forensic review: the five currently unresolved

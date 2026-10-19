@@ -90,87 +90,25 @@
   <script>window.__urbariumGeographyVersions = null;</script>
   <!-- Install version-aware geographic fetch interception before WASM boot. -->
   <script src="./data-cache.js?v=early-source-paint-v3"></script>
-  <!-- Cache only fingerprinted WASM executables; never block startup on registration. -->
+  <!-- Replace any earlier cache-first service worker with a pass-through
+       worker; native HTTP caching and preload handle immutable WASM URLs. -->
   <script>
     (() => {
       const sw=navigator.serviceWorker;
-      const cache=window.__urbariumWasmCache={
-        supported:!!sw,controlled:!!sw?.controller,registration:"checking",
-        hits:0,stores:0,networkFetches:0,lastEvent:"none",file:""
+      const state=window.__urbariumWasmCache={
+        supported:!!sw,controlled:!!sw?.controller,
+        registration:"browser HTTP cache",source:"native-http",
+        hits:0,stores:0,networkFetches:0,lastEvent:"native-http",file:""
       };
-      // A new page may begin downloading WASM before a newly installed
-      // service worker controls it. Observe that FIRST request and save
-      // its response clone asynchronously; do not delay the viewer to
-      // register the worker or write the cache.
-      const fetchBeforeWasmCache=window.fetch.bind(window);
-      const wasmFilePattern=/^urbarium-viewer-[0-9a-f]+_bg\.wasm$/;
-      const wasmRoot=new URL("./",location.href);
-      const wasmEligible=req=>{
-        const url=new URL(req.url);
-        const relative=url.pathname.slice(wasmRoot.pathname.length);
-        return req.method==="GET" && !req.headers.has("Range") &&
-          url.origin===wasmRoot.origin &&
-          url.pathname.startsWith(wasmRoot.pathname) &&
-          !relative.includes("/") && !url.search &&
-          wasmFilePattern.test(relative);
-      };
-      window.fetch=(input,init)=>{
-        let req;
-        try{req=new Request(input,init);}
-        catch(_){return fetchBeforeWasmCache(input,init);}
-        // A controlled page is served by wasm-sw.js, avoiding double cache
-        // writes. A first-ever unclaimed page primes its own disk cache.
-        if(!wasmEligible(req) || sw.controller)
-          return fetchBeforeWasmCache(input,init);
-        cache.lastEvent="fetching";
-        cache.file=new URL(req.url).pathname.split("/").pop();
-        cache.networkFetches++;
-        cache.source="first-page";
-        return fetchBeforeWasmCache(input,init).then(response=>{
-          if(response.ok && response.type==="basic" && "caches" in window){
-            const copy=response.clone();
-            (async()=>{
-              try {
-                const bucket=await caches.open("urbarium-wasm-binaries-v1");
-                await bucket.put(req,copy);
-                const keys=await bucket.keys();
-                const keep=new Set([req.url]);
-                for(const key of keys.slice().reverse()){
-                  if(keep.size>=2)break;
-                  keep.add(key.url);
-                }
-                for(const key of keys){
-                  if(!keep.has(key.url))await bucket.delete(key);
-                }
-                cache.stores++;
-                cache.lastEvent="stored";
-              }catch(error){
-                cache.lastEvent="unavailable";
-                console.warn("First-page WASM cache write unavailable",error);
-              }
-            })();
-          }else{
-            cache.lastEvent="network";
-          }
-          return response;
-        });
-      };
-      if(!sw){cache.registration="unsupported";return;}
-      sw.addEventListener("message",event=>{
-        const data=event.data;
-        if(data?.type!=="urbarium-wasm-cache-v1")return;
-        cache.lastEvent=data.kind;
-        cache.file=data.file||"";
-        if(data.kind==="hit")cache.hits++;
-        if(data.kind==="stored")cache.stores++;
-        if(data.kind==="network")cache.networkFetches++;
-      });
+      if(!sw)return;
+      sw.register("./wasm-sw.js?pass-through-v2",{scope:"./",updateViaCache:"none"})
+        .then(()=>{state.registration="pass-through worker installed";
+                   state.controlled=!!sw.controller;})
+        .catch(error=>{state.registration="HTTP cache only: "+
+          String(error).slice(0,80);});
       sw.addEventListener("controllerchange",()=>{
-        cache.controlled=!!sw.controller;
+        state.controlled=!!sw.controller;
       });
-      sw.register("./wasm-sw.js",{scope:"./",updateViaCache:"none"})
-        .then(()=>{cache.registration="registered";cache.controlled=!!sw.controller;})
-        .catch(error=>{cache.registration="unavailable: "+String(error).slice(0,90);});
     })();
   </script>
   <!-- Size-optimize release WASM to reduce cold-network transfer on slow connections. -->
@@ -183,9 +121,8 @@
   <link data-trunk rel="copy-file" href="web/mesh-worker-runtime.js">
   <link data-trunk rel="copy-file" href="web/wasm-sw.js">
   <link data-trunk rel="copy-file" href="web/quicklook.js">
-  <!-- Source-backed early city paint starts in parallel with the heavy WASM
-       loader. A stalled binary must not leave a completely blank viewer. -->
-  <script src="./quicklook.js?v=release-on-first-gpu-frame" defer></script>
+  <!-- Never show a static fake street frame. The real city canvas appears
+       as soon as the Rust renderer produces a frame. -->
   <!-- Geography cache intercepts the initial Rust download, not just reloads. -->
   <script>
     window.urbariumLandmarkPalette = Object.freeze({
@@ -203,20 +140,12 @@
     /* winit sets an inline drawing-buffer width/height (historically 1280x800).
        Force its *CSS box* to the whole viewport independently of GPU pixels.
        The Rust Window resize path now updates the actual backing size too. */
-    canvas:not(#minimap-canvas):not(#webgpu-control):not(#startup-preview) {
+    canvas:not(#minimap-canvas):not(#webgpu-control) {
       display:block!important;position:fixed!important;
       left:0!important;top:0!important;
       width:100vw!important;height:100vh!important;
       max-width:none!important;max-height:none!important;
       outline:none;touch-action:none;z-index:0;
-    }
-    #startup-preview {position:fixed;inset:0;width:100vw;height:100vh;
-      z-index:1;pointer-events:none;display:block;}
-    /* CSS is an independent protection if the JS startup overlay cleanup
-       callback stalls. Never let an image mask an active GPU renderer. */
-    body:has(#status[data-render-stage="first-present"]) #startup-preview,
-    body:has(#status[data-frame-count]:not([data-frame-count="0"])) #startup-preview {
-      display:none!important;
     }
     .minimap {position:fixed;z-index:4;right:16px;top:16px;width:260px;
       max-height:calc(100vh - 32px);overflow-y:auto;overflow-x:hidden;
@@ -1055,20 +984,13 @@
         }else{
           code.textContent="WASM request: not completed or not exposed by browser timing";
         }
-        const stored=window.__urbariumWasmCache;
-        const wasmCacheLine=document.getElementById("wasm-cache-state");
-        if(stored){
-          const result=stored.lastEvent==="fetching" ? "downloading WASM; first-visit cache will be saved" :
-            stored.lastEvent==="hit" ? "CACHE HIT (disk)" :
-            stored.lastEvent==="stored" ? "saved for next visit" :
-            stored.lastEvent==="network" ? "network response (not stored)" :
-            stored.lastEvent==="unavailable" ? "browser storage unavailable" :
-            stored.controlled ? "ready; no WASM request observed" :
-            stored.supported ? "installing; subsequent visits use cache" :
-            "unsupported by browser";
-          wasmCacheLine.textContent="WASM disk cache: "+result+
-            " · "+(stored.controlled?"active":"not controlling this visit");
-        }
+        // A fingerpinted WASM URL uses the browser's native HTTP cache.
+        // Do not report CacheStorage "hits": those were produced by an
+        // extra interception layer that could stall before Rust even ran.
+        document.getElementById("wasm-cache-state").textContent=
+          "WASM transport: native browser HTTP cache · direct preload/fetch"+
+          (navigator.serviceWorker?.controller
+            ?" · old worker may still control this navigation":"");
         const count=window.__urbariumGeoCache?.networkRequests;
         document.getElementById("geography-request-count").textContent=
           "City/terrain network requests this visit: "+
