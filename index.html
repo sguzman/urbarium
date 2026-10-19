@@ -486,6 +486,8 @@
       <p id="road-conflicts-status" class="hud-hint" role="status">
         Source-line/building overlaps are unresolved evidence, not verified road errors.
       </p>
+      <p id="road-conflicts-evidence" class="hud-hint" hidden
+        aria-label="Selected road conflict source evidence"></p>
       <p class="hud-field"><a href="./gpu-test.html">GPU adapter test · Download JSON report</a></p>
       <p id="boot-stage" role="status" data-phase="wasm-start">Startup: checking application assets</p>
       <p id="scene-detail-stage" role="status">Scene detail: waiting for renderer</p>
@@ -664,7 +666,29 @@
       const conflictLoad=document.getElementById("road-conflicts-load");
       const conflictMenu=document.getElementById("road-conflicts-select");
       const conflictOpen=document.getElementById("road-conflicts-open");
+      const conflictEvidence=document.getElementById("road-conflicts-evidence");
       let inspectedCases=[];
+      // Show identifying evidence without pretending that a roofprint
+      // intersection establishes an error or a measured traversable gap.
+      const describeConflict=()=>{
+        const item=inspectedCases[Number(conflictMenu.value)];
+        conflictEvidence.hidden=!item;
+        if(!item){conflictEvidence.textContent="";return;}
+        const parts=Array.isArray(item.source_part_evidence)?
+          item.source_part_evidence:[];
+        const measured=parts.filter(part=>part.verified_above_ground===true);
+        const partNote=parts.length?
+          parts.length+" overlapping building part(s); "+
+          measured.length+" with measured raised clearance. "+
+          "Part evidence alone does not confirm a passable road.":
+          "No matching building-part evidence for a raised passage.";
+        conflictEvidence.textContent=
+          "Street: "+item.street_id+" · Building: "+item.building_id+
+          " · Source centerline inside footprint: "+
+          Number(item.centerline_inside_m).toFixed(2)+" m · "+
+          partNote;
+      };
+      conflictMenu.addEventListener("change",describeConflict);
       conflictLoad.addEventListener("click",async()=>{
         conflictLoad.disabled=true;
         conflictStatus.textContent="Loading audited source coordinates...";
@@ -691,8 +715,10 @@
           conflictOpen.disabled=!inspectedCases.length;
           conflictStatus.textContent=inspectedCases.length+
             " disputed source centerlines. Locations are inspection evidence, not confirmed mapping mistakes.";
+          describeConflict();
         }catch(error){
           inspectedCases=[];
+          describeConflict();
           conflictStatus.textContent="Conflict report unavailable: "+error.message;
           conflictLoad.disabled=false;
         }
