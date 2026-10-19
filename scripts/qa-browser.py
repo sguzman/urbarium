@@ -93,6 +93,20 @@ with sync_playwright() as p:
         }""",timeout=60000)
         assert page.locator("#status").get_attribute(
             "data-render-stage")=="first-present",page.locator("#status").inner_text()
+        # Regression: the temporary JS city image uses a higher z-index than
+        # the real GPU canvas. It must be gone, NOT just pointer-transparent,
+        # once GPU frames are being presented or the entire scene looks frozen
+        # while CSS menus and landmark labels continue to work.
+        page.wait_for_function("""() => {
+            const status=document.querySelector("#status");
+            const cover=document.querySelector("#startup-preview");
+            return status?.dataset.renderStage==="first-present" &&
+                Number(status.dataset.frameCount)>0 &&
+                (!cover || getComputedStyle(cover).display==="none");
+        }""",timeout=8000)
+        assert page.locator("#startup-preview").count()==0, (
+            "Pre-WASM sketch still overlays the live 3D renderer")
+        print("GPU first frame retired the temporary 2D city overlay")
         # Progressive geometry is now the default; retain the full-scene
         # compatibility path for explicit progressive=0 URLs.
         assert page.evaluate("() => document.documentElement.dataset.progressivePreview")=="true"
