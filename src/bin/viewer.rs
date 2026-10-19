@@ -473,6 +473,17 @@ fn browser_frustum_culling()->bool {
     #[cfg(not(target_arch="wasm32"))]
     true
 }
+fn browser_detail_chunk_budget()->usize {
+    #[cfg(target_arch="wasm32")]
+    return web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-detail-chunk-limit"))
+        .and_then(|s|s.parse::<usize>().ok())
+        .filter(|&n| matches!(n,6|12|24|48|96))
+        .unwrap_or(urbarium::streaming::MAX_RESIDENT_CHUNKS);
+    #[cfg(not(target_arch="wasm32"))]
+    urbarium::streaming::MAX_RESIDENT_CHUNKS
+}
 fn expose_chunk_draw_telemetry(drawn:u32,culled:u32){
     #[cfg(target_arch="wasm32")]
     if let Some(el)=web_sys::window().and_then(|w|w.document())
@@ -970,6 +981,12 @@ struct ChunkBuffers{
     batches:Vec<DrawBatch>,
     bytes:usize,
 }
+struct FarGpu {
+    vertex:wgpu::Buffer,
+    index:wgpu::Buffer,
+    cells:Vec<(urbarium::streaming::ChunkKey,DrawBatch,Option<urbarium::frustum::Bounds3>)>,
+    bytes:usize,
+}
 struct ChunkStream{
     source:City,
     terrain:TerrainGrid,
@@ -1029,6 +1046,7 @@ struct Graphics {
     neighbor:Option<ResidentTile>,
     deferred_scene:Option<DeferredScene>,
     stream:Option<ChunkStream>,
+    far:Option<FarGpu>,
     primary_gpu_bytes:usize,
     rendered_frames: u64,
     gpu_mesh_bytes: usize,
@@ -1189,6 +1207,42 @@ impl Graphics {
         }
         #[cfg(not(target_arch="wasm32"))]
         let _=full_region_chunks;
+        // Compact building stand-ins are kept in one small, source-derived
+        // GPU buffer. An evicted detail cell switches to its low-poly massing
+        // rather than disappearing from the skyline.
+        match urbarium::far_lod::build_far_massing(&job.city,&job.terrain) {
+            Ok(massing) if !massing.indices.is_empty()=>{
+                let cells=massing.cells.iter().map(|&(key,batch)|{
+                    let start=batch.first_index as usize;
+                    let end=start+batch.count as usize;
+                    let bounds=urbarium::frustum::Bounds3::from_positions(
+                        massing.indices[start..end].iter()
+                            .map(|&i|massing.vertices[i as usize].position));
+                    (key,batch,bounds)
+                }).collect();
+                let bytes=massing.vertices.len()*size_of::<GpuVertex>()+
+                    massing.indices.len()*size_of::<u32>();
+                let far=FarGpu{
+                    vertex:self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                        label:Some("Distant building massing vertices"),
+                        contents:bytemuck::cast_slice(&massing.vertices),
+                        usage:wgpu::BufferUsages::VERTEX,
+                    }),
+                    index:self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                        label:Some("Distant building massing indices"),
+                        contents:bytemuck::cast_slice(&massing.indices),
+                        usage:wgpu::BufferUsages::INDEX,
+                    }),
+                    cells,bytes,
+                };
+                if let Some(old)=self.far.replace(far){
+                    self.gpu_mesh_bytes=self.gpu_mesh_bytes.saturating_sub(old.bytes);
+                }
+                self.gpu_mesh_bytes+=bytes;
+            }
+            Ok(_)=>{}
+            Err(error)=>info(&format!("Distant massing unavailable: {error}")),
+        }
         let worker_active=browser_mesh_worker_enabled() && start_urbarium_mesh_worker();
         self.stream=Some(ChunkStream{
             source:job.city,terrain:job.terrain,
@@ -1218,7 +1272,9 @@ impl Graphics {
         let Some(stream)=self.stream.as_mut() else{return};
         let camera=Point{x:self.camera.position.x as f64,
             z:self.camera.position.z as f64};
-        let wanted=urbarium::streaming::desired_chunks(camera,&stream.source.region);
+        let limit=browser_detail_chunk_budget();
+        let wanted=urbarium::streaming::desired_chunks_with_limit(
+            camera,&stream.source.region,limit);
         let previous_cell=stream.last_camera_cell.replace(
             urbarium::streaming::ChunkKey::at(camera));
         let moved=previous_cell!=stream.last_camera_cell;
@@ -1339,6 +1395,17 @@ impl Graphics {
         }
         if complete {set_scene_detail("complete");}
         set_chunk_telemetry(resident,wanted.len(),built,evicted,initialized);
+        #[cfg(target_arch="wasm32")]
+        if let Some(el)=web_sys::window().and_then(|w|w.document())
+            .and_then(|d|d.get_element_by_id("status")){
+            let _=el.set_attribute("data-detail-chunk-limit",&limit.to_string());
+            let distant=self.far.as_ref().map_or(0,|lod|
+                lod.cells.iter().filter(|(key,_,_)|
+                    !stream.chunks.contains_key(key)).count());
+            let _=el.set_attribute("data-far-massing-cells",&distant.to_string());
+            let _=el.set_attribute("data-far-massing-bytes",
+                &self.far.as_ref().map_or(0,|far|far.bytes).to_string());
+        }
     }
 
     fn update(&mut self, pressed: &HashSet<KeyCode>, dt: f32) {
@@ -1467,6 +1534,23 @@ impl Graphics {
                     }
                 }
             }
+            // Low-poly buildings fill any currently nonresident detailed
+            // cell. Draw them only after the temporary preview retires, and
+            // never double-render a cell that already has full geometry.
+            if let (Some(stream),Some(far))=(&self.stream,&self.far) {
+                if stream.preview_retired && scene_layer_visible(SceneLayer::Buildings) {
+                    pass.set_vertex_buffer(0,far.vertex.slice(..));
+                    pass.set_index_buffer(far.index.slice(..),wgpu::IndexFormat::Uint32);
+                    for (key,batch,bounds) in &far.cells {
+                        if stream.chunks.contains_key(key) {continue;}
+                        if frustum_enabled && !frustum.may_draw(*bounds){continue;}
+                        pass.draw_indexed(batch.first_index..
+                            batch.first_index+batch.count,0,0..1);
+                        drawn_calls+=1;
+                        drawn_triangles+=batch.count/3;
+                    }
+                }
+            }
             let mut secondary_draws=0;
             if let Some(neighbor)=&self.neighbor {
                 let b=neighbor.bounds;
@@ -1474,9 +1558,11 @@ impl Graphics {
                 let pz=(self.camera.position.z as f64).clamp(b[1],b[3]);
                 let dist=(px-self.camera.position.x as f64).hypot(
                     pz-self.camera.position.z as f64);
-                // Draw-distance culling controls GPU work; only two tile
-                // buffers are resident, regardless of the catalog size.
-                if dist<2400.0 {
+                // Never hide a loaded section at an arbitrary radius.
+                // Unlike detail paging, skipping this draw had NO memory
+                // benefit and abruptly erased half the visible skyline.
+                let _=dist;
+                {
                     pass.set_vertex_buffer(0,neighbor.vertices.slice(..));
                     pass.set_index_buffer(neighbor.indices.slice(..),wgpu::IndexFormat::Uint32);
                     for batch in &neighbor.batches {
@@ -1792,7 +1878,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         world_preview:browser_joined_world(),primary_bounds,neighbor,
-        deferred_scene,stream:None,primary_gpu_bytes,
+        deferred_scene,stream:None,far:None,primary_gpu_bytes,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
         gpu_fault,
