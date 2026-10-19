@@ -76,6 +76,8 @@ pub struct RoadReport {
     pub segments_degenerate: usize,
     pub elevated_spans: usize,
     pub motorway_sections: usize,
+    /// Original pedestrian triangles with at-grade asphalt area excised.
+    /// Uncovered fragments are preserved; this is not a count of deleted paths.
     pub pedestrian_overlap_triangles_removed:usize,
     /// Filled at-grade T/cross intersections inferred from shared road endpoints.
     pub junction_patches: usize,
@@ -444,137 +446,11 @@ fn junction_hull(mut points:Vec<(f64,f64)>) -> Vec<(f64,f64)> {
     lower
 }
 
-// The Overture footpath dataset is centerline-only. Count at-grade overlaps
-// for diagnostics without destructively clipping out whole sidewalk triangles.
-// Depth-prioritized asphalt covers crossing centerlines in the renderer.
-// The spatial hash avoids a streets × pedestrian-triangles full scan.
-const OVERLAP_CELL_M:f64=24.0;
-
-// Vertex-only rejection misses long or angled triangles that cross asphalt
-// while all three corners lie outside the carriageway buffer. Test each
-// surviving pedestrian triangle against the buffered road *segments* too.
-fn distance_sq_to_segment(p:Point,a:Point,b:Point)->f64{
-    let dx=b.x-a.x;
-    let dz=b.z-a.z;
-    let len=dx*dx+dz*dz;
-    let t=if len>1e-12 {
-        (((p.x-a.x)*dx+(p.z-a.z)*dz)/len).clamp(0.0,1.0)
-    }else{0.0};
-    (p.x-(a.x+t*dx)).powi(2)+(p.z-(a.z+t*dz)).powi(2)
-}
-fn cross2(a:Point,b:Point,c:Point)->f64 {
-    (b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x)
-}
-fn segments_within(a:Point,b:Point,c:Point,d:Point,reach_sq:f64)->bool{
-    let o1=cross2(a,b,c);let o2=cross2(a,b,d);
-    let o3=cross2(c,d,a);let o4=cross2(c,d,b);
-    if o1*o2<0.0 && o3*o4<0.0 {return true;}
-    distance_sq_to_segment(a,c,d)<=reach_sq ||
-    distance_sq_to_segment(b,c,d)<=reach_sq ||
-    distance_sq_to_segment(c,a,b)<=reach_sq ||
-    distance_sq_to_segment(d,a,b)<=reach_sq
-}
-fn point_in_triangle(p:Point,tri:[Point;3])->bool{
-    let area=cross2(tri[0],tri[1],tri[2]);
-    if area.abs()<1e-10{return false;}
-    let a=cross2(tri[0],tri[1],p);
-    let b=cross2(tri[1],tri[2],p);
-    let c=cross2(tri[2],tri[0],p);
-    if area>0.0 {a>=0.0&&b>=0.0&&c>=0.0}
-    else {a<=0.0&&b<=0.0&&c<=0.0}
-}
-fn road_intersects_walk_triangle(tri:[Point;3],a:Point,b:Point,reach:f64)->bool{
-    let r2=reach*reach;
-    tri.iter().any(|&p|distance_sq_to_segment(p,a,b)<=r2) ||
-    point_in_triangle(a,tri) || point_in_triangle(b,tri) ||
-    (0..3).any(|i|segments_within(a,b,tri[i],tri[(i+1)%3],r2))
-}
+/// Only visible at-grade asphalt can take precedence over pedestrian geometry.
 pub(crate) fn at_grade_motor_road(street:&Street)->bool {
     surface_class(street).is_some_and(|(kind,_)|
         matches!(kind,SurfaceKind::Road|SurfaceKind::Motorway))
         && !source_qualified_non_surface(street)
-}
-fn count_pedestrian_asphalt_overlap(city:&City,scene:&RoadScene,
-    include_freeways:bool)->usize {
-    let mut roads=Vec::<(Point,Point,f64)>::new();
-    let mut buckets=BTreeMap::<(i32,i32),Vec<usize>>::new();
-    for street in &city.streets {
-        if !at_grade_motor_road(street){continue;}
-        // Invisible freeways must not leave invisible gaps in footpaths.
-        if !include_freeways && surface_class(street)
-            .is_some_and(|(kind,_)|kind==SurfaceKind::Motorway) {continue;}
-        let Some((_,width))=surface_class(street) else{continue;};
-        let reach=width*0.5+2.6;
-        for pair in street.path.windows(2) {
-            if direction(pair[0],pair[1]).is_none(){continue;}
-            let index=roads.len();
-            roads.push((pair[0],pair[1],reach));
-            let left=((pair[0].x.min(pair[1].x)-reach)/OVERLAP_CELL_M).floor() as i32;
-            let right=((pair[0].x.max(pair[1].x)+reach)/OVERLAP_CELL_M).floor() as i32;
-            let bottom=((pair[0].z.min(pair[1].z)-reach)/OVERLAP_CELL_M).floor() as i32;
-            let top=((pair[0].z.max(pair[1].z)+reach)/OVERLAP_CELL_M).floor() as i32;
-            for x in left..=right {
-                for z in bottom..=top{buckets.entry((x,z)).or_default().push(index);}
-            }
-        }
-    }
-    let on_asphalt=|x:f64,z:f64|->bool{
-        let key=((x/OVERLAP_CELL_M).floor() as i32,
-                 (z/OVERLAP_CELL_M).floor() as i32);
-        buckets.get(&key).is_some_and(|indices|indices.iter().any(|&i|{
-            let (a,b,reach)=roads[i];
-            let dx=b.x-a.x;
-            let dz=b.z-a.z;
-            let length=dx*dx+dz*dz;
-            let t=if length>0.0 {
-                (((x-a.x)*dx+(z-a.z)*dz)/length).clamp(0.0,1.0)
-            } else {0.0};
-            let xx=a.x+t*dx-x;
-            let zz=a.z+t*dz-z;
-            xx*xx+zz*zz<=reach*reach
-        }))
-    };
-    let mut omitted=0usize;
-    for kind in [SurfaceKind::Walk,SurfaceKind::Steps]{
-        let Some(mesh)=scene.layers.get(&kind) else{continue;};
-        let hidden=mesh.vertices.iter().map(|v|
-            on_asphalt(v.position[0] as f64,v.position[2] as f64))
-            .collect::<Vec<_>>();
-        for triangle in mesh.indices.chunks_exact(3) {
-            // A connected pedestrian ribbon stays visible until it reaches
-            // the carriageway's buffered footprint, leaving a clean gap.
-            // Include edge intersections even when no vertex falls inside
-            // asphalt (a common source of stray clipping at shallow angles).
-            let mut collide=triangle.iter().any(|&i|hidden[i as usize]);
-            if !collide {
-                let tri=[triangle[0],triangle[1],triangle[2]].map(|i|{
-                    let p=mesh.vertices[i as usize].position;
-                    Point{x:p[0] as f64,z:p[2] as f64}
-                });
-                let minx=tri.iter().map(|p|p.x).fold(f64::INFINITY,f64::min);
-                let maxx=tri.iter().map(|p|p.x).fold(f64::NEG_INFINITY,f64::max);
-                let minz=tri.iter().map(|p|p.z).fold(f64::INFINITY,f64::min);
-                let maxz=tri.iter().map(|p|p.z).fold(f64::NEG_INFINITY,f64::max);
-                'outer:for cell_x in (minx/OVERLAP_CELL_M).floor() as i32
-                    ..=(maxx/OVERLAP_CELL_M).floor() as i32 {
-                    for cell_z in (minz/OVERLAP_CELL_M).floor() as i32
-                        ..=(maxz/OVERLAP_CELL_M).floor() as i32 {
-                        if let Some(indices)=buckets.get(&(cell_x,cell_z)) {
-                            for &index in indices {
-                                let (a,b,reach)=roads[index];
-                                if road_intersects_walk_triangle(tri,a,b,reach) {
-                                    collide=true;
-                                    break 'outer;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if collide {omitted+=1;}
-        }
-    }
-    omitted
 }
 
 fn at_region_edge(city:&City,p:Point)->bool {
@@ -699,13 +575,13 @@ fn mesh_streets_internal(city:&City,detailed_bridges:bool,
         *report.by_surface.entry(kind.material().into()).or_insert(0)+=1;
     }
     add_junction_patches(city,&mut scene,&mut report,detailed_bridges)?;
-    // Previously we removed a WHOLE pedestrian triangle if even one tiny
-    // corner intersected asphalt. That produced jagged voids at crossings,
-    // bends and every new catalog section. Keep the geometry continuous;
-    // depth ordering already places asphalt +0.24m above paths +0.09m.
-    // Record source overlap diagnostically; do not destroy source triangles.
-    let _overlaps=count_pedestrian_asphalt_overlap(city,&scene,detailed_bridges);
-    report.pedestrian_overlap_triangles_removed=0;
+    // Street asphalt has absolute geometric priority over pedestrian ribbons.
+    // Subtract the EXACT visible road/junction triangles from walk/steps,
+    // preserving the portions outside asphalt. Z ordering alone leaks on DEM
+    // slopes and removing entire path triangles creates jagged intersections.
+    // Hidden freeways and separate bridge decks cannot erase ground paths.
+    report.pedestrian_overlap_triangles_removed=
+        crate::pedestrian_clip::clip_walks_below_asphalt(&mut scene)?;
     if detailed_bridges {
         crate::road_grade::build_bridge_layers(&mut scene,|_,_|0.0)?;
     }
@@ -850,65 +726,27 @@ mod tests {
         assert!(scene.layers[&SurfaceKind::Road].indices.len()>=96);
     }
     #[test]
-    fn at_grade_walk_surface_is_trimmed_at_actual_carriageway_not_overpass() {
+    fn at_grade_walk_surface_is_cut_by_asphalt_not_by_overpass(){
         let mut atgrade=street("primary",&[[-20.,0.],[20.,0.]]);
         atgrade.tags.insert("width".into(),"12m".into());
         let path=street("footway",&[[0.,-20.],[0.,20.]]);
         let (clean,report)=mesh_streets(&city(vec![atgrade,path.clone()])).unwrap();
-        assert_eq!(report.pedestrian_overlap_triangles_removed,0);
-        let original=mesh_streets_with_bridges(&city(vec![path.clone()]),false)
-            .unwrap().0;
-        assert_eq!(clean.layers[&SurfaceKind::Walk].indices.len(),
-                   original.layers[&SurfaceKind::Walk].indices.len(),
-                   "At-grade asphalt must not delete whole sidewalk triangles");
+        assert!(report.pedestrian_overlap_triangles_removed>0,
+            "pedestrian street overlap must be removed from real geometry");
         let clean_walk=&clean.layers[&SurfaceKind::Walk];
-        // Existing footpaths stay connected; asphalt masks crossings with
-        // distinct depth instead of creating a gap beyond road edges.
-        assert!(clean_walk.indices.iter().any(|&i|
-            clean_walk.vertices[i as usize].position[2].abs()<6.0));
-        let road_y=clean.layers[&SurfaceKind::Road].vertices[0].position[1];
-        let walk_y=clean_walk.vertices[0].position[1];
-        assert!(road_y-walk_y>0.1);
+        assert!(!clean_walk.indices.is_empty(),"paths outside asphalt survive");
+        assert!(clean_walk.vertices.iter().any(|v|v.position[2]<-6.0));
+        assert!(clean_walk.vertices.iter().any(|v|v.position[2]>6.0));
         let mut bridge=street("primary",&[[-20.,0.],[20.,0.]]);
         bridge.tags.insert("bridge".into(),"yes".into());
-        let (separated,separate_report)=mesh_streets(&city(vec![bridge,path])).unwrap();
+        let (separated,separate_report)=mesh_streets(&city(vec![bridge,path.clone()])).unwrap();
         assert_eq!(separate_report.pedestrian_overlap_triangles_removed,0);
+        let only_path=mesh_streets_with_bridges(&city(vec![path]),false).unwrap().0;
         assert_eq!(separated.layers[&SurfaceKind::Walk].indices.len(),
-                   clean_walk.indices.len(),
-                   "At-grade crossings and elevated paths must both retain continuity");
+                   only_path.layers[&SurfaceKind::Walk].indices.len(),
+                   "raised bridge must not remove an at-grade pedestrian crossing");
     }
-    #[test]
-    fn pedestrian_triangle_crossing_asphalt_without_any_vertex_inside_is_removed() {
-        let a=Point{x:-20.0,z:0.0};
-        let b=Point{x:20.0,z:0.0};
-        // All three vertices are >2.9 m from road center; the triangle
-        // nevertheless straddles the asphalt and must not be left visible.
-        let crossing=[
-            Point{x:-5.0,z:-5.0},
-            Point{x:5.0,z:-5.0},
-            Point{x:0.0,z:5.0},
-        ];
-        for &v in &crossing {
-            assert!(distance_sq_to_segment(v,a,b)>2.9_f64.powi(2));
-        }
-        assert!(road_intersects_walk_triangle(crossing,a,b,2.9));
-        let untouched=[
-            Point{x:-5.0,z:8.0},
-            Point{x:5.0,z:8.0},
-            Point{x:0.0,z:12.0},
-        ];
-        assert!(!road_intersects_walk_triangle(untouched,a,b,2.9));
-    }
-    #[test]
-    fn short_road_segment_fully_inside_walk_triangle_still_intersects() {
-        let triangle=[
-            Point{x:-10.0,z:-10.0},
-            Point{x:10.0,z:-10.0},
-            Point{x:0.0,z:10.0},
-        ];
-        assert!(road_intersects_walk_triangle(triangle,
-            Point{x:-1.0,z:0.0},Point{x:1.0,z:0.0},1.0));
-    }
+
     #[test]
     fn hidden_freeways_do_not_erase_at_grade_pedestrian_paths() {
         let (scene,report)=mesh_streets_with_bridges(&city(vec![
