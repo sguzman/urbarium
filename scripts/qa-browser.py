@@ -1335,6 +1335,17 @@ with sync_playwright() as p:
         assert evidence.is_visible()
         assert cases[0]["street_id"] in evidence.inner_text()
         assert cases[0]["building_id"] in evidence.inner_text()
+        if cases[0].get("street_name"):
+            assert cases[0]["street_name"] in evidence.inner_text()
+        topology={
+            "through_footprint":"crosses this footprint",
+            "ends_inside_footprint":"terminates inside",
+            "starts_inside_footprint":"begins inside",
+            "both_ends_inside_footprint":"Both source endpoints",
+        }
+        expected_pattern=topology.get(cases[0].get("source_line_pattern"))
+        if expected_pattern:
+            assert expected_pattern in evidence.inner_text()
         if len(cases)>1:
             page.locator("#road-conflicts-select").select_option("1")
             assert cases[1]["street_id"] in evidence.inner_text()
