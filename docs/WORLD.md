@@ -33,17 +33,20 @@ How source geography is transformed into sections, coordinate frames, DEM-aware 
   `min_floor` as an explicitly **render-only** approximate clearance.
   Source `height` is the vertical extent **from bottom to roof**, so raised
   roofs render at `min_height + height` rather than merely `height`.
-- Raised building volume meshes have side walls starting at the source base
-  and a downward-facing underside. They no longer add fictitious solid walls
-  through a ground-level driveway. Walking collisions and road-clearance
-  envelopes follow the same source base. Ground-based buildings still extend
-  foundations below terrain to prevent slope clipping.
-- If bottom clearance is source-qualified and more than 0.6 m, the planar
-  overlap audit does **not** misclassify its roofprint as an asphalt collision;
-  it records excluded raised buildings. Unknown-base buildings remain
-  conservative, and 2D overlap without vertical data is not resolved by
-  deleting roads or inventing elevations. Building parts are not yet
-  independently reconstructed.
+- Raised building volume meshes have side walls starting at the rendered
+  base and a downward-facing underside. Ground-based buildings still extend
+  foundations below terrain to prevent slope clipping. **Render-only**
+  `min_floor` estimates may position visual geometry higher, but cannot open
+  a verified walking passage or excuse road/building conflicts: road-clearance
+  and walking obstacles keep the footprint conservatively obstructed down
+  to ground level until metric `min_height` is available. Aerial collision
+  retains at least the displayed upper roof bound.
+- If bottom clearance is **measured in meters** and more than 0.6 m, the
+  planar overlap audit excludes the suspended volume from the at-grade
+  conflict count. Floor-index estimates alone never qualify for this
+  exclusion. Unknown-base buildings remain conservative, and 2D overlap
+  without vertical data is not resolved by deleting roads or inventing
+  elevations. Building parts are not yet independently reconstructed.
 - The Downtown Overture extractor must use the actual `num_floors` column:
   `level` means visual ordering, **not** number of floors.
 - Mesh generation, terrain, collision, traffic and rendering belong in later stages, using this data as input.
