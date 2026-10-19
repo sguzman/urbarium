@@ -185,9 +185,9 @@
       if(!Array.isArray(city.streets)||!Array.isArray(city.buildings)||!city.region)
         throw Error("invalid geographic source");
       data=city;draw(city);
-      // We need neither full source tree nor a second CPU geometry copy
-      // once the first compact canvas paint exists.
-      data=null;
+      // Retain the small source object only while the heavy renderer
+      // is loading, so resizing cannot blank the early visible city.
+      // It is released as soon as the real first frame is presented.
     }).catch(error=>{
       status.dataset.bootstrapPreview="unavailable";
       console.warn("Urbarium early geographic preview unavailable",error);
