@@ -825,6 +825,16 @@ fn set_browser_stage(stage: &str) {
                 && stage!="device-lost" {return;}
             let _=el.set_attribute("data-render-stage",stage);
         }
+        // The provisional 2D canvas sits ABOVE WebGPU/WebGL2 (z-index 1).
+        // Its mutation observer alone is not a safe release gate: a stalled
+        // JS callback can freeze the apparent scene while the real renderer
+        // continues at 60 FPS underneath. Retire it directly on the first
+        // successfully presented GPU frame.
+        if stage=="first-present" {
+            if let Some(cover)=doc.get_element_by_id("startup-preview") {
+                cover.remove();
+            }
+        }
     }
 }
 #[cfg(not(target_arch="wasm32"))]
@@ -835,6 +845,13 @@ fn set_browser_frame_count(count: u64) {
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("status") {
             let _=el.set_attribute("data-frame-count",&count.to_string());
+        }
+        // Redundant retirement in case an older cached page script leaves
+        // its overlay attached after the first-present state change.
+        if count>0 {
+            if let Some(cover)=doc.get_element_by_id("startup-preview") {
+                cover.remove();
+            }
         }
     }
 }
