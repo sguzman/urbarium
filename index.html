@@ -185,7 +185,7 @@
   <link data-trunk rel="copy-file" href="web/quicklook.js">
   <!-- Source-backed early city paint starts in parallel with the heavy WASM
        loader. A stalled binary must not leave a completely blank viewer. -->
-  <script src="./quicklook.js" defer></script>
+  <script src="./quicklook.js?v=release-on-first-gpu-frame" defer></script>
   <!-- Geography cache intercepts the initial Rust download, not just reloads. -->
   <script>
     window.urbariumLandmarkPalette = Object.freeze({
@@ -212,6 +212,12 @@
     }
     #startup-preview {position:fixed;inset:0;width:100vw;height:100vh;
       z-index:1;pointer-events:none;display:block;}
+    /* CSS is an independent protection if the JS startup overlay cleanup
+       callback stalls. Never let an image mask an active GPU renderer. */
+    body:has(#status[data-render-stage="first-present"]) #startup-preview,
+    body:has(#status[data-frame-count]:not([data-frame-count="0"])) #startup-preview {
+      display:none!important;
+    }
     .minimap {position:fixed;z-index:4;right:16px;top:16px;width:260px;
       max-height:calc(100vh - 32px);overflow-y:auto;overflow-x:hidden;
       border:1px solid #506b7e;border-radius:10px;
