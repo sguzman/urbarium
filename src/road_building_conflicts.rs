@@ -10,13 +10,34 @@ use crate::road_clearance::ClearanceIndex;
 use crate::geometry::{mesh_building,HeightPolicy,Mesh};
 use crate::roads::{at_grade_motor_road,ribbon,surface_class,SurfaceKind};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
+/// A footprint overlap alone is not grounds to delete road geometry.
+#[derive(Debug,Clone,Copy,Serialize,PartialEq,Eq,PartialOrd,Ord)]
+#[serde(rename_all="snake_case")]
+pub enum ConflictCause {
+    /// The imported source centerline itself passes through a solid roof.
+    /// Requires source/grade investigation; reducing the road width cannot fix it.
+    CenterlineInsideFootprint,
+    /// The source provides physical width/lanes, so automated narrowing
+    /// would override measured or explicitly tagged information.
+    TaggedWidthEnvelope,
+    /// Centerline is outside the building; an estimated class width or bend
+    /// miter intrudes into the building wall.
+    InferredWidthEnvelope,
+}
 #[derive(Debug,Clone,Serialize)]
 pub struct Conflict {
     pub building_id:String,
     pub street_id:String,
     pub road_kind:String,
     pub overlap_m2:f64,
+    pub cause:ConflictCause,
+    pub centerline_inside_m:f64,
+    pub centerline_length_m:f64,
+    /// WGS84 longitude, latitude of the affected source-line position;
+    /// never a made-up building address or manually inferred grade.
+    pub focus_lonlat:[f64;2],
 }
 #[derive(Debug,Serialize)]
 pub struct ConflictReport {
@@ -25,6 +46,9 @@ pub struct ConflictReport {
     pub at_grade_streets_checked:usize,
     pub conflict_pairs:usize,
     pub sum_triangle_overlap_m2:f64,
+    pub by_cause:BTreeMap<ConflictCause,usize>,
+    pub area_m2_by_cause:BTreeMap<ConflictCause,f64>,
+    pub total_centerline_inside_m:f64,
     pub largest:Vec<Conflict>,
 }
 #[derive(Clone)]
@@ -32,6 +56,9 @@ struct Footprint {
     source_id:String,
     bounds:[f64;4],
     roof:Vec<[Point;3]>,
+    /// Original solid outer boundaries and courtyard holes are needed to
+    /// exclude a centerline that merely runs along a building wall.
+    polygons:Vec<Vec<Vec<Point>>>,
 }
 fn from_vertex(v:[f32;3])->Point {Point{x:v[0] as f64,z:v[2] as f64}}
 fn bounds(points:&[Point])->[f64;4]{
@@ -62,7 +89,8 @@ fn building_roof(building:&Building)->Result<Footprint,String>{
         roof.push(points);
     }
     if roof.is_empty(){return Err(format!("building {} has no roof",building.source_id));}
-    Ok(Footprint{source_id:building.source_id.clone(),bounds:extent,roof})
+    Ok(Footprint{source_id:building.source_id.clone(),bounds:extent,roof,
+        polygons:building.polygons.iter().map(|p|p.rings.clone()).collect()})
 }
 fn signed(a:Point,b:Point,c:Point)->f64{
     (b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x)
@@ -108,6 +136,137 @@ fn intersection_area(a:[Point;3],b:[Point;3])->f64{
     }
     polygon_area(&poly)
 }
+/// Parametric interval of one source segment inside a single upward-facing
+/// building roof triangle. Projected triangles are the exact same mesh that
+/// the viewer draws, including courtyard triangulation.
+fn segment_roof_interval(a:Point,b:Point,triangle:[Point;3])->Option<(f64,f64)> {
+    let cross=signed(triangle[0],triangle[1],triangle[2]);
+    if cross.abs()<1e-10{return None;}
+    let direction=if cross>=0.0 {1.0}else{-1.0};
+    let mut enter:f64=0.0;
+    let mut leave:f64=1.0;
+    for i in 0..3 {
+        let left=triangle[i];
+        let right=triangle[(i+1)%3];
+        let at_start=direction*signed(left,right,a);
+        let at_end=direction*signed(left,right,b);
+        let delta=at_end-at_start;
+        if delta.abs()<1e-11 {
+            if at_start<0.0{return None;}
+            continue;
+        }
+        let edge_t=-at_start/delta;
+        if delta>0.0 {enter=enter.max(edge_t);}
+        else {leave=leave.min(edge_t);}
+        if leave<=enter{return None;}
+    }
+    (leave>enter && enter<1.0 && leave>0.0)
+        .then_some((enter.max(0.0),leave.min(1.0)))
+}
+/// Deduplicate overlapping intervals, including a source line aligned with
+/// the diagonal shared by TWO roof triangles. Otherwise that alignment can
+/// double-count both source penetration and conflict severity.
+fn union_intervals(mut intervals:Vec<(f64,f64)>)->Vec<(f64,f64)> {
+    intervals.sort_by(|a,b|a.0.total_cmp(&b.0));
+    let mut merged:Vec<(f64,f64)>=Vec::new();
+    for (lo,hi) in intervals {
+        if let Some(last)=merged.last_mut(){
+            if lo<=last.1+1e-10 {last.1=last.1.max(hi);continue;}
+        }
+        merged.push((lo,hi));
+    }
+    merged
+}
+/// Source polygons provide a strict interior test: tracing along a
+/// building's OUTER perimeter is not the same as crossing its solid interior.
+/// Triangulation diagonals are not outer perimeters and remain valid interior.
+fn on_ring_edge(p:Point,a:Point,b:Point)->bool{
+    let dx=b.x-a.x;let dz=b.z-a.z;
+    let length=dx.hypot(dz);
+    if length<=1e-12{return (p.x-a.x).hypot(p.z-a.z)<1e-7;}
+    let distance=signed(a,b,p).abs()/length;
+    let projection=(p.x-a.x)*dx+(p.z-a.z)*dz;
+    distance<1e-7 && projection>=-1e-7 && projection<=length*length+1e-7
+}
+fn in_ring(p:Point,ring:&[Point])->Option<bool>{
+    if ring.len()<3{return Some(false);}
+    let mut inside=false;
+    let mut previous=*ring.last().unwrap();
+    for &current in ring {
+        if on_ring_edge(p,previous,current){return None;}
+        if (current.z>p.z)!=(previous.z>p.z){
+            let crossing=current.x+(p.z-current.z)*
+                (previous.x-current.x)/(previous.z-current.z);
+            if p.x<crossing{inside=!inside;}
+        }
+        previous=current;
+    }
+    Some(inside)
+}
+fn in_solid_interior(p:Point,roof:&Footprint)->bool{
+    roof.polygons.iter().any(|rings|{
+        let Some(outer)=rings.first() else{return false;};
+        if in_ring(p,outer)!=Some(true){return false;}
+        rings.iter().skip(1).all(|ring|in_ring(p,ring)==Some(false))
+    })
+}
+/// Return total length of the *source centerline* passing through a solid
+/// roof and the midpoint of its longest contained section for map QA.
+fn centerline_roof(street:&Street,roof:&Footprint)->(f64,Option<Point>){
+    let mut total=0.0;
+    let mut longest=0.0;
+    let mut focus=None;
+    for segment in street.path.windows(2) {
+        let a=segment[0];let b=segment[1];
+        let length=(a.x-b.x).hypot(a.z-b.z);
+        if !length.is_finite()||length<=1e-9 ||
+            !intersects(bounds(&[a,b]),roof.bounds){continue;}
+        let intervals=roof.roof.iter()
+            .filter_map(|&triangle|segment_roof_interval(a,b,triangle))
+            .collect::<Vec<_>>();
+        for (lo,hi) in union_intervals(intervals){
+            let t=(lo+hi)*0.5;
+            let midpoint=Point{x:a.x+(b.x-a.x)*t,z:a.z+(b.z-a.z)*t};
+            // A source centerline running ON an exterior wall is a
+            // width-envelope issue, not solid building penetration.
+            if !in_solid_interior(midpoint,roof){continue;}
+            let covered=(hi-lo)*length;
+            total+=covered;
+            if covered>longest {
+                longest=covered;
+                focus=Some(midpoint);
+            }
+        }
+    }
+    (total,focus)
+}
+fn point_near_footprint(street:&Street,roof:&Footprint)->Point {
+    let target=Point{x:(roof.bounds[0]+roof.bounds[2])*0.5,
+                     z:(roof.bounds[1]+roof.bounds[3])*0.5};
+    let mut best=(f64::INFINITY,street.path[0]);
+    for segment in street.path.windows(2){
+        let a=segment[0];let b=segment[1];
+        let dx=b.x-a.x;let dz=b.z-a.z;
+        let len2=dx*dx+dz*dz;
+        let t=if len2>1e-12 {((target.x-a.x)*dx+(target.z-a.z)*dz)/len2}
+            else {0.0};
+        let t=t.clamp(0.0,1.0);
+        let p=Point{x:a.x+t*dx,z:a.z+t*dz};
+        let dist2=(p.x-target.x).powi(2)+(p.z-target.z).powi(2);
+        if dist2<best.0 {best=(dist2,p);}
+    }
+    best.1
+}
+fn source_line_length(street:&Street)->f64 {
+    street.path.windows(2)
+        .map(|s|(s[1].x-s[0].x).hypot(s[1].z-s[0].z)).sum()
+}
+fn classify_overlap(street:&Street,centerline_m:f64)->ConflictCause {
+    if centerline_m>0.05 {ConflictCause::CenterlineInsideFootprint}
+    else if street.tags.contains_key("width")||street.tags.contains_key("lanes"){
+        ConflictCause::TaggedWidthEnvelope
+    }else{ConflictCause::InferredWidthEnvelope}
+}
 fn conflict_area(road:&Mesh,roof:&Footprint)->f64{
     let mut area=0.0;
     for indices in road.indices.chunks_exact(3){
@@ -142,6 +301,9 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
     let mut checked=0usize;
     let mut conflicts=Vec::new();
     let mut total=0.0;
+    let mut by_cause:BTreeMap<ConflictCause,usize>=BTreeMap::new();
+    let mut area_m2_by_cause:BTreeMap<ConflictCause,f64>=BTreeMap::new();
+    let mut total_centerline_inside_m=0.0;
     for street in &city.streets{
         if !at_grade_motor_road(street){continue;}
         let Some((kind,width))=surface_class(street) else{continue;};
@@ -156,22 +318,34 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
             if area<0.25{continue;}
             if !area.is_finite(){return Err("invalid road/building overlap area".into());}
             total+=area;
+            let (inside_m,where_inside)=centerline_roof(street,&roofs[i]);
+            let cause=classify_overlap(street,inside_m);
+            *by_cause.entry(cause).or_default()+=1;
+            *area_m2_by_cause.entry(cause).or_default()+=area;
+            total_centerline_inside_m+=inside_m;
+            let focus=where_inside.unwrap_or_else(||point_near_footprint(street,&roofs[i]));
             conflicts.push(Conflict{
                 building_id:roofs[i].source_id.clone(),
                 street_id:street.source_id.clone(),
                 road_kind:street.kind.clone(),
                 overlap_m2:(area*1000.0).round()/1000.0,
+                cause,centerline_inside_m:(inside_m*1000.0).round()/1000.0,
+                centerline_length_m:(source_line_length(street)*1000.0).round()/1000.0,
+                focus_lonlat:city.region.unproject(focus),
             });
         }
     }
     conflicts.sort_by(|a,b|b.overlap_m2.total_cmp(&a.overlap_m2)
         .then(a.building_id.cmp(&b.building_id))
         .then(a.street_id.cmp(&b.street_id)));
+    for area in area_m2_by_cause.values_mut(){*area=(*area*1000.0).round()/1000.0;}
     Ok(ConflictReport{
         region_id:city.region.id.clone(),
         buildings_checked:roofs.len(),at_grade_streets_checked:checked,
         conflict_pairs:conflicts.len(),
         sum_triangle_overlap_m2:(total*1000.0).round()/1000.0,
+        by_cause,area_m2_by_cause,
+        total_centerline_inside_m:(total_centerline_inside_m*1000.0).round()/1000.0,
         largest:conflicts.into_iter().take(20).collect(),
     })
 }
@@ -215,6 +389,65 @@ mod tests {
     fn courtyard_hole_never_becomes_fake_collision(){
         let c=city(street(p(3.5,5.),p(6.5,5.),1.0),building(true));
         assert_eq!(audit_road_buildings(&c).unwrap().conflict_pairs,0);
+    }
+    #[test]
+    fn classifies_real_centerline_penetration_not_merely_a_wide_road(){
+        let c=city(street(p(-5.,5.),p(15.,5.),2.0),building(false));
+        let report=audit_road_buildings(&c).unwrap();
+        let conflict=&report.largest[0];
+        assert_eq!(conflict.cause,ConflictCause::CenterlineInsideFootprint);
+        assert!((conflict.centerline_inside_m-10.0).abs()<0.002);
+        assert!((conflict.centerline_length_m-20.0).abs()<0.002);
+        assert_eq!(report.by_cause[&ConflictCause::CenterlineInsideFootprint],1);
+        assert!((report.total_centerline_inside_m-10.0).abs()<0.002);
+        let [lon,lat]=conflict.focus_lonlat;
+        assert!((lon-0.0).abs()<0.001 && (lat-0.0).abs()<0.001);
+    }
+    #[test]
+    fn width_collision_without_centerline_intrusion_is_separate(){
+        let c=city(street(p(-5.,-1.),p(15.,-1.),4.0),building(false));
+        let report=audit_road_buildings(&c).unwrap();
+        assert_eq!(report.conflict_pairs,1);
+        assert_eq!(report.largest[0].cause,ConflictCause::TaggedWidthEnvelope);
+        assert_eq!(report.largest[0].centerline_inside_m,0.0);
+        assert_eq!(report.by_cause[&ConflictCause::TaggedWidthEnvelope],1);
+    }
+    #[test]
+    fn triangle_diagonal_does_not_double_count_centerline_length(){
+        let roof=building_roof(&building(false)).unwrap();
+        // For an outer square the diagonal is an internal tessellation edge.
+        let line=street(p(0.,0.),p(10.,10.),2.0);
+        let (length,_) = centerline_roof(&line,&roof);
+        assert!((length-200.0_f64.sqrt()).abs()<0.001,
+            "adjacent roof triangles cannot count the same source interval twice");
+    }
+    #[test]
+    fn centerline_along_outer_wall_is_not_source_penetration(){
+        let roof=building_roof(&building(false)).unwrap();
+        let line=street(p(-5.,0.),p(15.,0.),2.0);
+        let (length,_) = centerline_roof(&line,&roof);
+        assert!(length<0.00001,"boundary-tracing road is an edge problem");
+    }
+    #[test]
+    fn centerline_through_courtyard_hole_is_not_source_penetration(){
+        let roof=building_roof(&building(true)).unwrap();
+        let line=street(p(3.5,5.),p(6.5,5.),1.0);
+        let (length,_) = centerline_roof(&line,&roof);
+        assert!(length<0.00001);
+    }
+    #[test]
+    fn inferred_service_shoulder_collision_not_mislabeled_as_centerline(){
+        let mut service=street(p(-5.,-1.),p(15.,-1.),5.5);
+        service.kind="service".into();
+        service.tags.clear();
+        let c=city(service,building(false));
+        let report=audit_road_buildings(&c).unwrap();
+        assert_eq!(report.by_cause.get(&ConflictCause::CenterlineInsideFootprint),None);
+        // The clearance pass may remove this overlap entirely, which is good.
+        for conflict in report.largest {
+            assert_eq!(conflict.cause,ConflictCause::InferredWidthEnvelope);
+            assert_eq!(conflict.centerline_inside_m,0.0);
+        }
     }
     #[test]
     fn tunnel_is_not_treated_as_surface_road(){

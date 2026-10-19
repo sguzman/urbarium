@@ -118,6 +118,14 @@ An additional `audit-road-buildings --city FILE` command measures asphalt
 intersection with actual triangulated building footprints (including courtyard
 holes). It reports source building/road IDs and geometric overlap areas.
 The diagnostic runs on every catalog region in the browser workflow.
+It now reports conflict classes: source-centerline penetration into a solid
+triangulated building roof, explicitly tagged-width shoulder overlap, and
+inferred-width shoulder overlap. The penetration test calculates exact
+segment intervals through roof triangles and unions them so shared diagonals
+never double-count length, respecting courtyard holes. Each conflict includes
+source IDs, affected centerline length and WGS84 focus coordinates. This
+separates possible under-building service roads from safe width-envelope
+tuning without inventing vertical-grade facts.
 This is a **diagnostic, not an automatic repair**: a conflict may indicate
 misregistered source data, covered roadway or grade separation. Deleting
 either complete surface would introduce new holes. Only at-grade ordinary

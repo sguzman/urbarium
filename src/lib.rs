@@ -63,6 +63,14 @@ impl Region {
         }
     }
 
+    /// Invert precisely the same region-local projection used by source
+    /// geometries. Required for inspectable WGS84 conflict QA coordinates.
+    pub fn unproject(&self, point:Point)->[f64;2] {
+        let reference_lat=self.origin[1].to_radians();
+        [self.origin[0]+(point.x/(EARTH_RADIUS_M*reference_lat.cos())).to_degrees(),
+         self.origin[1]+(point.z/EARTH_RADIUS_M).to_degrees()]
+    }
+
     pub fn intersects_lonlat_bbox(&self, bbox: [f64; 4]) -> bool {
         bbox[0] <= self.bbox[2] && bbox[2] >= self.bbox[0]
             && bbox[1] <= self.bbox[3] && bbox[3] >= self.bbox[1]
@@ -842,6 +850,10 @@ mod tests {
         assert_eq!(region.project(-118.25, 34.05), Point { x: 0.0, z: 0.0 });
         assert!(region.project(-118.249, 34.05).x > 90.0);
         assert!(region.project(-118.25, 34.051).z > 100.0);
+        let coordinates=[-118.24875,34.0522];
+        let reconstructed=region.unproject(region.project(coordinates[0],coordinates[1]));
+        assert!((reconstructed[0]-coordinates[0]).abs()<1e-10);
+        assert!((reconstructed[1]-coordinates[1]).abs()<1e-10);
     }
 
     #[test]
