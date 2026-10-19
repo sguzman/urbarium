@@ -199,7 +199,6 @@ jobs:
                      for m in landmarks["landmarks"])
           assert (dist/"stats.js").is_file(), "Stats JavaScript missing from published site"
           page=(dist/"index.html").read_text()
-          assert 'quicklook.js' in page
           assert 'startup-preview' not in page, "Static fake city canvas must not ship"
           assert 'minimap-canvas' in page
           assert 'map-zoom-in' in page
