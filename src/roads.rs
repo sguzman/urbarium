@@ -3,6 +3,8 @@
 //! a traversable, intersection-aware road network is a separate later milestone.
 
 use crate::geometry::{Mesh, Vertex};
+use crate::road_clearance::ClearanceIndex;
+use crate::Building;
 use crate::{City, Point, Street};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -589,6 +591,19 @@ pub fn mesh_streets(city:&City)->Result<(RoadScene,RoadReport),String> {
 /// Source bridge spans are retained for diagnostics and explicit preview.
 pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
     ->Result<(RoadScene,RoadReport),String> {
+    mesh_streets_internal(city,detailed_bridges,None)
+}
+
+/// Every render chunk MUST use the same full-region building footprints, not
+/// its individually owned building meshes. This guarantees inferred local
+/// service-road widths remain continuous through artificial chunk boundaries.
+pub fn mesh_streets_with_clearance(city:&City,footprints:&[Building],
+    detailed_bridges:bool)->Result<(RoadScene,RoadReport),String>{
+    let clearance=ClearanceIndex::new(footprints);
+    mesh_streets_internal(city,detailed_bridges,Some(&clearance))
+}
+fn mesh_streets_internal(city:&City,detailed_bridges:bool,
+    clearance:Option<&ClearanceIndex>)->Result<(RoadScene,RoadReport),String>{
     let mut scene=RoadScene::default();
     let mut report=RoadReport {source_segments:city.streets.len(),..Default::default()};
     for street in &city.streets {
@@ -658,10 +673,13 @@ pub fn mesh_streets_with_bridges(city:&City,detailed_bridges:bool)
                 path:street.path.clone(),kind:street.kind.clone(),width_m:width,
             });
         }
-        let Some(strip)=ribbon(&street.path,width,height)? else {
+        let Some(mut strip)=ribbon(&street.path,width,height)? else {
             report.segments_degenerate+=1;
             continue;
         };
+        if let Some(index)=clearance {
+            index.constrain(street,width,&mut strip);
+        }
         if kind==SurfaceKind::Motorway {
             let paint=motorway_edge_stripes(&strip,0.035);
             let stripes=scene.layers.entry(SurfaceKind::MotorwayStripe).or_default();

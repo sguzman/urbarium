@@ -125,6 +125,35 @@ mod tests {
             osm_node_ids:Vec::new(),tags:BTreeMap::new()}
     }
     #[test]
+    fn inferred_road_clearance_uses_buildings_owned_by_neighbor_cell() {
+        use crate::{Building,Polygon};
+        let mut city=City{schema_version:1,
+            region:Region{id:"shared".into(),name:"shared".into(),
+                origin:[0.,0.],bbox:[-0.003,-0.003,0.003,0.003]},
+            provenance:Vec::new(),buildings:vec![],
+            streets:vec![street("service","service",&[(265.,0.),(325.,0.)])]};
+        // Building center is in cell x=1, while part of the wall constrains
+        // the service road in cell x=0. Partial chunk ownership may not make
+        // the road jump from narrowed to unnarrowed at x=300.
+        city.buildings.push(Building{
+            source_id:"border-wall".into(),name:None,height_m:Some(12.),
+            levels:None,polygons:vec![Polygon{rings:vec![vec![
+                Point{x:296.,z:2.},Point{x:312.,z:2.},
+                Point{x:312.,z:15.},Point{x:296.,z:15.}]]}],
+        });
+        let owner0=chunk_city(&city,ChunkKey{x:0,z:0});
+        assert!(owner0.buildings.is_empty(),
+            "the road's own render cell should not own the blocking building");
+        let coverage=verify_road_coverage(&city).unwrap();
+        assert!(coverage.largest_absolute_error_m2<0.01);
+        let raw=mesh_streets_with_bridges(&city,false).unwrap().0;
+        let narrowed=scene(&city,&city.buildings).unwrap();
+        let area_raw=surface_area(&raw.layers[&SurfaceKind::Road]).unwrap();
+        let area_narrow=surface_area(&narrowed.layers[&SurfaceKind::Road]).unwrap();
+        assert!(area_narrow+0.1<area_raw,
+            "full reference and every chunk must constrain road shoulders");
+    }
+    #[test]
     fn multipart_crossing_junctions_and_pedestrians_partition_across_cells(){
         let city=City{
             schema_version:1,

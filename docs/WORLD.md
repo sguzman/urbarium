@@ -104,6 +104,16 @@ The geometry pipeline now enforces these invariants:
 - Rust CI and both browser-renderer QA gates must pass before changes to the
   default site. All geometry source modules now trigger browser QA on push.
 
+Unknown-width Overture `service`/`track` roads now use a region-wide building
+clearance envelope: generated ribbon edges are allowed to narrow independently
+where they would otherwise intersect solid building walls. The original
+centerline, all tagged/measured widths, source-road records, and mesh connectivity
+are preserved. Courtyard holes are respected; centerlines that actually enter
+building interiors stay flagged as ambiguous rather than being silently removed.
+Every chunk receives the SAME region-wide footprint context, including buildings
+owned by neighboring cells. Full-region road coverage QA uses that same
+clearance rule, so chunk seams cannot have different inferred widths.
+
 An additional `audit-road-buildings --city FILE` command measures asphalt
 intersection with actual triangulated building footprints (including courtyard
 holes). It reports source building/road IDs and geometric overlap areas.

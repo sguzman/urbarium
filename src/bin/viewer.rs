@@ -13,7 +13,7 @@ use urbarium::geometry::{mesh_building, HeightPolicy, Mesh, Vertex};
 use urbarium::chunk_mesh::{GpuVertex,DrawBatch,SceneLayer,append_part,
     category_index, category_rgb, building_landmark_color, landmark_disc,
     LandmarkCatalog,chunk_geometry,ChunkMeshPayload};
-use urbarium::roads::{mesh_streets_with_bridges, SurfaceKind};
+use urbarium::roads::{mesh_streets_with_bridges, mesh_streets_with_clearance, SurfaceKind};
 use urbarium::{Building, City, Point};
 use urbarium::collision::CollisionWorld;
 use urbarium::terrain::TerrainGrid;
@@ -212,7 +212,11 @@ fn combined_city(city:&City,terrain:&TerrainGrid,bridge_preview:bool)
     let mut catalog=catalog;
     if catalog.region_id!=city.region.id {catalog.landmarks.clear();}
     let (buildings,building_report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
-    let (mut roads,road_report)=mesh_streets_with_bridges(city,bridge_preview)?;
+    let (mut roads,road_report)=if bridge_preview {
+        mesh_streets_with_bridges(city,true)?
+    }else{
+        mesh_streets_with_clearance(city,&city.buildings,false)?
+    };
     terrain.drape_roads_with_preview(&city.region,&mut roads,bridge_preview)?;
     if building_report.buildings_meshed == 0 || building_report.buildings_skipped > 0 {
         return Err(format!("city has {} buildings meshed, {} skipped",

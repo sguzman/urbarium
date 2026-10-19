@@ -6,6 +6,7 @@
 //! Do not erase whole road triangles or remove complete building meshes.
 
 use crate::{Building,City,Point,Street};
+use crate::road_clearance::ClearanceIndex;
 use crate::geometry::{mesh_building,HeightPolicy,Mesh};
 use crate::roads::{at_grade_motor_road,ribbon,surface_class,SurfaceKind};
 use serde::Serialize;
@@ -137,6 +138,7 @@ fn candidates(street:&Street,width:f64,roofs:&[Footprint])->Vec<usize>{
 pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
     let roofs:Vec<Footprint>=city.buildings.iter()
         .map(building_roof).collect::<Result<_,_>>()?;
+    let clearance=ClearanceIndex::new(&city.buildings);
     let mut checked=0usize;
     let mut conflicts=Vec::new();
     let mut total=0.0;
@@ -147,7 +149,8 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
         checked+=1;
         let ids=candidates(street,width,&roofs);
         if ids.is_empty(){continue;}
-        let Some(mesh)=ribbon(&street.path,width,0.24)? else{continue;};
+        let Some(mut mesh)=ribbon(&street.path,width,0.24)? else{continue;};
+        clearance.constrain(street,width,&mut mesh);
         for i in ids{
             let area=conflict_area(&mesh,&roofs[i]);
             if area<0.25{continue;}

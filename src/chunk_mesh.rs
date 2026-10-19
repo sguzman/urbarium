@@ -5,7 +5,7 @@ use crate::{City, Point, Region, Building};
 use crate::streaming::ChunkKey;
 use crate::surface_clip::clip_surface_to_bounds;
 use crate::geometry::{mesh_building, HeightPolicy, Mesh, Vertex};
-use crate::roads::{mesh_streets_with_bridges, SurfaceKind};
+use crate::roads::{mesh_streets_with_clearance, SurfaceKind};
 use crate::terrain::TerrainGrid;
 use bytemuck::{Pod, Zeroable};
 use serde::{Serialize, Deserialize};
@@ -128,14 +128,14 @@ pub fn landmark_disc(terrain:&TerrainGrid,region:&Region,p:Point,radius:f64)->Me
 // A cell contributes buildings, classified street fragments and source-backed
 // landmark discs, but NOT another full-region terrain mesh. Each building has
 // one canonical owner cell; complete road surfaces are clipped to cells.
-pub fn chunk_geometry(city:&City,terrain:&TerrainGrid,
+pub fn chunk_geometry(city:&City,footprints:&[Building],terrain:&TerrainGrid,
     key:ChunkKey)
     ->Result<(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),String>{
     let (buildings,report)=terrain.mesh_buildings(city,HeightPolicy::default())?;
     if report.buildings_skipped>0 {
         return Err(format!("{} chunk buildings could not be meshed",report.buildings_skipped));
     }
-    let (mut roads,_)=mesh_streets_with_bridges(city,false)?;
+    let (mut roads,_)=mesh_streets_with_clearance(city,footprints,false)?;
     // First flatten the source-qualified bridge spans exactly once. The
     // ordinary viewer must not resurrect hidden freeway ribbons.
     crate::road_grade::flatten_bridge_spans(&mut roads)?;
@@ -234,6 +234,6 @@ pub struct ChunkMeshPayload {
 pub fn build_chunk_payload(source:&City,terrain:&TerrainGrid,key:ChunkKey)
     ->Result<ChunkMeshPayload,String>{
     let selected=crate::streaming::chunk_city(source,key);
-    let (vertices,indices,batches)=chunk_geometry(&selected,terrain,key)?;
+    let (vertices,indices,batches)=chunk_geometry(&selected,&source.buildings,terrain,key)?;
     Ok(ChunkMeshPayload{vertices,indices,batches})
 }

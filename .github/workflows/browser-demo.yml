@@ -22,6 +22,7 @@ on:
       - src/road_grade.rs
       - src/road_coverage.rs
       - src/road_building_conflicts.rs
+      - src/road_clearance.rs
       - src/collision.rs
       - src/terrain.rs
       - src/terrain_drape.rs
