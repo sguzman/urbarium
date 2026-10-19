@@ -92,20 +92,27 @@
     // Versioned request URL bypasses browser HTTP caches for older geography.
     const response=await nativeFetch(key);
     if(response.ok){
-      try{
-        await cache.put(key,response.clone());
-        // Bound CacheStorage size: keep only current revision per asset.
-        const oldKeys=await cache.keys();
-        for(const old of oldKeys){
-          if(new URL(old.url).pathname===new URL(key.url).pathname &&
-             old.url!==key.url)await cache.delete(old);
+      // Never await disk writes before handing the response to the preview
+      // or Rust. CacheStorage stalls used to extend the first-frame delay
+      // even after the source bytes had arrived successfully.
+      const copy=response.clone();
+      emit(req,"downloaded; saving asynchronously",
+        Number(response.headers.get("content-length"))||null);
+      void (async()=>{
+        try{
+          await cache.put(key,copy);
+          const oldKeys=await cache.keys();
+          for(const old of oldKeys){
+            if(new URL(old.url).pathname===new URL(key.url).pathname &&
+               old.url!==key.url)await cache.delete(old);
+          }
+          emit(req,"downloaded + saved",
+            Number(response.headers.get("content-length"))||null);
+        }catch(error){
+          console.warn("Urbarium geography cache save failed",error);
+          emit(req,"downloaded (not cached)",null,String(error));
         }
-        emit(req,"downloaded + saved",
-          Number(response.headers.get("content-length"))||null);
-      }catch(error){
-        console.warn("Urbarium geography cache save failed",error);
-        emit(req,"downloaded (not cached)",null,String(error));
-      }
+      })();
     }else{
       emit(req,"HTTP "+response.status);
     }
