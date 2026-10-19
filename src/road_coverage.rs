@@ -8,10 +8,10 @@
 
 use crate::geometry::Mesh;
 use crate::road_grade::flatten_bridge_spans;
-use crate::roads::{mesh_streets_with_bridges,SurfaceKind,RoadScene};
+use crate::roads::{mesh_streets_with_bridges,mesh_streets_with_clearance,SurfaceKind,RoadScene};
 use crate::streaming::{all_region_chunks,chunk_city,ChunkKey};
 use crate::surface_clip::clip_surface_to_bounds;
-use crate::City;
+use crate::{City,Building};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
@@ -45,8 +45,8 @@ fn surface_area(mesh:&Mesh)->Result<f64,String> {
     }
     Ok(total)
 }
-fn scene(city:&City)->Result<RoadScene,String> {
-    let (mut roads,_)=mesh_streets_with_bridges(city,false)?;
+fn scene(city:&City,footprints:&[Building])->Result<RoadScene,String> {
+    let (mut roads,_)=mesh_streets_with_clearance(city,footprints,false)?;
     flatten_bridge_spans(&mut roads)?;
     Ok(roads)
 }
@@ -75,7 +75,7 @@ pub fn verify_road_coverage(city:&City)->Result<CoverageReport,String>{
     if keys.is_empty() || keys.len()>128{
         return Err(format!("region {} has unsupported road QA cell count {}",city.region.id,keys.len()));
     }
-    let full=scene(city)?;
+    let full=scene(city,&city.buildings)?;
     let mut checked=0usize;
     let mut total_full=0.0;
     let mut total_chunk=0.0;
@@ -84,7 +84,7 @@ pub fn verify_road_coverage(city:&City)->Result<CoverageReport,String>{
     for key in keys.iter().copied(){
         let Some(bounds)=cell_bounds(city,key) else{continue;};
         let selected=chunk_city(city,key);
-        let candidate=scene(&selected)?;
+        let candidate=scene(&selected,&city.buildings)?;
         let kinds:BTreeSet<SurfaceKind>=full.layers.keys().chain(candidate.layers.keys())
             .copied().collect();
         for kind in kinds{

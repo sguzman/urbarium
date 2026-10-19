@@ -189,7 +189,7 @@ mod tests {
         let index=ClearanceIndex::new(&[wall]);
         let street=service(&[(-8.,-2.),(8.,-2.)]);
         let mut mesh=ribbon(&street.path,5.5,0.24).unwrap().unwrap();
-        let original=mesh.clone();
+        let original=Mesh{vertices:mesh.vertices.clone(),indices:mesh.indices.clone()};
         index.constrain(&street,5.5,&mut mesh);
         for i in (0..mesh.vertices.len()).step_by(STRIDE){
             assert_eq!(mesh.vertices[i+2].position,original.vertices[i+2].position,
@@ -208,7 +208,7 @@ mod tests {
         let mut street=service(&[(-8.,-2.),(8.,-2.)]);
         street.tags.insert("width".into(),"5.5m".into());
         let mut mesh=ribbon(&street.path,5.5,0.24).unwrap().unwrap();
-        let original=mesh.clone();
+        let original=Mesh{vertices:mesh.vertices.clone(),indices:mesh.indices.clone()};
         index.constrain(&street,5.5,&mut mesh);
         assert_eq!(mesh.vertices.len(),original.vertices.len());
         for (a,b) in mesh.vertices.iter().zip(original.vertices.iter()) {
@@ -222,7 +222,7 @@ mod tests {
         let index=ClearanceIndex::new(&[wall]);
         let street=service(&[(-2.,0.),(2.,0.)]);
         let mut mesh=ribbon(&street.path,5.5,0.24).unwrap().unwrap();
-        let original=mesh.clone();
+        let original=Mesh{vertices:mesh.vertices.clone(),indices:mesh.indices.clone()};
         index.constrain(&street,5.5,&mut mesh);
         for (a,b) in mesh.vertices.iter().zip(original.vertices.iter()){
             assert_eq!(a.position,b.position);
