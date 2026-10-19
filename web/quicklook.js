@@ -66,7 +66,8 @@
     return camera;
   }
   function draw(city){
-    if(finished)return;
+    if(finished||status.dataset.renderStage==="first-present"||
+        Number(status.dataset.frameCount||0)>0)return;
     clear();
     const w=canvas.width,h=canvas.height;
     const camera=chooseCamera(city);
@@ -193,21 +194,32 @@
       ready:true,streets:clipped.length,buildings,elapsedMs:performance.now()-elapsedStart
     };
   }
+  // Only the first real GPU frame is allowed to retire this canvas.
+  // Removal is synchronous: deferring it behind nested animation frames
+  // allowed a static startup image to cover an already-running 3D viewer.
+  const realFramePresented=()=>status.dataset.renderStage==="first-present" ||
+    Number(status.dataset.frameCount||0)>0;
+  const retire=()=>{
+    if(finished)return;
+    finished=true;
+    observer.disconnect();
+    canvas.remove();
+    data=null;
+    status.dataset.bootstrapPreview="retired";
+  };
   const observer=new MutationObserver(()=>{
-    if(status.dataset.renderStage!=="first-present"||finished)return;
-    finished=true;observer.disconnect();
-    requestAnimationFrame(()=>{
-      requestAnimationFrame(()=>{canvas.remove();data=null;});
-    });
+    if(realFramePresented())retire();
   });
-  observer.observe(status,{attributes:true,attributeFilter:["data-render-stage"]});
+  observer.observe(status,{attributes:true,
+    attributeFilter:["data-render-stage","data-frame-count"]});
+  if(realFramePresented())retire();
   // Start independently of Rust. The normal geographic fetch interceptor
   // keeps the same versioned payload available to the Rust loader later.
   const id=document.documentElement.dataset.activeRegion||"downtown-la";
   fetch("./assets/"+encodeURIComponent(id)+".json")
     .then(response=>{if(!response.ok)throw Error("HTTP "+response.status);return response.json();})
     .then(city=>{
-      if(finished)return;
+      if(finished||realFramePresented()){retire();return;}
       if(!Array.isArray(city.streets)||!Array.isArray(city.buildings)||!city.region)
         throw Error("invalid geographic source");
       data=city;draw(city);
