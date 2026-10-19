@@ -106,7 +106,7 @@ with sync_playwright() as p:
         }""",timeout=8000)
         assert page.locator("#startup-preview").count()==0, (
             "Pre-WASM sketch still overlays the live 3D renderer")
-        print("GPU first frame retired the temporary 2D city overlay")
+        print("GPU first frame has no static street-image overlay")
         # Progressive geometry is now the default; retain the full-scene
         # compatibility path for explicit progressive=0 URLs.
         assert page.evaluate("() => document.documentElement.dataset.progressivePreview")=="true"
@@ -1288,7 +1288,7 @@ with sync_playwright() as p:
             if force_webgl:
                 first.add_init_script("""Object.defineProperty(navigator,'gpu',{
                     configurable:true,value:undefined});""")
-            first.goto(cache_url,wait_until="domcontentloaded")
+            first.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&progressive=0",wait_until="domcontentloaded")
             first.wait_for_function("""() =>
                 document.querySelector("#status")?.dataset.renderStage==="first-present"
             """,timeout=90000)
