@@ -357,7 +357,9 @@ fn candidates(street:&Street,width:f64,roofs:&[Footprint])->Vec<usize>{
 /// floor-aware topology. A 0.25m2 report threshold avoids point-touch noise.
 /// This diagnostic does NOT claim that the road or footprint should be cut.
 pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
-    let grounded=|b:&&Building|HeightPolicy::default().base_for(b)<=0.6;
+    // Do not use HeightPolicy::base_for here: min_floor creates a visual
+    // estimate, not measured clearance from street-level asphalt.
+    let grounded=|b:&&Building|!b.has_measured_road_clearance();
     let roofs:Vec<Footprint>=city.buildings.iter()
         .filter(grounded).map(building_roof).collect::<Result<_,_>>()?;
     let raised_buildings_excluded=city.buildings.len()-roofs.len();
@@ -514,14 +516,26 @@ mod tests {
         assert_eq!(report.sum_triangle_overlap_m2,0.0);
     }
     #[test]
-    fn min_floor_only_is_flagged_as_an_approximate_suspended_base(){
+    fn min_floor_only_must_not_erase_possible_ground_level_conflict(){
         let mut floating=building(false);
         floating.min_floor=Some(2);
         let c=city(street(p(-5.,5.),p(15.,5.),2.0),floating);
         let report=audit_road_buildings(&c).unwrap();
+        assert_eq!(report.raised_buildings_excluded,0,
+            "floor indices are not metric evidence of an open ground passage");
+        assert_eq!(report.conflict_pairs,1);
+        assert_eq!(report.largest[0].cause,ConflictCause::CenterlineInsideFootprint);
+        assert!(c.buildings[0].min_height_m.is_none());
+    }
+    #[test]
+    fn explicit_measured_clearance_overrides_floor_only_uncertainty(){
+        let mut floating=building(false);
+        floating.min_floor=Some(2);
+        floating.min_height_m=Some(3.0);
+        let report=audit_road_buildings(&city(
+            street(p(-5.,5.),p(15.,5.),2.0),floating)).unwrap();
         assert_eq!(report.raised_buildings_excluded,1);
         assert_eq!(report.conflict_pairs,0);
-        assert!(c.buildings[0].min_height_m.is_none());
     }
     #[test]
     fn distinct_path_outside_building_reports_zero(){
