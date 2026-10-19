@@ -138,6 +138,21 @@ with sync_playwright() as p:
             assert result["workerFormat"]=="UBM1-transfer",result
             assert result["workerMessages"]==result["resident"],result
             assert result["workerTransferredBytes"]>24*result["resident"],result
+        # Playwright element screenshots include overlapping DOM elements.
+        # The previous parity gate accidentally compared a LIVE CLOCK and
+        # a second independently redrawn minimap along with the 3D image.
+        # In a captured failure, *every* changed pixel was inside HUD/minimap
+        # bounds; the unobstructed 3D pixels were identical. Hide visual UI
+        # overlays using the viewer's existing clean-scene CSS, plus its
+        # remaining toggle button, without modifying camera or GPU meshes.
+        page.evaluate("""() => {
+            document.body.classList.add("scene-ui-hidden");
+            document.querySelector("#scene-ui-toggle").style.display="none";
+        }""")
+        hidden_at=int(page.locator("#status").get_attribute("data-frame-count") or "0")
+        page.wait_for_function("""(frame) =>
+            Number(document.querySelector("#status")?.dataset.frameCount)>=frame+3
+        """,arg=hidden_at,timeout=30000)
         canvas=page.locator("canvas:not(#minimap-canvas):not(#webgpu-control)").first
         return result,canvas.screenshot()
 
