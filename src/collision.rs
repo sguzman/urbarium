@@ -38,9 +38,18 @@ impl CollisionWorld {
             let height=building.height_m
                 .or_else(||building.levels.map(|n|n*policy.meters_per_level))
                 .unwrap_or(policy.fallback_m);
-            let clearance=policy.base_for(building);
+            // Source min_floor specifies an integer level, not a surveyed
+            // metric passage. Render may approximate its Y placement, but
+            // walking remains conservatively blocked at ground level without
+            // explicit measured clearance. Keep the visual roof as the
+            // collision upper bound so flight cannot enter the drawn volume.
+            let visual_base=policy.base_for(building);
+            let measured_base=building.min_height_m
+                .filter(|m|m.is_finite()&&*m>=0.0).unwrap_or(0.0);
+            let collision_height=height+(visual_base-measured_base).max(0.0);
             if !height.is_finite()||height<=0.0||
-                !clearance.is_finite()||clearance<0.0 {continue;}
+                !visual_base.is_finite()||visual_base<0.0||
+                !collision_height.is_finite()||collision_height<=0.0 {continue;}
             for polygon in &building.polygons {
                 if polygon.rings.is_empty() || polygon.rings[0].len()<3 { continue; }
                 let mut bbox = [f64::INFINITY,f64::INFINITY,f64::NEG_INFINITY,f64::NEG_INFINITY];
@@ -56,9 +65,9 @@ impl CollisionWorld {
                 let center_x=polygon.rings[0].iter().map(|p|p.x).sum::<f64>()/polygon.rings[0].len() as f64;
                 let center_z=polygon.rings[0].iter().map(|p|p.z).sum::<f64>()/polygon.rings[0].len() as f64;
                 let base_m=terrain.map(|grid|grid.sample(&city.region,center_x,center_z) as f64)
-                    .unwrap_or(0.0)+clearance;
+                    .unwrap_or(0.0)+measured_base;
                 world.obstacles.push(Obstacle {
-                    rings:polygon.rings.clone(), bounds:bbox, height_m:height, base_m
+                    rings:polygon.rings.clone(), bounds:bbox, height_m:collision_height, base_m
                 });
             }
         }
@@ -197,6 +206,31 @@ mod tests {
         assert!(!w.blocked(3.2,5.0,1.7,0.35));
         assert!(w.blocked(2.0,2.0,6.0,0.35));
         assert!(!w.blocked(5.0,5.0,6.0,0.35));
+    }
+    #[test]
+    fn unmeasured_floor_index_never_turns_ground_into_a_walkable_void(){
+        let original=vec![Point{x:0.,z:0.},Point{x:10.,z:0.},
+                          Point{x:10.,z:10.},Point{x:0.,z:10.}];
+        let mut building=Building {
+            source_id:"estimated".into(),name:None,height_m:Some(9.),
+            levels:None,min_height_m:None,min_floor:Some(2),parts:vec![],
+            polygons:vec![Polygon{rings:vec![original]}],
+        };
+        let city_for=|building:Building|City{
+            schema_version:1,
+            region:Region{id:"test".into(),name:"test".into(),
+                origin:[0.,0.],bbox:[-0.01,-0.01,0.01,0.01]},
+            provenance:vec![],streets:vec![],buildings:vec![building],
+        };
+        let uncertain=CollisionWorld::from_city(&city_for(building.clone()));
+        assert!(uncertain.blocked(2.,2.,1.7,0.2));
+        // Approximate displayed roof = two 3.1m floors + 9m facade.
+        assert!(uncertain.blocked(2.,2.,14.0,0.2));
+        assert!(!uncertain.blocked(2.,2.,17.0,0.2));
+        building.min_height_m=Some(4.0);
+        let surveyed=CollisionWorld::from_city(&city_for(building));
+        assert!(!surveyed.blocked(2.,2.,1.7,0.2));
+        assert!(surveyed.blocked(2.,2.,6.0,0.2));
     }
     #[test]
     fn swept_movement_does_not_tunnel_through_walls() {
