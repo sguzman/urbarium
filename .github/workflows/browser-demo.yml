@@ -46,9 +46,10 @@ on:
       - scripts/test_publish_road_conflicts.py
   workflow_dispatch:
 
-# Prioritize the latest verified commit; do not queue obsolete full WASM builds.
+# Cancel superseded builds on the SAME branch. Feature-branch QA must
+# never cancel or hold up a verified main-branch GitHub Pages deployment.
 concurrency:
-  group: urbarium-pages
+  group: urbarium-pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
