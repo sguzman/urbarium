@@ -735,7 +735,7 @@ mod tests {
             "pedestrian street overlap must be removed from real geometry");
         let clean_walk=&clean.layers[&SurfaceKind::Walk];
         assert!(!clean_walk.indices.is_empty(),"paths outside asphalt survive");
-        assert!(clean_walk.vertices.iter().any(|v|v.position[2]<-6.0));
+        assert!(clean_walk.vertices.iter().any(|v|v.position[2]< -6.0));
         assert!(clean_walk.vertices.iter().any(|v|v.position[2]>6.0));
         let mut bridge=street("primary",&[[-20.,0.],[20.,0.]]);
         bridge.tags.insert("bridge".into(),"yes".into());
