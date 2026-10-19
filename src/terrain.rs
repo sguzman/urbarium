@@ -324,7 +324,7 @@ mod tests {
             .fold(f32::NEG_INFINITY,f32::max);
         assert!(lowest>=highest_terrain+3.99,
             "source metric clearance should never be filled with fake walls");
-        assert!(mesh.vertices.iter().any(|v|v.normal[1]<-0.9));
+        assert!(mesh.vertices.iter().any(|v|v.normal[1]< -0.9));
     }
     #[test]
     fn building_roof_keeps_one_foundation_elevation() {

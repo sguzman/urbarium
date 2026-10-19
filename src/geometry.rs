@@ -251,7 +251,7 @@ mod tests {
         let walls:Vec<_>=mesh.vertices.iter()
             .filter(|v|v.normal[1].abs()<0.1).collect();
         assert!(upper.iter().all(|v|(v.position[1]-13.0).abs()<0.0001));
-        let underside:Vec<_>=mesh.vertices.iter().filter(|v|v.normal[1]<-0.9).collect();
+        let underside:Vec<_>=mesh.vertices.iter().filter(|v|v.normal[1]< -0.9).collect();
         assert_eq!(underside.len(),4);
         assert!(underside.iter().all(|v|(v.position[1]-4.0).abs()<0.0001));
         assert!(walls.iter().all(|v|
