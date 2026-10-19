@@ -14,7 +14,9 @@ def report(region, conflict=True):
         "cause": "centerline_inside_footprint",
         "building_id": "geojson:building",
         "street_id": "geojson:street",
+        "street_name": "Example Service Lane",
         "road_kind": "service",
+        "source_line_pattern": "ends_inside_footprint",
         "overlap_m2": 25.0,
         "centerline_inside_m": 4.5,
         "centerline_length_m": 10.0,
@@ -34,6 +36,9 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(len(result["cases"]), 1)
         self.assertEqual(result["cases"][0]["focus_lonlat"], [-118.25, 34.05])
         self.assertEqual(result["cases"][0]["building_id"], "geojson:building")
+        self.assertEqual(result["cases"][0]["street_name"], "Example Service Lane")
+        self.assertEqual(result["cases"][0]["source_line_pattern"],
+                         "ends_inside_footprint")
         self.assertEqual(result["regions"][1]["centerline_conflicts"], 0)
         self.assertIn("Not proof", result["interpretation"])
 
