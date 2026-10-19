@@ -230,6 +230,14 @@ jobs:
           name: urbarium-mesh-benchmark
           path: /tmp/urbarium-mesh-benchmark.json
           retention-days: 14
+      - name: Retain parity screenshots on a failed visual comparison
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: urbarium-worker-parity-debug
+          path: /tmp/urbarium-benchmark-*.png
+          if-no-files-found: ignore
+          retention-days: 5
       - name: Stage GitHub Pages site artifact after successful Chromium QA
         uses: actions/upload-pages-artifact@v4
         with:
