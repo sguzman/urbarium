@@ -5,7 +5,7 @@
 //! the source IDs and intersecting AREA before deciding what to alter.
 //! Do not erase whole road triangles or remove complete building meshes.
 
-use crate::{Building,City,Point,Street};
+use crate::{Building,BuildingPart,City,Point,Street};
 use crate::road_clearance::ClearanceIndex;
 use crate::geometry::{mesh_building,HeightPolicy,Mesh};
 use crate::roads::{at_grade_motor_road,ribbon,surface_class,SurfaceKind};
@@ -26,6 +26,19 @@ pub enum ConflictCause {
     /// miter intrudes into the building wall.
     InferredWidthEnvelope,
 }
+/// A source building part intersecting the road footprint. Part volumes are
+/// not yet substituted for the parent geometry; evidence must be reviewed
+/// before treating apparent underpasses as open spaces.
+#[derive(Debug,Clone,Serialize)]
+pub struct PartEvidence {
+    pub part_id:String,
+    pub overlap_m2:f64,
+    pub centerline_inside_m:f64,
+    pub measured_min_height_m:Option<f64>,
+    pub min_floor:Option<u32>,
+    /// True only with explicit metric clearance, never inferred floor counts.
+    pub verified_above_ground:bool,
+}
 #[derive(Debug,Clone,Serialize)]
 pub struct Conflict {
     pub building_id:String,
@@ -38,6 +51,8 @@ pub struct Conflict {
     /// WGS84 longitude, latitude of the affected source-line position;
     /// never a made-up building address or manually inferred grade.
     pub focus_lonlat:[f64;2],
+    #[serde(skip_serializing_if="Vec::is_empty")]
+    pub source_part_evidence:Vec<PartEvidence>,
 }
 #[derive(Debug,Serialize)]
 pub struct ConflictReport {
@@ -51,6 +66,10 @@ pub struct ConflictReport {
     pub by_cause:BTreeMap<ConflictCause,usize>,
     pub area_m2_by_cause:BTreeMap<ConflictCause,f64>,
     pub total_centerline_inside_m:f64,
+    pub parent_buildings_with_parts:usize,
+    pub total_parts_available:usize,
+    pub conflict_pairs_with_part_evidence:usize,
+    pub conflict_pairs_with_measured_raised_part_evidence:usize,
     pub largest:Vec<Conflict>,
 }
 #[derive(Clone)]
@@ -269,6 +288,43 @@ fn classify_overlap(street:&Street,centerline_m:f64)->ConflictCause {
         ConflictCause::TaggedWidthEnvelope
     }else{ConflictCause::InferredWidthEnvelope}
 }
+/// Assess a road against the PART footprints separately from the parent
+/// roofprint. A building_part may float above a driveway, but the presence of
+/// some elevated parts does not prove the rest of the parent is empty.
+fn inspect_parts(parent:&Building,street:&Street,road:&Mesh)
+    ->Result<Vec<PartEvidence>,String>{
+    let mut evidence=Vec::new();
+    for part in &parent.parts {
+        let child=part_as_building(part);
+        let roof=building_roof(&child)?;
+        if !street.path.windows(2).any(|segment|
+            intersects(bounds(segment),roof.bounds)){
+            continue;
+        }
+        let area=conflict_area(road,&roof);
+        let (inside,_)=centerline_roof(street,&roof);
+        if area<0.05&&inside<0.05 {continue;}
+        evidence.push(PartEvidence{
+            part_id:part.source_id.clone(),
+            overlap_m2:(area*1000.0).round()/1000.0,
+            centerline_inside_m:(inside*1000.0).round()/1000.0,
+            measured_min_height_m:part.min_height_m,
+            min_floor:part.min_floor,
+            verified_above_ground:part.min_height_m.is_some_and(|m|m>0.6),
+        });
+    }
+    evidence.sort_by(|a,b|b.overlap_m2.total_cmp(&a.overlap_m2)
+        .then(a.part_id.cmp(&b.part_id)));
+    Ok(evidence)
+}
+fn part_as_building(part:&BuildingPart)->Building{
+    Building{
+        source_id:part.source_id.clone(),name:None,
+        height_m:part.height_m,levels:part.levels,
+        min_height_m:part.min_height_m,min_floor:part.min_floor,
+        polygons:part.polygons.clone(),parts:Vec::new(),
+    }
+}
 fn conflict_area(road:&Mesh,roof:&Footprint)->f64{
     let mut area=0.0;
     for indices in road.indices.chunks_exact(3){
@@ -308,6 +364,8 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
     let mut by_cause:BTreeMap<ConflictCause,usize>=BTreeMap::new();
     let mut area_m2_by_cause:BTreeMap<ConflictCause,f64>=BTreeMap::new();
     let mut total_centerline_inside_m=0.0;
+    let mut conflict_pairs_with_part_evidence=0usize;
+    let mut conflict_pairs_with_measured_raised_part_evidence=0usize;
     for street in &city.streets{
         if !at_grade_motor_road(street){continue;}
         let Some((kind,width))=surface_class(street) else{continue;};
@@ -328,6 +386,14 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
             *area_m2_by_cause.entry(cause).or_default()+=area;
             total_centerline_inside_m+=inside_m;
             let focus=where_inside.unwrap_or_else(||point_near_footprint(street,&roofs[i]));
+            let parent=city.buildings.iter()
+                .find(|b|b.source_id==roofs[i].source_id)
+                .ok_or("roof owner missing from city")?;
+            let part_evidence=inspect_parts(parent,street,&mesh)?;
+            if !part_evidence.is_empty(){conflict_pairs_with_part_evidence+=1;}
+            if part_evidence.iter().any(|part|part.verified_above_ground){
+                conflict_pairs_with_measured_raised_part_evidence+=1;
+            }
             conflicts.push(Conflict{
                 building_id:roofs[i].source_id.clone(),
                 street_id:street.source_id.clone(),
@@ -336,6 +402,7 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
                 cause,centerline_inside_m:(inside_m*1000.0).round()/1000.0,
                 centerline_length_m:(source_line_length(street)*1000.0).round()/1000.0,
                 focus_lonlat:city.region.unproject(focus),
+                source_part_evidence:part_evidence,
             });
         }
     }
@@ -351,6 +418,11 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
         sum_triangle_overlap_m2:(total*1000.0).round()/1000.0,
         by_cause,area_m2_by_cause,
         total_centerline_inside_m:(total_centerline_inside_m*1000.0).round()/1000.0,
+        parent_buildings_with_parts:city.buildings.iter()
+            .filter(|b|!b.parts.is_empty()).count(),
+        total_parts_available:city.buildings.iter().map(|b|b.parts.len()).sum(),
+        conflict_pairs_with_part_evidence,
+        conflict_pairs_with_measured_raised_part_evidence,
         largest:conflicts.into_iter().take(20).collect(),
     })
 }
@@ -385,6 +457,43 @@ mod tests {
         let report=audit_road_buildings(&c).unwrap();
         assert_eq!(report.conflict_pairs,1);
         assert!((report.sum_triangle_overlap_m2-20.0).abs()<0.02);
+    }
+    #[test]
+    fn conflicting_roofprint_reports_source_part_evidence_without_erasing_parent(){
+        let mut parent=building(false);
+        parent.parts.push(BuildingPart{
+            source_id:"part:raised".into(),height_m:Some(6.0),levels:None,
+            min_height_m:Some(4.0),min_floor:None,
+            polygons:parent.polygons.clone(),
+        });
+        let c=city(street(p(-5.,5.),p(15.,5.),2.0),parent);
+        let report=audit_road_buildings(&c).unwrap();
+        assert_eq!(report.conflict_pairs,1);
+        assert_eq!(report.parent_buildings_with_parts,1);
+        assert_eq!(report.total_parts_available,1);
+        assert_eq!(report.conflict_pairs_with_part_evidence,1);
+        assert_eq!(report.conflict_pairs_with_measured_raised_part_evidence,1);
+        assert_eq!(report.largest[0].source_part_evidence.len(),1);
+        assert!((report.largest[0].source_part_evidence[0].centerline_inside_m-10.0).abs()<0.002);
+        assert!(report.largest[0].source_part_evidence[0].verified_above_ground);
+        assert_eq!(report.largest[0].cause,ConflictCause::CenterlineInsideFootprint);
+    }
+    #[test]
+    fn unrelated_part_does_not_prove_road_passes_under_building(){
+        let mut parent=building(false);
+        parent.parts.push(BuildingPart{
+            source_id:"part:elsewhere".into(),height_m:Some(4.0),levels:None,
+            min_height_m:Some(4.0),min_floor:None,
+            polygons:vec![Polygon{rings:vec![vec![
+                p(20.,20.),p(30.,20.),p(30.,30.),p(20.,30.)
+            ]]}],
+        });
+        let report=audit_road_buildings(
+            &city(street(p(-5.,5.),p(15.,5.),2.0),parent)).unwrap();
+        assert_eq!(report.conflict_pairs,1);
+        assert_eq!(report.conflict_pairs_with_part_evidence,0);
+        assert_eq!(report.conflict_pairs_with_measured_raised_part_evidence,0);
+        assert!(report.largest[0].source_part_evidence.is_empty());
     }
     #[test]
     fn measured_overpass_building_no_longer_counts_as_asphalt_collision(){

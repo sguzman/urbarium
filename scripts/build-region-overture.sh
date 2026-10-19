@@ -25,13 +25,16 @@ PY
 mkdir -p data/raw data/processed
 streets="data/raw/${stem}-overture-segments.geojson"
 buildings="data/raw/${stem}-overture-buildings.geojson"
+parts="data/raw/${stem}-overture-building-parts.geojson"
 city="data/processed/${stem}.json"
 echo "Acquiring Overture city section ${stem}: ${bbox}"
 overturemaps download --bbox="$bbox" --type=segment -f geojson -o "$streets"
 overturemaps download --bbox="$bbox" --type=building -f geojson -o "$buildings"
+# Parts are linked by parent building_id, never independently tile-owned.
+overturemaps download --bbox="$bbox" --type=building_part -f geojson -o "$parts"
 cargo run --release -- ingest \
   --region "$region" --streets-geojson "$streets" \
-  --buildings-geojson "$buildings" --height-unit meters \
+  --buildings-geojson "$buildings" --building-parts-geojson "$parts" --height-unit meters \
   --source-name "Overture Maps" \
   --source-url "https://docs.overturemaps.org/getting-data/" \
   --source-license "Data licensing varies by theme and source; consult Overture metadata" \
@@ -41,5 +44,7 @@ import json,sys
 data=json.load(open(sys.argv[1],encoding="utf-8"))
 if not data["streets"] or not data["buildings"]:
     raise SystemExit("Region ingest yielded missing transport/building data")
-print("SECTION_OK",data["region"]["id"],"streets",len(data["streets"]),"buildings",len(data["buildings"]))
+print("SECTION_OK",data["region"]["id"],"streets",len(data["streets"]),
+      "buildings",len(data["buildings"]),
+      "building_parts",sum(len(b.get("parts",[])) for b in data["buildings"]))
 PY

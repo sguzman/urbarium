@@ -309,7 +309,7 @@ mod tests {
             Point{x:100.0,z:100.0},Point{x:-100.0,z:100.0}]]};
         let building=Building{
             source_id:"bridge-over-road".into(),name:None,height_m:Some(8.0),
-            levels:None,min_height_m:Some(4.0),min_floor:None,
+            levels:None,min_height_m:Some(4.0),min_floor:None,parts:Vec::new(),
             polygons:vec![polygon],
         };
         let city=City{schema_version:1,region:r.clone(),provenance:vec![],
@@ -333,7 +333,7 @@ mod tests {
             schema_version:1,region:r.clone(),provenance:vec![],streets:vec![],
             buildings:vec![Building {
                 source_id:"synthetic".into(),name:None,height_m:Some(12.0),levels:None,
-                min_height_m:None,min_floor:None,
+                min_height_m:None,min_floor:None,parts:Vec::new(),
                 polygons:vec![Polygon { rings:vec![vec![
                     Point{x:-100.0,z:-100.0},Point{x:100.0,z:-100.0},
                     Point{x:100.0,z:100.0},Point{x:-100.0,z:100.0}

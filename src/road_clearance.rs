@@ -180,7 +180,7 @@ mod tests {
     fn building(outer:Vec<Point>,holes:Vec<Vec<Point>>)->Building{
         let mut rings=vec![outer];rings.extend(holes);
         Building{source_id:"test".into(),name:None,height_m:Some(9.),
-            levels:None,min_height_m:None,min_floor:None,
+            levels:None,min_height_m:None,min_floor:None,parts:Vec::new(),
             polygons:vec![Polygon{rings}]}
     }
     fn service(coords:&[(f64,f64)])->Street{

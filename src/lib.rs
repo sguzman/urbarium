@@ -105,6 +105,21 @@ pub struct Polygon {
     pub rings: Vec<Vec<Point>>,
 }
 
+/// One independently surveyed Overture building part. This is kept inside
+/// its owning parent to preserve region and render-chunk ownership; storing
+/// it does not automatically replace the parent massing mesh.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildingPart {
+    pub source_id:String,
+    pub height_m:Option<f64>,
+    pub levels:Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub min_height_m:Option<f64>,
+    #[serde(default,skip_serializing_if="Option::is_none")]
+    pub min_floor:Option<u32>,
+    pub polygons:Vec<Polygon>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Building {
     pub source_id: String,
@@ -122,6 +137,11 @@ pub struct Building {
     #[serde(default,skip_serializing_if="Option::is_none")]
     pub min_floor: Option<u32>,
     pub polygons: Vec<Polygon>,
+    /// Optional child footprints and independent vertical metadata.
+    /// The current viewer continues to render parent massing until a
+    /// footprint-completeness rule can safely replace it.
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub parts:Vec<BuildingPart>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +248,7 @@ pub fn from_overpass(json: &str, region: Region) -> Result<City, String> {
                     min_floor: tags.get("building:min_level").and_then(Value::as_str)
                         .and_then(parse_positive_floor),
                     polygons: vec![Polygon { rings: vec![ring] }],
+                    parts:Vec::new(),
                 });
             }
         }
@@ -384,6 +405,7 @@ fn osm_multipolygon_building(element: &Value, region: &Region) -> Option<(Buildi
         min_floor: tags.get("building:min_level").and_then(Value::as_str)
             .and_then(parse_positive_floor),
         polygons,
+        parts:Vec::new(),
     }, used))
 }
 
@@ -572,10 +594,110 @@ pub fn buildings_from_geojson(
             min_height_m,
             min_floor,
             polygons,
+            parts:Vec::new(),
         });
     }
     buildings.sort_by(|a, b| a.source_id.cmp(&b.source_id));
     Ok(buildings)
+}
+
+/// The part downloader's bbox is not an ownership rule: a roof may spill
+/// over a region boundary even when its parent is single-owned by the
+/// neighboring region. Join parts strictly to the parent source ID already
+/// admitted by `buildings_from_geojson` and never duplicate a child by tile.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BuildingPartImportReport {
+    pub features_seen:usize,
+    pub parts_attached:usize,
+    pub parts_without_local_parent:usize,
+    pub invalid_or_duplicate_parts:usize,
+    pub parent_buildings_with_parts:usize,
+    pub measured_raised_parts:usize,
+    pub floor_estimated_raised_parts:usize,
+}
+pub fn attach_building_parts_from_geojson(
+    json:&str,region:&Region,unit:HeightUnit,buildings:&mut [Building]
+)->Result<BuildingPartImportReport,String>{
+    region.validate()?;
+    let root:Value=serde_json::from_str(json).map_err(|e|e.to_string())?;
+    let features=root.get("features").and_then(Value::as_array)
+        .ok_or("building part input must be a GeoJSON FeatureCollection")?;
+    let mut by_parent=BTreeMap::new();
+    for (i,b) in buildings.iter().enumerate(){
+        if by_parent.insert(b.source_id.clone(),i).is_some(){
+            return Err(format!("duplicate building ID: {}",b.source_id));
+        }
+    }
+    let mut report=BuildingPartImportReport{
+        features_seen:features.len(),parts_attached:0,
+        parts_without_local_parent:0,invalid_or_duplicate_parts:0,
+        parent_buildings_with_parts:0,measured_raised_parts:0,
+        floor_estimated_raised_parts:0,
+    };
+    let mut seen=BTreeSet::new();
+    for feature in features {
+        let props=feature.get("properties").and_then(Value::as_object);
+        let prop=|key:&str|props.and_then(|p|p.get(key));
+        let Some(parent_id)=prop("building_id").filter(|id|!id.is_null())
+            .map(value_as_identifier) else {
+            report.invalid_or_duplicate_parts+=1;
+            continue;
+        };
+        let parent_key=format!("geojson:{parent_id}");
+        let Some(&parent_index)=by_parent.get(&parent_key) else{
+            report.parts_without_local_parent+=1;
+            continue;
+        };
+        let Some(id)=feature.get("id").or_else(||prop("id"))
+            .filter(|id|!id.is_null()).map(value_as_identifier) else{
+            report.invalid_or_duplicate_parts+=1;
+            continue;
+        };
+        let part_key=format!("geojson:part:{id}");
+        if !seen.insert((parent_index,part_key.clone())) {
+            report.invalid_or_duplicate_parts+=1;
+            continue;
+        }
+        let Some(geometry)=feature.get("geometry") else{
+            report.invalid_or_duplicate_parts+=1;continue;
+        };
+        let polygons:Vec<Polygon>=match geometry.get("type").and_then(Value::as_str){
+            Some("Polygon")=>geometry.get("coordinates")
+                .and_then(|coords|polygon_from_geojson(coords,region))
+                .into_iter().collect(),
+            Some("MultiPolygon")=>geometry.get("coordinates")
+                .and_then(Value::as_array).into_iter().flatten()
+                .filter_map(|p|polygon_from_geojson(p,region)).collect(),
+            _=>Vec::new(),
+        };
+        if polygons.is_empty(){
+            report.invalid_or_duplicate_parts+=1;continue;
+        }
+        let convert=|v:f64|match unit{
+            HeightUnit::Meters=>v,HeightUnit::Feet=>v*0.3048
+        };
+        let height_m=prop("height").and_then(number_value)
+            .filter(|h|h.is_finite()&&*h>0.0).map(convert);
+        let levels=prop("num_floors").and_then(number_value)
+            .filter(|v|v.is_finite()&&*v>0.0);
+        let min_height_m=prop("min_height").and_then(number_value)
+            .filter(|v|v.is_finite()&&*v>=0.0).map(convert);
+        let min_floor=positive_floor(prop("min_floor"));
+        if min_height_m.is_some_and(|v|v>0.0){
+            report.measured_raised_parts+=1;
+        }else if min_height_m.is_none()&&min_floor.is_some(){
+            report.floor_estimated_raised_parts+=1;
+        }
+        buildings[parent_index].parts.push(BuildingPart{
+            source_id:part_key,height_m,levels,min_height_m,min_floor,polygons
+        });
+        report.parts_attached+=1;
+    }
+    for building in buildings.iter_mut(){
+        building.parts.sort_by(|a,b|a.source_id.cmp(&b.source_id));
+        if !building.parts.is_empty(){report.parent_buildings_with_parts+=1;}
+    }
+    Ok(report)
 }
 
 /// Split grade-related source rules by their linearly-referenced fractions
@@ -966,6 +1088,81 @@ mod tests {
         assert_eq!(old.min_floor,None);
     }
 
+    #[test]
+    fn building_parts_join_by_parent_id_and_keep_child_grade_without_replacing_parent(){
+        let building_json=r#"{"type":"FeatureCollection","features":[{
+            "type":"Feature","id":"parent-1","properties":{"height":12},
+            "geometry":{"type":"Polygon","coordinates":[[
+                [-118.251,34.05],[-118.250,34.05],
+                [-118.250,34.051],[-118.251,34.05]
+            ]]}}]}"#;
+        let mut parents=buildings_from_geojson(
+            building_json,&downtown(),HeightUnit::Meters).unwrap();
+        let part_json=r#"{"type":"FeatureCollection","features":[
+            {"type":"Feature","id":"part-a","properties":{
+                "building_id":"parent-1","height":8,"min_height":4},
+                "geometry":{"type":"Polygon","coordinates":[[
+                    [-118.2509,34.0501],[-118.2506,34.0501],
+                    [-118.2506,34.0504],[-118.2509,34.0501]
+                ]]}},
+            {"type":"Feature","id":"part-b","properties":{
+                "building_id":"parent-1","num_floors":2,"min_floor":1},
+                "geometry":{"type":"Polygon","coordinates":[[
+                    [-118.2508,34.0501],[-118.2505,34.0501],
+                    [-118.2505,34.0503],[-118.2508,34.0501]
+                ]]}},
+            {"type":"Feature","id":"orphan","properties":{
+                "building_id":"not-local","height":12},
+                "geometry":{"type":"Polygon","coordinates":[[
+                    [-118.2508,34.0501],[-118.2505,34.0501],
+                    [-118.2505,34.0503],[-118.2508,34.0501]
+                ]]}}
+        ]}"#;
+        let report=attach_building_parts_from_geojson(
+            part_json,&downtown(),HeightUnit::Meters,&mut parents).unwrap();
+        assert_eq!(report.features_seen,3);
+        assert_eq!(report.parts_attached,2);
+        assert_eq!(report.parts_without_local_parent,1);
+        assert_eq!(report.measured_raised_parts,1);
+        assert_eq!(report.floor_estimated_raised_parts,1);
+        assert_eq!(parents.len(),1);
+        assert_eq!(parents[0].height_m,Some(12.0));
+        assert_eq!(parents[0].parts.len(),2);
+        assert_eq!(parents[0].parts[0].min_height_m,Some(4.0));
+        assert_eq!(parents[0].parts[1].min_floor,Some(1));
+        let output=serde_json::to_string(&parents).unwrap();
+        let restored:Vec<Building>=serde_json::from_str(&output).unwrap();
+        assert_eq!(restored[0].parts.len(),2);
+        let old=r#"{"source_id":"old","name":null,
+            "height_m":10,"levels":null,"polygons":[]}"#;
+        let previous:Building=serde_json::from_str(old).unwrap();
+        assert!(previous.parts.is_empty());
+    }
+    #[test]
+    fn building_part_duplicate_identity_cannot_create_coplanar_duplicate(){
+        let mut parents=buildings_from_geojson(
+            r#"{"type":"FeatureCollection","features":[{
+              "type":"Feature","id":"p","properties":{},
+              "geometry":{"type":"Polygon","coordinates":[[
+                [-118.25,34.05],[-118.249,34.05],
+                [-118.249,34.051],[-118.25,34.05]
+              ]]}}]}"#,&downtown(),HeightUnit::Meters).unwrap();
+        let parts=r#"{"type":"FeatureCollection","features":[
+          {"type":"Feature","id":"a","properties":{"building_id":"p"},
+            "geometry":{"type":"Polygon","coordinates":[[
+              [-118.2499,34.0501],[-118.2498,34.0501],
+              [-118.2498,34.0502],[-118.2499,34.0501]]]}},
+          {"type":"Feature","id":"a","properties":{"building_id":"p"},
+            "geometry":{"type":"Polygon","coordinates":[[
+              [-118.2499,34.0501],[-118.2498,34.0501],
+              [-118.2498,34.0502],[-118.2499,34.0501]]}}
+        ]}"#;
+        let report=attach_building_parts_from_geojson(
+            parts,&downtown(),HeightUnit::Meters,&mut parents).unwrap();
+        assert_eq!(report.parts_attached,1);
+        assert_eq!(report.invalid_or_duplicate_parts,1);
+        assert_eq!(parents[0].parts.len(),1);
+    }
     #[test]
     fn assembles_multipolygon_building_with_reversed_segments_and_courtyard() {
         let input = r#"{"elements":[

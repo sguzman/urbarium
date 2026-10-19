@@ -174,7 +174,7 @@ mod tests {
             schema_version:1,region,provenance:vec![],streets:vec![],
             buildings:vec![Building {
                 source_id:"b".into(),name:None,height_m:Some(15.0),levels:None,
-                min_height_m:None,min_floor:None,
+                min_height_m:None,min_floor:None,parts:Vec::new(),
                 polygons:vec![Polygon {rings:vec![outer,hole]}]
             }],
         })

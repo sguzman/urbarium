@@ -220,7 +220,7 @@ mod tests {
     fn square(name: &str, rings: Vec<Vec<Point>>, height: Option<f64>) -> Building {
         Building {
             source_id:name.into(), name:None, height_m:height, levels:None,
-            min_height_m:None,min_floor:None,polygons:vec![Polygon { rings }]
+            min_height_m:None,min_floor:None,parts:Vec::new(),polygons:vec![Polygon { rings }]
         }
     }
     fn ring(points: &[[f64;2]]) -> Vec<Point> {

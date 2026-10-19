@@ -13,6 +13,20 @@ How source geography is transformed into sections, coordinate frames, DEM-aware 
 - Roads are tagged centerlines, not surveyed curb edges or navigable pavement meshes. Source node IDs preserve future junction connectivity, and selected tags retain sidewalk, lane, bridge/tunnel and access information.
 - Buildings are polygon/multipolygon footprints with holes supported in GeoJSON.
 - Height is optional and represents a known reported measurement; **missing height is not silently guessed**.
+- Overture `building_part` features are downloaded alongside each region's
+  buildings and joined **only** to an already-owned parent by source
+  `building_id`. Parts retain independent polygon footprints, measured height,
+  `min_height`, `min_floor` and floor counts, and are serialized nested under
+  the parent. Missing parent IDs (including those owned by an adjacent region)
+  are reported and do not create duplicate independent building masses.
+  Duplicate part IDs are suppressed. Older city assets without `parts` work.
+- The road/building collision audit now reports source part polygons touching
+  each conflict, measured vertical clearances and centerline penetration, so
+  a raised over-driveway part can be distinguished from an unsupported guess.
+  A raised part is **evidence**, not automatic permission to delete a parent
+  building or its road. The renderer still uses original parent massing until
+  safe polygon-completeness and parent/part occlusion rules exist.
+
 - Import measured `min_height` as bottom clearance above ground, and optional
   `min_floor` as an integer source floor index, not metric height. A missing
   `min_height` stays `None`; only `HeightPolicy.meters_per_level` may use
