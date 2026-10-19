@@ -114,9 +114,19 @@ criteria in [FREEWAY_RECONSTRUCTION.md](FREEWAY_RECONSTRUCTION.md) pass.
 
 ## P3 — Regional expansion
 
-**Direction (October 19, 2026):** Grow outward from the established Downtown
-LA / Little Tokyo pilot, while allowing separately requested destination
-regions without requiring every intervening block to render. Destination
+**Direction (October 19, 2026):** The first geographic expansion is
+bounded by the **I-110 west-side corridor**, from Downtown Los Angeles south
+through South Los Angeles, LAX / Inglewood, Manhattan and Redondo Beach,
+Torrance, Gardena, Carson, the Palos Verdes peninsula and San Pedro. Preserve
+a small practical margin east of I-110 for road continuity, but do not treat
+Long Beach or the I-710 corridor as the immediate goal. Treat the freeway as
+the eastern planning reference, not an invented precise municipal boundary;
+select real source-aligned rectangular regions incrementally. Reach the
+coastline on the west and south, including LAX and the South Bay.
+
+Grow outward from the established Downtown / Little Tokyo pilot, while
+allowing separately requested destinations beyond that region without
+rendering every intervening block. Destination
 targets will be selected by the user later; do not assume them. Prioritize
 documented, source-backed geographic acquisition over speculative new
 procedural physical-world features. Region addition must preserve the
@@ -128,6 +138,23 @@ overlays. Zoning and the broader "information world" remain deferred.
 - [ ] Support user-selected destination regions without requiring a contiguous
       rendered corridor; maintain consistent independent source/provenance
       manifests, navigation and joined-world coordinate transforms.
+- [x] Remove the artificial 2.4-km draw cutoff on an already resident joined
+      section. Missing detail must not erase the city merely because of a
+      hardcoded draw distance.
+- [x] Introduce a first **single-region** GPU detailed-cell cap (6 / 12 / 24 /
+      48 / 96 cells, adjustable live) with source-footprint, source-height
+      low-poly building massing as a distant fallback. Report both the detailed
+      cell count and compact fallback bytes; this is not a hard whole-browser
+      memory allocation limit.
+- [ ] Make the adjustable residency budget work across joined, tiled regions
+      rather than only standalone camera-local streaming. Stream region source
+      data by camera distance and keep a coarser visible terrain/building
+      representation at long range; never silently remove distant skyline
+      geometry. Add hysteresis and screen-space LOD only when evidence-backed
+      QA proves no visible pop-in or significant memory regressions.
+- [ ] Acquire adjacent I-110 west-side corridor regions one at a time, and
+      verify source ownership, DEM seams, memory, and distant skyline before
+      the next region is added.
 - [ ] Inventory and evaluate available *physical-world* source layers for
       each region (roads, buildings and building parts, higher-resolution
       terrain, hydrography, vegetation or other source-backed features).
