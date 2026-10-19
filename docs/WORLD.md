@@ -177,16 +177,22 @@ The `audit-road-buildings` CLI remains the authority for real road/building
 triangle overlap. During packaging, `scripts/publish_road_conflicts.py`
 runs that exact Rust auditor on each catalog region and publishes the
 **centerline-penetration** cases to
-`assets/road-conflict-locations.json`. Export rejects truncated audit top-20
-lists, so new conflicts cannot silently vanish from the review UI.
+`assets/road-conflict-locations.json`. The Rust audit now exposes the complete
+`source_centerline_conflicts` set while retaining `largest` as a capped
+top-20 summary. The publisher validates the entire set against the reported
+cause count (and rejects truncated older audits), so additional regions or
+conflicts cannot silently disappear from the review UI.
 
 **Details → Inspect road conflicts** loads this optional small manifest only
 when requested. **Show in 3D** opens the chosen region with
 `?region=REGION&world=0&focus=LONGITUDE,LATITUDE`; it uses a reproducible,
 elevated Rust camera pointed at the geographic source locus. The loader
-validates finite coordinates and region bounds. Normal joined-world starts do
-not request the manifest or change camera behavior. No roads, buildings or
-source tags are changed by this feature.
+validates finite coordinates and region bounds. Selecting a case shows its
+original road and building IDs, centerline penetration length and any
+building-part evidence, explicitly distinguishing measured raised clearance
+from missing evidence. Normal joined-world starts do not request the manifest
+or change camera behavior. No roads, buildings or source tags are changed by
+this feature.
 
 An overlap is not by itself a mapping error: roads may be internal/covered,
 or source geometries may be misregistered. This tool helps inspect the five
