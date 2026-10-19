@@ -134,10 +134,30 @@ A camera relocation inside the pilot does not evict still-visible distant
 buildings. Large future regions may still use eviction outside the conservative
 distance and will require view-frustum-aware LOD and occlusion handling.
 
+For larger regions and experimental memory limits, **source-backed distant
+building massing** now remains drawable when a detailed cell is evicted.
+Each distant building uses a compact low-poly box derived from its real source
+footprint extent and recorded/explicitly approximate height. Cells with full
+geometry suppress their own far proxies. The proxy buffer is retained while
+camera-local mesh cells are paged in and out, so reducing detail doesn't
+produce a suddenly empty skyline. This is geometric LOD, not a photographic
+billboard, and road, roof and fine facade details are not retained at far LOD.
+
+**Advanced → Detailed geometry cells** selects a live detail limit of
+6, 12, 24, 48 or 96 in standalone progressive mode (also available as
+`?world=0&detailcells=12`). Diagnostics report detailed residents, evictions,
+low-detail cell count and far proxy buffer bytes. These are GPU geometry
+residency settings, **not** a strict browser RAM limit: source City data,
+collision geometry, terrain, caches and the browser remain separately resident.
+The joined two-section renderer still retains both full sections; its prior
+2.4 km artificial neighbor draw cutoff was removed because hiding an already
+resident region did not save GPU memory. Joined-region dynamic streaming and
+per-region far LOD remain future work, prerequisites for the longer I-110 /
+South Bay corridor.
+
 The original geographic city and collision data remain resident in CPU memory.
 Conservative coverage is intentional: **true occlusion culling has not yet
-been implemented**, so no building is hidden merely because its cell is outside
-a small local radius.
+been implemented**.
 
 The initial coarse terrain/road preview is replaced with terrain-only after
 the first active neighborhood is complete, avoiding permanent duplicate road
