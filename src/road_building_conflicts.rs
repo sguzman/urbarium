@@ -70,6 +70,10 @@ pub struct ConflictReport {
     pub total_parts_available:usize,
     pub conflict_pairs_with_part_evidence:usize,
     pub conflict_pairs_with_measured_raised_part_evidence:usize,
+    /// Every diagnosed source-centerline penetration, including cases outside
+    /// the ranked top-20 display. This is the complete evidence set for the
+    /// published 3D inspection manifest, not an instruction to cut geometry.
+    pub source_centerline_conflicts:Vec<Conflict>,
     pub largest:Vec<Conflict>,
 }
 #[derive(Clone)]
@@ -410,6 +414,9 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
         .then(a.building_id.cmp(&b.building_id))
         .then(a.street_id.cmp(&b.street_id)));
     for area in area_m2_by_cause.values_mut(){*area=(*area*1000.0).round()/1000.0;}
+    let source_centerline_conflicts=conflicts.iter()
+        .filter(|conflict|conflict.cause==ConflictCause::CenterlineInsideFootprint)
+        .cloned().collect::<Vec<_>>();
     Ok(ConflictReport{
         region_id:city.region.id.clone(),
         buildings_checked:roofs.len(),raised_buildings_excluded,
@@ -423,6 +430,7 @@ pub fn audit_road_buildings(city:&City)->Result<ConflictReport,String>{
         total_parts_available:city.buildings.iter().map(|b|b.parts.len()).sum(),
         conflict_pairs_with_part_evidence,
         conflict_pairs_with_measured_raised_part_evidence,
+        source_centerline_conflicts,
         largest:conflicts.into_iter().take(20).collect(),
     })
 }
@@ -583,6 +591,22 @@ mod tests {
             assert_eq!(conflict.cause,ConflictCause::InferredWidthEnvelope);
             assert_eq!(conflict.centerline_inside_m,0.0);
         }
+    }
+    #[test]
+    fn all_source_centerline_conflicts_survive_ranked_report_cap(){
+        let mut c=city(street(p(-5.,5.),p(15.,5.),2.0),building(false));
+        c.streets=(0..25).map(|id|{
+            let mut road=street(p(-5.,5.),p(15.,5.),2.0);
+            road.source_id=format!("road-{id:02}");
+            road
+        }).collect();
+        let report=audit_road_buildings(&c).unwrap();
+        assert_eq!(report.conflict_pairs,25);
+        assert_eq!(report.largest.len(),20);
+        assert_eq!(report.source_centerline_conflicts.len(),25);
+        assert_eq!(report.by_cause[&ConflictCause::CenterlineInsideFootprint],25);
+        assert!(report.source_centerline_conflicts.iter().all(|case|
+            case.centerline_inside_m>0.05));
     }
     #[test]
     fn tunnel_is_not_treated_as_surface_road(){
