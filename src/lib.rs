@@ -1155,7 +1155,7 @@ mod tests {
           {"type":"Feature","id":"a","properties":{"building_id":"p"},
             "geometry":{"type":"Polygon","coordinates":[[
               [-118.2499,34.0501],[-118.2498,34.0501],
-              [-118.2498,34.0502],[-118.2499,34.0501]]}}
+              [-118.2498,34.0502],[-118.2499,34.0501]]]}}
         ]}"#;
         let report=attach_building_parts_from_geojson(
             parts,&downtown(),HeightUnit::Meters,&mut parents).unwrap();
