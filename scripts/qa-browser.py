@@ -965,7 +965,10 @@ with sync_playwright() as p:
                 Number(s.dataset.frameCount)>3;
         }""",timeout=90000)
         assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
-        assert page.locator("#progressive-preview-toggle").get_attribute("aria-pressed")=="false"
+        # Normal joined world must refuse the accidental blocking-startup
+        # setting. Diagnostic experimental bridges preserve their fallback.
+        assert page.locator("#progressive-preview-toggle").get_attribute("aria-pressed")==(
+            "false" if bridge_preview else "true")
         page.wait_for_function("""() => {
             const map=document.querySelector("#minimap-canvas");
             return map?.dataset.mapReady==="true" &&
@@ -998,7 +1001,8 @@ with sync_playwright() as p:
             "Eastern region is still unpainted on the minimap",painted)
         print("Joined minimap eastern geography pixel painted",painted)
 
-        assert page.locator("#status").get_attribute("data-first-frame-detail")=="joined"
+        assert page.locator("#status").get_attribute("data-first-frame-detail")==(
+            "joined" if bridge_preview else "base")
         # Joined-world startup previously displayed the misleading generic
         # "Starting application" for the neighbor-fetch stage. Ensure the
         # real phase has a distinct title even after its work is complete.
@@ -1082,6 +1086,25 @@ with sync_playwright() as p:
             Number(document.querySelector("#minimap-canvas")?.dataset.mapSections)===2
         """,timeout=30000)
         print("Default joined mode: progressive renderer and whole-region map")
+        if not bridge_preview:
+            assert page.locator("#status").get_attribute("data-chunk-streaming")=="true"
+            page.locator("#hud-tab-advanced").click()
+            assert page.locator("#progressive-preview-toggle").is_disabled()
+            detail=page.locator("#detail-cell-limit")
+            assert detail.is_enabled(), "detail limits must be available in the default joined city"
+            detail.select_option("6")
+            page.wait_for_function("""() => {
+                const s=document.querySelector("#status");
+                return Number(s?.dataset.detailChunkLimit)===6 &&
+                    Number(s?.dataset.chunksResident)===6 &&
+                    Number(s?.dataset.farMassingCells)>0 &&
+                    Number(s?.dataset.worldSections)===2 &&
+                    Number(s?.dataset.worldSecondaryDrawcalls)>0 &&
+                    s?.dataset.gpuDeviceLost!=="true";
+            }""",timeout=30000)
+            assert "neighboring region still uses full geometry" in page.locator(
+                "#detail-cell-note").inner_text()
+            print("Joined-world live detailed-cell cap leaves source-backed distant massing")
         # Exercise sustained joined-region rendering, not only first frame.
         initial_frames=int(page.locator("#status").get_attribute("data-frame-count"))
         for camera_button in ("#camera-overview","#camera-street","#camera-overview"):
