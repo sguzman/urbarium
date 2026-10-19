@@ -13,6 +13,7 @@ on:
       - scripts/edge-vulkan-probe.sh
       - scripts/edge-vulkan-render.sh
       - web/data-cache.js
+      - web/quicklook.js
       - scripts/stamp-geography.py
       - web/landmarks.json
       - web/stats.js
@@ -157,6 +158,7 @@ jobs:
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
           assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
+          assert (dist/"quicklook.js").is_file(), "Pre-WASM geographic renderer missing"
           assert (dist/"wasm-sw.js").is_file(), "WASM service worker missing"
           assert (dist/"urbarium-mesh-worker.js").is_file()
           assert (dist/"urbarium-mesh-worker_bg.wasm").is_file()
@@ -195,6 +197,8 @@ jobs:
                      for m in landmarks["landmarks"])
           assert (dist/"stats.js").is_file(), "Stats JavaScript missing from published site"
           page=(dist/"index.html").read_text()
+          assert 'quicklook.js' in page
+          assert 'startup-preview' in page
           assert 'minimap-canvas' in page
           assert 'map-zoom-in' in page
           assert 'landmark-legend' in page and 'landmarks-show-all' in page
@@ -230,9 +234,12 @@ jobs:
           while IFS= read -r rid; do
             cargo run --quiet -- audit-road-buildings --city "dist/assets/$rid.json"
           done
-      - name: QA viewer in browser with WebGPU
+      - name: QA viewer draws source geography before WASM can initialize
         run: |
           python3 -m http.server 8010 --directory dist >/tmp/urbarium-http.log 2>&1 &
+          xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-quicklook.py
+      - name: QA viewer in browser with WebGPU
+        run: |
           xvfb-run --auto-servernum -s '-screen 0 1280x800x24' python3 scripts/qa-browser.py
       - name: QA WebGL2 fallback without browser WebGPU
         env:
