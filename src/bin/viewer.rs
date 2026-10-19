@@ -1399,7 +1399,11 @@ impl Graphics {
                 }
             }
         }
-        if complete {set_scene_detail("complete");}
+        if complete {
+            set_scene_detail(if self.world_preview {
+                if self.neighbor.is_some() {"joined"} else {"neighbor"}
+            }else{"complete"});
+        }
         set_chunk_telemetry(resident,wanted.len(),built,evicted,initialized);
         #[cfg(target_arch="wasm32")]
         if let Some(el)=web_sys::window().and_then(|w|w.document())
@@ -1896,8 +1900,9 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
 }
 
 async fn enrich_scene(job:DeferredScene,proxy:EventLoopProxy<AppEvent>) {
-    // Only starts once the first real frame was submitted. The short timeout
-    // gives the browser a presentation opportunity before synchronous meshing.
+    // Compatibility fallback for explicitly nonprogressive standalone or
+    // experimental bridge rendering. The regular joined world streams
+    // the primary region and loads its neighbor independently.
     #[cfg(target_arch="wasm32")]
     gloo_timers::future::TimeoutFuture::new(160).await;
     let DeferredScene{city,terrain,bridge_preview,joined}=job;
@@ -1912,7 +1917,13 @@ async fn enrich_scene(job:DeferredScene,proxy:EventLoopProxy<AppEvent>) {
             return;
         }
     }
-    if !joined{return;}
+    if joined {
+        enrich_neighbor(city,terrain,bridge_preview,proxy).await;
+    }
+}
+
+async fn enrich_neighbor(city:City,terrain:TerrainGrid,bridge_preview:bool,
+    proxy:EventLoopProxy<AppEvent>) {
     #[cfg(target_arch="wasm32")]
     gloo_timers::future::TimeoutFuture::new(160).await;
     set_scene_detail("neighbor");
@@ -2139,8 +2150,22 @@ impl ApplicationHandler<AppEvent> for App {
                         // has been submitted. The old path blocked the first
                         // frame on two complete sections.
                         if let Some(job)=gfx.deferred_scene.take(){
-                            if browser_chunk_streaming() && !job.joined &&
-                                !job.bridge_preview {
+                            if browser_chunk_streaming() && !job.bridge_preview {
+                                // Joining must not force a blocking complete
+                                // primary-city mesh. A separate deferred
+                                // neighbor task preserves the exact existing
+                                // neighboring city and collision transforms.
+                                if job.joined {
+                                    let proxy=self_proxy(event_loop);
+                                    let city=job.city.clone();
+                                    let terrain=job.terrain.clone();
+                                    #[cfg(target_arch="wasm32")]
+                                    wasm_bindgen_futures::spawn_local(
+                                        enrich_neighbor(city,terrain,false,proxy));
+                                    #[cfg(not(target_arch="wasm32"))]
+                                    pollster::block_on(
+                                        enrich_neighbor(city,terrain,false,proxy));
+                                }
                                 gfx.begin_streaming(job);
                             }else{
                                 let proxy=self_proxy(event_loop);
