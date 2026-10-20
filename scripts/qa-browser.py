@@ -2,6 +2,8 @@
 """Headless functional smoke check for the actual Rust/wgpu WebAssembly app."""
 import os
 import time
+import json
+from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 force_webgl = os.environ.get("URBARIUM_QA_FORCE_WEBGL") == "1"
@@ -963,42 +965,56 @@ with sync_playwright() as p:
                 document.querySelector("#gpu-fallback-message")?.hidden===false &&
                 document.querySelector("#status")?.dataset.gpuBackend==="Gl" """,timeout=60000)
             print("WebGPU CPU adapter automatically fell back to hardware WebGL2 mode")
-        # A second independently packaged section is a real Overture city,
-        # not a fake 2D preview. Exercise its own city/DEM/3D camera.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&region=little-tokyo-east",
-                  wait_until="domcontentloaded")
-        page.wait_for_function("""() => {
-            const s=document.querySelector('#status');
-            return s?.dataset.renderStage==='first-present' &&
-                s.dataset.regionId==='little-tokyo-east' &&
-                Number(s.dataset.frameCount)>2;
-        }""",timeout=60000)
-        assert page.locator("#region-select").input_value()=="little-tokyo-east"
-        assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
-        assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
-        print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
-        # West-side geography is a separate real source section. Keep it
-        # standalone until multi-region memory residency is bounded.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&bridges=1','').replace('&world=0','')}&region=i110-westlake&detailcells=6",
+        # Exercise EVERY catalog region automatically on both backends.
+        # Geography expansions must not require one-off human screenshots
+        # or a manually curated list of region-specific smoke checks.
+        catalog=json.loads((Path(__file__).resolve().parents[1]/
+            "regions/catalog.json").read_text(encoding="utf-8"))
+        region_ids=[r["id"] for r in catalog["regions"]]
+        for rid in region_ids:
+            normal_suffix=suffix.replace("&bridges=1","")
+            page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{normal_suffix}&region={rid}&world=0&detailcells=6",
+                      wait_until="domcontentloaded")
+            page.wait_for_function("""id => {
+                const s=document.querySelector("#status");
+                return s?.dataset.regionId===id &&
+                    s.dataset.renderStage==="first-present" &&
+                    Number(s.dataset.frameCount)>3 &&
+                    Number(s.dataset.worldSections)===1;
+            }""",arg=rid,timeout=60000)
+            assert page.locator("#region-select").input_value()==rid
+            assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
+            page.wait_for_function("""() => Number(
+                document.querySelector("#status")?.dataset.chunksBuilt||0)>=3
+            """,timeout=60000)
+            assert int(page.locator("#status").get_attribute("data-chunks-resident"))<=6
+            assert int(page.locator("#status").get_attribute("data-far-massing-bytes"))>0
+            assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
+            print("Catalog section QA passed:",rid,"source 3D, terrain, skyline, six-cell budget")
+        # Joined world must likewise work from the westernmost pilot, not
+        # merely when launching the original Downtown primary source.
+        joined_suffix=suffix.replace("&bridges=1","").replace("&world=0","")
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{joined_suffix}&region=i110-westlake&detailcells=6",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() => {
             const s=document.querySelector("#status");
+            const expected=window.__urbariumRegionCatalog?.regions.length;
             return s?.dataset.regionId==="i110-westlake" &&
                 s.dataset.renderStage==="first-present" &&
                 Number(s.dataset.frameCount)>3 &&
-                Number(s.dataset.worldSections)===3;
-        }""",timeout=60000)
-        assert page.locator("#region-select").input_value()=="i110-westlake"
+                Number(s.dataset.worldSections)===expected;
+        }""",timeout=90000)
         assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
         assert page.locator("#world-preview-toggle").is_enabled()
-        assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
-        assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
-        page.wait_for_function("""() => Number(
-            document.querySelector("#status")?.dataset.chunksBuilt||0)>=3
-        """,timeout=45000)
-        assert int(page.locator("#status").get_attribute("data-chunks-resident"))<=6
-        assert int(page.locator("#status").get_attribute("data-far-massing-bytes"))>0
-        print("I-110/Westlake: standalone source 3D, far skyline and 6-cell budget passed")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            const map=document.querySelector("#minimap-canvas");
+            const expected=window.__urbariumRegionCatalog?.regions.length;
+            return Number(map?.dataset.mapSections)===expected &&
+                Number(s?.dataset.worldDetailedResident)<=6 &&
+                Number(s?.dataset.worldSecondaryDrawcalls)>0;
+        }""",timeout=30000)
+        print("Catalog joined-world QA passed with one shared six-cell budget")
         # Real neighboring geometry loaded into a separate GPU buffer under a
         # strict residency cap, with camera crossing the geographic seam.
         page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&world=0','')}&progressive=0",
@@ -1006,7 +1022,7 @@ with sync_playwright() as p:
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
             return s?.dataset.renderStage==='first-present' &&
-                Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
+                Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:window.__urbariumRegionCatalog.regions.length) &&
                 Number(s.dataset.worldSecondaryDrawcalls)>0 &&
                 Number(s.dataset.frameCount)>3;
         }""",timeout=90000)
@@ -1019,7 +1035,7 @@ with sync_playwright() as p:
             const map=document.querySelector("#minimap-canvas");
             return map?.dataset.mapReady==="true" &&
                 map.dataset.mapJoined==="true" &&
-                Number(map.dataset.mapSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
+                Number(map.dataset.mapSections)===(document.documentElement.dataset.bridgePreview==="true"?2:window.__urbariumRegionCatalog.regions.length) &&
                 Number(map.dataset.mapFullWidthM)>2700;
         }""",timeout=30000)
         map_info=page.locator("#minimap-canvas")
@@ -1053,7 +1069,7 @@ with sync_playwright() as p:
         # "Starting application" for the neighbor-fetch stage. Ensure the
         # real phase has a distinct title even after its work is complete.
         assert page.evaluate("""() => document.querySelector('#status')?.dataset.worldSections""")==(
-            "2" if bridge_preview else "3")
+            "2" if bridge_preview else str(len(region_ids)))
         # Regression: the old joined-world mover compared altitude against
         # a fake 0-m ground level and climbed by terrain height EVERY FRAME.
         # Confirm real keyboard flight controls preserve absolute altitude.
@@ -1123,14 +1139,14 @@ with sync_playwright() as p:
         page.wait_for_function("""() => {
             const s=document.querySelector("#status");
             return s?.dataset.sceneDetail==="joined" &&
-                Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
+                Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:window.__urbariumRegionCatalog.regions.length) &&
                 Number(s.dataset.worldSecondaryDrawcalls)>0 &&
                 Number(s.dataset.frameCount)>6;
         }""",timeout=90000)
         assert page.url==early_url
         assert page.evaluate("() => document.documentElement.dataset.worldPreview")=="true"
         page.wait_for_function("""() =>
-            Number(document.querySelector("#minimap-canvas")?.dataset.mapSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3)
+            Number(document.querySelector("#minimap-canvas")?.dataset.mapSections)===(document.documentElement.dataset.bridgePreview==="true"?2:window.__urbariumRegionCatalog.regions.length)
         """,timeout=30000)
         print("Default joined mode: progressive renderer and whole-region map")
         if not bridge_preview:
@@ -1145,7 +1161,7 @@ with sync_playwright() as p:
                 return Number(s?.dataset.detailChunkLimit)===6 &&
                     Number(s?.dataset.chunksResident)===6 &&
                     Number(s?.dataset.farMassingCells)>0 &&
-                    Number(s?.dataset.worldSections)===3 &&
+                    Number(s?.dataset.worldSections)===window.__urbariumRegionCatalog.regions.length &&
                     Number(s?.dataset.worldSecondaryDrawcalls)>0 &&
                     s?.dataset.gpuDeviceLost!=="true";
             }""",timeout=30000)
@@ -1163,7 +1179,7 @@ with sync_playwright() as p:
             page.wait_for_function("""() => {
                 const s=document.querySelector("#status");
                 return s?.dataset.sceneDetail==="joined" &&
-                    Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
+                    Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:window.__urbariumRegionCatalog.regions.length) &&
                     Number(s.dataset.worldSecondaryDrawcalls)>0 &&
                     s.dataset.gpuDeviceLost!=="true" &&
                     s.dataset.renderStage==="first-present";
