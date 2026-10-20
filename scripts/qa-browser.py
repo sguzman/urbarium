@@ -979,7 +979,7 @@ with sync_playwright() as p:
         print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
         # West-side geography is a separate real source section. Keep it
         # standalone until multi-region memory residency is bounded.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&bridges=1','')}&region=i110-westlake&detailcells=6",
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&bridges=1','').replace('&world=0','')}&region=i110-westlake&detailcells=6",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() => {
             const s=document.querySelector("#status");
@@ -1006,7 +1006,7 @@ with sync_playwright() as p:
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
             return s?.dataset.renderStage==='first-present' &&
-                Number(s.dataset.worldSections)===3 &&
+                Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
                 Number(s.dataset.worldSecondaryDrawcalls)>0 &&
                 Number(s.dataset.frameCount)>3;
         }""",timeout=90000)
@@ -1019,15 +1019,15 @@ with sync_playwright() as p:
             const map=document.querySelector("#minimap-canvas");
             return map?.dataset.mapReady==="true" &&
                 map.dataset.mapJoined==="true" &&
-                Number(map.dataset.mapSections)===3 &&
-                Number(map.dataset.mapFullWidthM)>4200;
+                Number(map.dataset.mapSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
+                Number(map.dataset.mapFullWidthM)>2700;
         }""",timeout=30000)
         map_info=page.locator("#minimap-canvas")
         fit=float(map_info.get_attribute("data-map-full-width-m"))
         assert float(map_info.get_attribute("data-map-width-m"))>=fit*.97
         bounds=[float(v) for v in map_info.get_attribute(
             "data-map-world-bounds").split(",")]
-        assert bounds[2]-bounds[0]>4200 and bounds[3]>bounds[1],bounds
+        assert bounds[2]-bounds[0]>2700 and bounds[3]>bounds[1],bounds
         print("Both joined regions included in geographic minimap",bounds)
         # Pixel-level check in the EASTERN source section, not metadata alone.
         # Missing neighbor geography used to leave background blue here.
@@ -1052,7 +1052,8 @@ with sync_playwright() as p:
         # Joined-world startup previously displayed the misleading generic
         # "Starting application" for the neighbor-fetch stage. Ensure the
         # real phase has a distinct title even after its work is complete.
-        assert page.evaluate("""() => document.querySelector('#status')?.dataset.worldSections""")=="3"
+        assert page.evaluate("""() => document.querySelector('#status')?.dataset.worldSections""")==(
+            "2" if bridge_preview else "3")
         # Regression: the old joined-world mover compared altitude against
         # a fake 0-m ground level and climbed by terrain height EVERY FRAME.
         # Confirm real keyboard flight controls preserve absolute altitude.
@@ -1122,14 +1123,14 @@ with sync_playwright() as p:
         page.wait_for_function("""() => {
             const s=document.querySelector("#status");
             return s?.dataset.sceneDetail==="joined" &&
-                Number(s.dataset.worldSections)===2 &&
+                Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
                 Number(s.dataset.worldSecondaryDrawcalls)>0 &&
                 Number(s.dataset.frameCount)>6;
         }""",timeout=90000)
         assert page.url==early_url
         assert page.evaluate("() => document.documentElement.dataset.worldPreview")=="true"
         page.wait_for_function("""() =>
-            Number(document.querySelector("#minimap-canvas")?.dataset.mapSections)===2
+            Number(document.querySelector("#minimap-canvas")?.dataset.mapSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3)
         """,timeout=30000)
         print("Default joined mode: progressive renderer and whole-region map")
         if not bridge_preview:
@@ -1144,12 +1145,14 @@ with sync_playwright() as p:
                 return Number(s?.dataset.detailChunkLimit)===6 &&
                     Number(s?.dataset.chunksResident)===6 &&
                     Number(s?.dataset.farMassingCells)>0 &&
-                    Number(s?.dataset.worldSections)===2 &&
+                    Number(s?.dataset.worldSections)===3 &&
                     Number(s?.dataset.worldSecondaryDrawcalls)>0 &&
                     s?.dataset.gpuDeviceLost!=="true";
             }""",timeout=30000)
-            assert "neighboring region still uses full geometry" in page.locator(
+            assert "Shared detailed-cell budget" in page.locator(
                 "#detail-cell-note").inner_text()
+            total=int(page.locator("#status").get_attribute("data-world-detailed-resident"))
+            assert total<=6,("Joined world exceeded global detail budget",total)
             print("Joined-world live detailed-cell cap leaves source-backed distant massing")
         # Exercise sustained joined-region rendering, not only first frame.
         initial_frames=int(page.locator("#status").get_attribute("data-frame-count"))
@@ -1160,7 +1163,7 @@ with sync_playwright() as p:
             page.wait_for_function("""() => {
                 const s=document.querySelector("#status");
                 return s?.dataset.sceneDetail==="joined" &&
-                    Number(s.dataset.worldSections)===2 &&
+                    Number(s.dataset.worldSections)===(document.documentElement.dataset.bridgePreview==="true"?2:3) &&
                     Number(s.dataset.worldSecondaryDrawcalls)>0 &&
                     s.dataset.gpuDeviceLost!=="true" &&
                     s.dataset.renderStage==="first-present";
