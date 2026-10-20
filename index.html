@@ -25,12 +25,9 @@
           document.documentElement.dataset.reviewFocus=focusText;
         }
       }
-      // Keep the proven two-section Downtown/Little Tokyo default.
-      // New source regions start in bounded standalone streaming mode.
-      // Do not load a full third section until shared-region GPU budgeting is ready.
-      const joinedAllowed=selected.id==="downtown-la" ||
-        selected.id==="little-tokyo-east";
-      const joined=joinedAllowed && params.get("world")!=="0";
+      // The same joined world serves every catalog region. All source
+      // sections share a bounded GPU detail budget; world=0 is diagnostic.
+      const joined=params.get("world")!=="0";
       document.documentElement.dataset.worldPreview=joined?"true":"false";
       // Joined startup must render the first real frame before enrichment.
       const joinedDefault=joined && params.get("bridges")!=="1";
@@ -49,9 +46,9 @@
       // Hard cap for nearby detailed GPU cells. Distant buildings retain
       // source-backed compact skyline massing rather than disappearing.
       const chunks=Number(params.get("detailcells"));
-      // Unverified expansion sections begin with a smaller detailed mesh
-      // budget. Exact building-footprint distant massing remains visible.
-      const defaultCells=selected.id==="i110-westlake"?"12":"96";
+      // One shared GPU detail budget across every loaded region. Far
+      // building silhouettes retain actual sourced footprint geometry.
+      const defaultCells=joined?"48":"96";
       document.documentElement.dataset.detailChunkLimit=
         [6,12,24,48,96].includes(chunks)?String(chunks):defaultCells;
       // Pure draw-call filtering; the 30 pilot chunks remain GPU-resident.
@@ -579,27 +576,20 @@
       regionMenu.value=activeRegion.id;
       const joined=document.documentElement.dataset.worldPreview==="true";
       const worldToggle=document.getElementById("world-preview-toggle");
-      const joinSupported=activeRegion.id==="downtown-la" ||
-        activeRegion.id==="little-tokyo-east";
-      worldToggle.textContent=joinSupported
-        ? "Joined Downtown + Little Tokyo: "+(joined?"on":"off")
-        : "Joined view: unavailable until region streaming is verified";
-      worldToggle.title=joinSupported
-        ? "Show two source-backed adjacent city sections"
-        : "This region is intentionally standalone to bound GPU memory";
-      worldToggle.disabled=!joinSupported;
+      worldToggle.textContent="Joined LA world: "+(joined?"on":"off");
+      worldToggle.title="Automatically stream source-backed regions with a shared detail budget";
+      worldToggle.disabled=false;
       worldToggle.setAttribute("aria-pressed",String(joined));
       worldToggle.addEventListener("click",()=>{
-        if(!joinSupported)return;
         const url=new URL(location.href);
         if(joined)url.searchParams.set("world","0");
         else url.searchParams.delete("world");
         location.assign(url.href);
       });
       document.getElementById("current-region-name").textContent="/ "+
-        (joined?"LA · Joined preview":activeRegion.label);
+        (joined?"LA · Joined world":activeRegion.label);
       document.getElementById("minimap-region-name").textContent=
-         joined?"DOWNTOWN + LITTLE TOKYO":activeRegion.label.toUpperCase();
+         joined?"LA · JOINED WORLD":activeRegion.label.toUpperCase();
       regionMenu.addEventListener("change",()=>{
         const url=new URL(location.href);
         if(regionMenu.value==="downtown-la")url.searchParams.delete("region");
@@ -929,14 +919,14 @@
       cellNote.textContent=!progressivePreview || !streamActive || experimentalBridges
         ? "Cell limits require progressive loading without experimental bridge meshes."
         : joined
-          ? "Changes apply live to Downtown detail; distant buildings retain compact silhouettes. The neighboring region still uses full geometry until joined-region streaming is complete."
+          ? "Shared detailed-cell budget across all loaded regions. Nonresident source-footprint skylines remain visible."
           : "Changes apply live. Low-poly building silhouettes remain for distant detailed cells.";
       cellLimit.disabled=!progressivePreview || !streamActive || experimentalBridges;
       cellLimit.addEventListener("change",()=>{
         const value=cellLimit.value;
         document.documentElement.dataset.detailChunkLimit=value;
         const url=new URL(location.href);
-        const fallback=activeRegion.id==="i110-westlake"?"12":"96";
+        const fallback=joined?"48":"96";
         if(value===fallback)url.searchParams.delete("detailcells");
         else url.searchParams.set("detailcells",value);
         history.replaceState(null,"",url.href);

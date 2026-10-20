@@ -986,11 +986,11 @@ with sync_playwright() as p:
             return s?.dataset.regionId==="i110-westlake" &&
                 s.dataset.renderStage==="first-present" &&
                 Number(s.dataset.frameCount)>3 &&
-                Number(s.dataset.worldSections)===1;
+                Number(s.dataset.worldSections)===3;
         }""",timeout=60000)
         assert page.locator("#region-select").input_value()=="i110-westlake"
-        assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="false"
-        assert page.locator("#world-preview-toggle").is_disabled()
+        assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="true"
+        assert page.locator("#world-preview-toggle").is_enabled()
         assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
         assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
         page.wait_for_function("""() => Number(
@@ -1006,7 +1006,7 @@ with sync_playwright() as p:
         page.wait_for_function("""() => {
             const s=document.querySelector('#status');
             return s?.dataset.renderStage==='first-present' &&
-                Number(s.dataset.worldSections)===2 &&
+                Number(s.dataset.worldSections)===3 &&
                 Number(s.dataset.worldSecondaryDrawcalls)>0 &&
                 Number(s.dataset.frameCount)>3;
         }""",timeout=90000)
@@ -1019,15 +1019,15 @@ with sync_playwright() as p:
             const map=document.querySelector("#minimap-canvas");
             return map?.dataset.mapReady==="true" &&
                 map.dataset.mapJoined==="true" &&
-                Number(map.dataset.mapSections)===2 &&
-                Number(map.dataset.mapFullWidthM)>2700;
+                Number(map.dataset.mapSections)===3 &&
+                Number(map.dataset.mapFullWidthM)>4200;
         }""",timeout=30000)
         map_info=page.locator("#minimap-canvas")
         fit=float(map_info.get_attribute("data-map-full-width-m"))
         assert float(map_info.get_attribute("data-map-width-m"))>=fit*.97
         bounds=[float(v) for v in map_info.get_attribute(
             "data-map-world-bounds").split(",")]
-        assert bounds[2]-bounds[0]>2700 and bounds[3]>bounds[1],bounds
+        assert bounds[2]-bounds[0]>4200 and bounds[3]>bounds[1],bounds
         print("Both joined regions included in geographic minimap",bounds)
         # Pixel-level check in the EASTERN source section, not metadata alone.
         # Missing neighbor geography used to leave background blue here.
@@ -1052,7 +1052,7 @@ with sync_playwright() as p:
         # Joined-world startup previously displayed the misleading generic
         # "Starting application" for the neighbor-fetch stage. Ensure the
         # real phase has a distinct title even after its work is complete.
-        assert page.evaluate("""() => document.querySelector('#status')?.dataset.worldSections""")=="2"
+        assert page.evaluate("""() => document.querySelector('#status')?.dataset.worldSections""")=="3"
         # Regression: the old joined-world mover compared altitude against
         # a fake 0-m ground level and climbed by terrain height EVERY FRAME.
         # Confirm real keyboard flight controls preserve absolute altitude.

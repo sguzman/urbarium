@@ -34,7 +34,7 @@
     historic:"Historic"};
   const allMask=(1<<Object.keys(palette).length)-1;
   const legend=document.getElementById("landmark-legend");
-  const state={city:null,neighbor:null,terrain:null,landmarks:[],filterMask:allMask,width:650,cache:false,
+  const state={city:null,neighbors:new Map(),terrain:null,landmarks:[],filterMask:allMask,width:650,cache:false,
     cx:0,cz:0,frame:0,lastPose:null,mapRedraws:0};
   function project(lon,lat,region) {
     return {x:(lon-region.origin[0])*radius*Math.cos(region.origin[1]*Math.PI/180),
@@ -64,7 +64,7 @@
 
 
   function isJoined(){return document.documentElement.dataset.worldPreview==="true";}
-  function sections(){return state.neighbor?[state.city,state.neighbor]:[state.city];}
+  function sections(){return [state.city,...state.neighbors.values()].filter(Boolean);}
   // Exactly match Rust TilePlacement: convert neighbor local meters into
   // the primary source's geographic frame without changing the original data.
   function toReference(point,section){
@@ -95,7 +95,7 @@
     return Math.max(650,Math.min(6000,Math.max(b[2]-b[0],b[3]-b[1])*1.16));
   }
   function viewCenter(camera){
-    if(!isJoined()||!state.neighbor||state.width<fitWidth()*0.97)return camera;
+    if(!isJoined()||!state.neighbors.size||state.width<fitWidth()*0.97)return camera;
     const b=unionBounds();
     return {x:(b[0]+b[2])/2,z:(b[1]+b[3])/2};
   }
@@ -513,28 +513,39 @@
   }
 
   function useSharedNeighborCity(){
-    if(!isJoined()||!state.city||state.neighbor)return !!state.neighbor;
-    const payload=window.__urbariumNeighborCityJson;
-    if(typeof payload!=="string")return false;
-    try {
-      const neighbor=JSON.parse(payload);
-      if(!neighbor?.region || !Array.isArray(neighbor.buildings) ||
-          !Array.isArray(neighbor.streets) ||
-          neighbor.region.id===state.city.region.id)
-        throw Error("Invalid joined-world neighbor data");
-      state.neighbor=neighbor;
-      delete window.__urbariumNeighborCityJson;
-      state.width=fitWidth(); // fit the whole joined world, not one region
+    if(!isJoined()||!state.city)return false;
+    const payloads=window.__urbariumNeighborCities||{};
+    let added=false;
+    for(const [id,payload] of Object.entries(payloads)){
+      if(state.neighbors.has(id)){
+        delete payloads[id];
+        continue;
+      }
+      if(typeof payload!=="string")continue;
+      try{
+        const section=JSON.parse(payload);
+        if(!section?.region||section.region.id!==id||
+            !Array.isArray(section.buildings)||
+            !Array.isArray(section.streets)||
+            id===state.city.region.id)
+          throw Error("Invalid joined geographic region");
+        state.neighbors.set(id,section);
+        delete payloads[id];
+        added=true;
+      }catch(error){
+        console.error("Joined minimap geography rejected for "+id,error);
+        delete payloads[id];
+        canvas.dataset.mapJoined="error";
+      }
+    }
+    if(added){
+      state.width=fitWidth();
       state.cache=false;
       canvas.dataset.mapJoined="true";
       fillNamedBuildings(state.city);
       draw(pose());
-      return true;
-    }catch(error){
-      console.error("Joined minimap geography failed",error);
-      canvas.dataset.mapJoined="error";
-      return false;
     }
+    return state.neighbors.size>0;
   }
 
   function useSharedTerrain() {
