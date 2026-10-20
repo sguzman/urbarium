@@ -365,12 +365,30 @@ with sync_playwright() as p:
         )
         assert float(page.locator("#status").get_attribute("data-speed-mps")) > 50
         assert "FAST" in page.locator("#speed-state").inner_text()
+        # A speed adjustment is live and must not reinitialize graphics,
+        # navigate, or change the ordinary walking velocity.
+        old_page_url=page.url
+        page.locator("#sprint-speed").evaluate("""el => {
+            el.value="180";
+            el.dispatchEvent(new Event("input",{bubbles:true}));
+        }""")
+        page.wait_for_function("""() => {
+            const status=document.querySelector("#status");
+            return Math.abs(Number(status?.dataset.speedMps)-180)<0.01 &&
+                document.querySelector("#sprint-speed-value")?.textContent==="180 m/s" &&
+                document.querySelector("#speed-state")?.textContent==="FAST · 180 m/s";
+        }""",timeout=8000)
+        assert page.url==old_page_url,"Speed slider caused navigation"
+        assert page.evaluate("""() =>
+            localStorage.getItem("urbarium-fast-travel-mps-v1")""")=="180"
         page.keyboard.press("Shift")
         page.wait_for_function(
             "() => document.querySelector('#status')?.getAttribute('data-speed-mode') === 'walk'",
             timeout=6000,
         )
-        print("Shift toggles 18x fast movement and back to walk")
+        assert abs(float(page.locator("#status").get_attribute("data-speed-mps"))-3.4)<0.01
+        assert page.locator("#sprint-speed-value").inner_text()=="180 m/s"
+        print("Shift toggles fast travel; live slider updates 180 m/s without reload")
         page.keyboard.down("w")
         page.wait_for_timeout(450)
         page.keyboard.up("w")

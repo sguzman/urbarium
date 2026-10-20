@@ -171,6 +171,12 @@
     #map-coordinates {padding:0 10px 8px;color:#aec4cb;font-size:10px;
       font-variant-numeric:tabular-nums;}
     #speed-state {color:#f5d98f;font-weight:700;letter-spacing:.025em;}
+    .sprint-row{display:grid;grid-template-columns:1fr auto;gap:5px 9px;
+      align-items:center;font-size:11px;}
+    .sprint-row label{color:#c9e2eb;}
+    .sprint-row output{font-variant-numeric:tabular-nums;color:#f5d98f;}
+    .sprint-row input[type=range]{grid-column:1/-1;width:100%;min-width:0;
+      margin:0;accent-color:#8fc2cf;cursor:pointer;}
     @media(max-width:650px) {
       .minimap {top:auto;bottom:50px;right:8px;transform:scale(.77);transform-origin:bottom right;}
       .hud {max-width:calc(100vw - 54px);}
@@ -379,6 +385,12 @@
       </div>
       <div class="hud-field">
         <button id="world-preview-toggle" type="button" title="Stream catalogued geography with one shared detail-cell limit">Joined LA world: on</button>
+      </div>
+      <div class="hud-field sprint-row">
+        <label for="sprint-speed">Shift fast-travel speed</label>
+        <output id="sprint-speed-value" for="sprint-speed">61 m/s</output>
+        <input id="sprint-speed" type="range" min="20" max="240" step="1" value="61"
+          aria-label="Fast-travel movement speed in meters per second">
       </div>
       <div class="hud-field hud-options">
         <label title="Display approximate pedestrian paths, not surveyed curbs">
@@ -597,6 +609,28 @@
         // Do not change GPU backend, quality, or cache configuration.
         location.assign(url.href);
       });
+      // Movement speed changes live. The Rust movement loop reads the
+      // numeric attribute only while fast travel is active; no viewer,
+      // camera, network, or GPU initialization is restarted.
+      const sprintSlider=document.getElementById("sprint-speed");
+      const sprintValue=document.getElementById("sprint-speed-value");
+      const sprintKey="urbarium-fast-travel-mps-v1";
+      let initialSprint=61;
+      try{
+        const saved=Number(localStorage.getItem(sprintKey));
+        if(Number.isFinite(saved)&&saved>=20&&saved<=240)initialSprint=saved;
+      }catch(_){}
+      const setSprintSpeed=(raw,persist)=>{
+        const value=Math.round(Math.max(20,Math.min(240,Number(raw)||61)));
+        sprintSlider.value=String(value);
+        sprintValue.textContent=value+" m/s";
+        document.documentElement.dataset.fastTravelMps=String(value);
+        if(document.getElementById("status")?.dataset.speedMode==="fast")
+          document.getElementById("speed-state").textContent="FAST · "+value+" m/s";
+        if(persist)try{localStorage.setItem(sprintKey,String(value));}catch(_){}
+      };
+      setSprintSpeed(initialSprint,false);
+      sprintSlider.addEventListener("input",()=>setSprintSpeed(sprintSlider.value,true));
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");

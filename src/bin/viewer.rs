@@ -189,8 +189,8 @@ impl Camera {
         if pressed.contains(&KeyCode::ArrowUp) { self.mouse_look(0.0, -130.0*elapsed); }
         if pressed.contains(&KeyCode::ArrowDown) { self.mouse_look(0.0, 130.0*elapsed); }
         if delta.length_squared() > 0.0 {
-            let boost = if self.fast_mode { 18.0 } else { 1.0 };
-            delta.normalize() * elapsed.min(0.08) * self.speed * boost
+            let speed=if self.fast_mode {browser_fast_travel_mps()} else {self.speed};
+            delta.normalize() * elapsed.min(0.08) * speed
         }else{Vec3::ZERO}
     }
     fn move_by(&mut self, pressed:&HashSet<KeyCode>, elapsed:f32,
@@ -2875,15 +2875,37 @@ fn install_pointerlockchange(proxy:EventLoopProxy<AppEvent>) {
     );
     callback.forget();
 }
+const DEFAULT_FAST_TRAVEL_MPS:f32=61.2;
+const MIN_FAST_TRAVEL_MPS:f32=20.0;
+const MAX_FAST_TRAVEL_MPS:f32=240.0;
+
+fn validated_fast_travel_mps(raw:Option<&str>)->f32{
+    raw.and_then(|value|value.parse::<f32>().ok())
+        .filter(|n|n.is_finite())
+        .map(|n|n.clamp(MIN_FAST_TRAVEL_MPS,MAX_FAST_TRAVEL_MPS))
+        .unwrap_or(DEFAULT_FAST_TRAVEL_MPS)
+}
+fn browser_fast_travel_mps()->f32{
+    #[cfg(target_arch="wasm32")]
+    {
+        let value=web_sys::window().and_then(|w|w.document())
+            .and_then(|d|d.document_element())
+            .and_then(|el|el.get_attribute("data-fast-travel-mps"));
+        return validated_fast_travel_mps(value.as_deref());
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    DEFAULT_FAST_TRAVEL_MPS
+}
 fn set_speed_label(fast:bool) {
     #[cfg(target_arch="wasm32")]
     if let Some(doc)=web_sys::window().and_then(|w|w.document()) {
         if let Some(el)=doc.get_element_by_id("speed-state") {
-            el.set_text_content(Some(if fast {
-                "FAST · 61 m/s"
+            let label=if fast {
+                format!("FAST · {:.0} m/s",browser_fast_travel_mps())
             }else{
-                "WALK · 3.4 m/s"
-            }));
+                "WALK · 3.4 m/s".to_owned()
+            };
+            el.set_text_content(Some(&label));
         }
     }
     #[cfg(not(target_arch="wasm32"))]
@@ -2933,8 +2955,8 @@ fn expose_camera_pose(camera:&Camera) {
             let _=el.set_attribute("data-camera-x",&camera.position.x.to_string());
             let _=el.set_attribute("data-camera-z",&camera.position.z.to_string());
             let _=el.set_attribute("data-speed-mode",if camera.fast_mode {"fast"} else {"walk"});
-            let _=el.set_attribute("data-speed-mps",&(camera.speed *
-                if camera.fast_mode {18.0}else{1.0}).to_string());
+            let actual=if camera.fast_mode {browser_fast_travel_mps()}else{camera.speed};
+            let _=el.set_attribute("data-speed-mps",&actual.to_string());
         }
     }
     #[cfg(not(target_arch="wasm32"))]
@@ -3054,6 +3076,18 @@ mod tests {
         let prior=cam.position.x;
         cam.move_by(&keys,0.04,None,None);
         assert!(cam.position.x<prior,"A while facing north must move west");
+    }
+
+    #[test]
+    fn sprint_speed_input_is_bounded_and_non_finite_values_are_rejected(){
+        assert_eq!(validated_fast_travel_mps(Some("180")),180.0);
+        assert_eq!(validated_fast_travel_mps(Some("240")),240.0);
+        assert_eq!(validated_fast_travel_mps(Some("999")),MAX_FAST_TRAVEL_MPS);
+        assert_eq!(validated_fast_travel_mps(Some("2")),MIN_FAST_TRAVEL_MPS);
+        assert_eq!(validated_fast_travel_mps(Some("NaN")),DEFAULT_FAST_TRAVEL_MPS);
+        assert_eq!(validated_fast_travel_mps(Some("inf")),DEFAULT_FAST_TRAVEL_MPS);
+        assert_eq!(validated_fast_travel_mps(Some("bogus")),DEFAULT_FAST_TRAVEL_MPS);
+        assert_eq!(validated_fast_travel_mps(None),DEFAULT_FAST_TRAVEL_MPS);
     }
 
     #[test]
