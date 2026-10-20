@@ -49,8 +49,11 @@
       // Hard cap for nearby detailed GPU cells. Distant buildings retain
       // source-backed compact skyline massing rather than disappearing.
       const chunks=Number(params.get("detailcells"));
+      // Unverified expansion sections begin with a smaller detailed mesh
+      // budget. Exact building-footprint distant massing remains visible.
+      const defaultCells=selected.id==="i110-westlake"?"12":"96";
       document.documentElement.dataset.detailChunkLimit=
-        [6,12,24,48,96].includes(chunks)?String(chunks):"96";
+        [6,12,24,48,96].includes(chunks)?String(chunks):defaultCells;
       // Pure draw-call filtering; the 30 pilot chunks remain GPU-resident.
       // frustum=0 is a visual parity reference and zero-culling fallback.
       document.documentElement.dataset.frustumCulling=params.get("frustum")==="0"?"false":"true";
@@ -576,9 +579,18 @@
       regionMenu.value=activeRegion.id;
       const joined=document.documentElement.dataset.worldPreview==="true";
       const worldToggle=document.getElementById("world-preview-toggle");
-      worldToggle.textContent="Joined Downtown + Little Tokyo: "+(joined?"on":"off");
+      const joinSupported=activeRegion.id==="downtown-la" ||
+        activeRegion.id==="little-tokyo-east";
+      worldToggle.textContent=joinSupported
+        ? "Joined Downtown + Little Tokyo: "+(joined?"on":"off")
+        : "Joined view: unavailable until region streaming is verified";
+      worldToggle.title=joinSupported
+        ? "Show two source-backed adjacent city sections"
+        : "This region is intentionally standalone to bound GPU memory";
+      worldToggle.disabled=!joinSupported;
       worldToggle.setAttribute("aria-pressed",String(joined));
       worldToggle.addEventListener("click",()=>{
+        if(!joinSupported)return;
         const url=new URL(location.href);
         if(joined)url.searchParams.set("world","0");
         else url.searchParams.delete("world");
@@ -924,7 +936,8 @@
         const value=cellLimit.value;
         document.documentElement.dataset.detailChunkLimit=value;
         const url=new URL(location.href);
-        if(value==="96")url.searchParams.delete("detailcells");
+        const fallback=activeRegion.id==="i110-westlake"?"12":"96";
+        if(value===fallback)url.searchParams.delete("detailcells");
         else url.searchParams.set("detailcells",value);
         history.replaceState(null,"",url.href);
       });

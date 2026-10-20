@@ -21,7 +21,8 @@
   const nativeFetch=window.fetch.bind(window);
   const inFlight=new Map();
   const states=Object.create(null);
-  const telemetry={assets:states,networkRequests:0,cacheHits:0,versions};
+  const telemetry={assets:states,networkRequests:0,cacheHits:0,
+    inFlightReuses:0,versions};
   window.__urbariumGeoCache=telemetry;
   const eligible=req=>{
     const url=new URL(req.url);
@@ -132,7 +133,14 @@
     let req;
     try{req=new Request(input,init);}catch(_){return nativeFetch(input,init);}
     if(!eligible(req)||req.cache==="no-store")return nativeFetch(input,init);
-    if(inFlight.has(req.url))return inFlight.get(req.url).then(r=>r.clone());
+    if(inFlight.has(req.url)){
+      // Reusing an already requested response is not another HTTP transfer.
+      // This can occur before the short coalescing window expires, even
+      // after its persistent CacheStorage write has completed.
+      telemetry.inFlightReuses++;
+      emit(req,"SHARED RESPONSE");
+      return inFlight.get(req.url).then(r=>r.clone());
+    }
     const pending=load(req);
     inFlight.set(req.url,pending);
     // Keep a successful recent response briefly so early JavaScript preview

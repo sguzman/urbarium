@@ -550,10 +550,15 @@ with sync_playwright() as p:
         print("Versioned CacheStorage ignored stale pre-bridge data and reused SHA-matched assets without HTTP")
         cache_state=page.evaluate("() => window.__urbariumGeoCache")
         assert cache_state["networkRequests"]==2,cache_state
-        assert cache_state["cacheHits"]>=2,cache_state
+        # Either persistent disk hits or recent in-memory response sharing
+        # avoids the network. A quick browser can reuse both requests before
+        # the 10-second in-flight coalescing window expires.
+        assert (cache_state["cacheHits"]+
+                cache_state["inFlightReuses"])>=2,cache_state
         assert set(cache_state["assets"])=={"City","Terrain"},cache_state
         page.locator("#hud-tab-details").click()
-        assert page.locator("#geodata-cache-state").inner_text().count("CACHE HIT")==2
+        cache_labels=page.locator("#geodata-cache-state").inner_text()
+        assert cache_labels.count("CACHE HIT")+cache_labels.count("SHARED RESPONSE")==2,cache_labels
         assert page.locator("#boot-stage").count()==1
         page.wait_for_function(
             "() => document.querySelector('#boot-stage')?.dataset.phase === 'first-present'",
@@ -985,9 +990,15 @@ with sync_playwright() as p:
         }""",timeout=60000)
         assert page.locator("#region-select").input_value()=="i110-westlake"
         assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="false"
+        assert page.locator("#world-preview-toggle").is_disabled()
         assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
         assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
-        print("I-110/Westlake: standalone sourced 3D/terrain/minimap passed")
+        page.wait_for_function("""() => Number(
+            document.querySelector("#status")?.dataset.chunksBuilt||0)>=3
+        """,timeout=45000)
+        assert int(page.locator("#status").get_attribute("data-chunks-resident"))<=6
+        assert int(page.locator("#status").get_attribute("data-far-massing-bytes"))>0
+        print("I-110/Westlake: standalone source 3D, far skyline and 6-cell budget passed")
         # Real neighboring geometry loaded into a separate GPU buffer under a
         # strict residency cap, with camera crossing the geographic seam.
         page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&world=0','')}&progressive=0",
