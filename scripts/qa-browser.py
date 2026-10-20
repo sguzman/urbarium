@@ -110,6 +110,58 @@ with sync_playwright() as p:
         assert page.locator("#startup-preview").count()==0, (
             "Pre-WASM sketch still overlays the live 3D renderer")
         print("GPU first frame has no static street-image overlay")
+        # The theme only changes HUD controls. Test browser OS color
+        # preference changes, explicit overrides and persistent selection.
+        # Nothing in the world, minimap, or session may be reinitialized.
+        theme_select=page.locator("#hud-theme-select")
+        assert theme_select.input_value()=="system"
+        theme_origin=page.evaluate("() => performance.timeOrigin")
+        theme_url=page.url
+        def theme_snapshot():
+            return page.evaluate("""() => {
+                const css=(selector,prop)=>getComputedStyle(
+                    document.querySelector(selector)).getPropertyValue(prop);
+                return {
+                    selected:document.querySelector("#hud-theme-select").value,
+                    resolved:document.documentElement.dataset.hudTheme,
+                    hud:css(".hud","background-color"),
+                    minimap:css(".minimap","background-color"),
+                    mapCanvas:css("#minimap-canvas","background-color"),
+                    worldCanvas:css("canvas:not(#minimap-canvas):not(#webgpu-control)","background-color"),
+                    frames:Number(document.querySelector("#status").dataset.frameCount)
+                };
+            }""")
+        baseline=theme_snapshot()
+        page.emulate_media(color_scheme="light")
+        page.wait_for_function("""() =>
+            document.documentElement.dataset.hudTheme==="light" """)
+        light=theme_snapshot()
+        assert light["hud"]!=baseline["hud"] or baseline["resolved"]=="light"
+        assert light["minimap"]==baseline["minimap"]
+        assert light["mapCanvas"]==baseline["mapCanvas"]
+        assert light["worldCanvas"]==baseline["worldCanvas"]
+        theme_select.select_option("dark")
+        page.wait_for_function("""() => document.documentElement.dataset.hudTheme==="dark" """)
+        dark=theme_snapshot()
+        assert dark["hud"]!=light["hud"]
+        assert page.evaluate("""() =>
+            localStorage.getItem("urbarium-hud-theme-v1")""")=="dark"
+        page.emulate_media(color_scheme="dark")
+        page.emulate_media(color_scheme="light")
+        assert theme_snapshot()["resolved"]=="dark","Manual dark theme changed with system"
+        theme_select.select_option("system")
+        page.wait_for_function("""() => document.documentElement.dataset.hudTheme==="light" """)
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_function("""() => document.documentElement.dataset.hudTheme==="dark" """)
+        assert page.evaluate("""() =>
+            localStorage.getItem("urbarium-hud-theme-v1")""")=="system"
+        assert page.url==theme_url and page.evaluate("() => performance.timeOrigin")==theme_origin
+        assert theme_snapshot()["minimap"]==baseline["minimap"]
+        assert theme_snapshot()["mapCanvas"]==baseline["mapCanvas"]
+        assert theme_snapshot()["worldCanvas"]==baseline["worldCanvas"]
+        assert not errors,errors
+        print("HUD system/light/dark palette switching, persistence and map isolation passed")
+
         # Progressive geometry is now the default; retain the full-scene
         # compatibility path for explicit progressive=0 URLs.
         assert page.evaluate("() => document.documentElement.dataset.progressivePreview")=="true"

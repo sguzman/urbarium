@@ -138,6 +138,23 @@
   <script src="./minimap.js?v=category-filter-v3" defer></script>
   <link data-trunk rel="copy-file" href="web/stats.js">
   <script src="./stats.js" defer></script>
+  <script>
+    // HUD palette only. Initialize before CSS so the system choice does not
+    // flash the wrong panel colors; never touch canvas or map palettes.
+    (() => {
+      const key="urbarium-hud-theme-v1";
+      let preference="system";
+      try{
+        const stored=localStorage.getItem(key);
+        if(["system","light","dark"].includes(stored))preference=stored;
+      }catch(_){}
+      const root=document.documentElement;
+      const preferredDark=window.matchMedia?.("(prefers-color-scheme: dark)").matches??true;
+      root.dataset.hudThemePreference=preference;
+      root.dataset.hudTheme=preference==="system"
+        ?(preferredDark?"dark":"light"):preference;
+    })();
+  </script>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; }
     html, body {margin:0;width:100%;height:100%;overflow:hidden;background:#101921;color:#e7eef3;}
@@ -347,6 +364,72 @@
     .footer {position:fixed;bottom:12px;left:18px;font-size:11px;color:#e6e5d5;
       background:rgba(8,17,24,.7);padding:7px;border-radius:7px;z-index:2;}
     a {color:#a3cfed;pointer-events:auto;}
+
+    /* The theme deliberately applies ONLY to HUD controls and diagnostics.
+       Never style the canvas, minimap, landmarks, roads, or world geometry. */
+    html[data-hud-theme="light"] .hud,
+    html[data-hud-theme="light"] #stats-panel,
+    html[data-hud-theme="light"] #scene-ui-toggle {
+      color-scheme:light;
+      color:#172b36;
+      background:rgba(249,252,253,.96);
+      border-color:#a4b8c2;
+      box-shadow:0 5px 18px #142c3a24;
+    }
+    html[data-hud-theme="light"] .hud h1,
+    html[data-hud-theme="light"] #stats-panel h2,
+    html[data-hud-theme="light"] .hud-pane,
+    html[data-hud-theme="light"] .hud-summary,
+    html[data-hud-theme="light"] .hud p,
+    html[data-hud-theme="light"] .hud .renderer-control,
+    html[data-hud-theme="light"] .hud .hud-options,
+    html[data-hud-theme="light"] .hud .scene-controls,
+    html[data-hud-theme="light"] .hud .sprint-row label,
+    html[data-hud-theme="light"] #stats-panel dd {
+      color:#243e4b;
+    }
+    html[data-hud-theme="light"] .hud .hud-hint,
+    html[data-hud-theme="light"] .hud #renderer-health,
+    html[data-hud-theme="light"] .hud #boot-stage,
+    html[data-hud-theme="light"] .hud #geodata-cache-state,
+    html[data-hud-theme="light"] #stats-panel dt,
+    html[data-hud-theme="light"] #stats-panel .stats-note {
+      color:#4b6571;
+    }
+    html[data-hud-theme="light"] .hud #status {color:#255d3b;}
+    html[data-hud-theme="light"] .hud #input-state {color:#385568;}
+    html[data-hud-theme="light"] .hud #speed-state,
+    html[data-hud-theme="light"] .hud .sprint-row output,
+    html[data-hud-theme="light"] .hud #time-label {color:#825719;}
+    html[data-hud-theme="light"] .hud-tabs {border-bottom-color:#bdcdd4;}
+    html[data-hud-theme="light"] .hud-tab {color:#526b7b;}
+    html[data-hud-theme="light"] .hud-tab[aria-selected="true"]{
+      color:#173c50;background:#dcecf0;border-bottom-color:#337d89;
+    }
+    html[data-hud-theme="light"] .hud button:not(.hud-tab),
+    html[data-hud-theme="light"] .hud select,
+    html[data-hud-theme="light"] .hud input:not([type="checkbox"]):not([type="range"]):not([type="radio"]),
+    html[data-hud-theme="light"] #stats-panel button{
+      color:#1b4152;background:#edf5f8;
+      border-color:#9eb7c3;
+    }
+    html[data-hud-theme="light"] .hud button[aria-pressed="true"]{
+      color:#185341;background:#ccebe0;border-color:#75ac96;
+    }
+    html[data-hud-theme="light"] .hud button:focus-visible,
+    html[data-hud-theme="light"] .hud select:focus-visible,
+    html[data-hud-theme="light"] #stats-panel button:focus-visible {
+      outline:2px solid #327fa2;outline-offset:2px;
+    }
+    html[data-hud-theme="light"] .hud input[type="range"],
+    html[data-hud-theme="light"] .hud input[type="checkbox"]{
+      accent-color:#267d91;
+    }
+    html[data-hud-theme="light"] .hud .scene-note,
+    html[data-hud-theme="light"] .hud #gpu-fallback-message{
+      color:#835119;
+    }
+    html[data-hud-theme="light"] #stats-last-error{color:#9b3926;}
   </style>
 </head>
 <body>
@@ -487,6 +570,16 @@
     </section>
     <section id="hud-pane-advanced" class="hud-pane" role="tabpanel"
       aria-labelledby="hud-tab-advanced" hidden>
+      <div class="hud-field">
+        <label class="renderer-control" for="hud-theme-select">HUD appearance
+          <select id="hud-theme-select" aria-label="HUD color theme">
+            <option value="system">System · automatic</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+      </div>
+      <p id="hud-theme-note" class="hud-hint">System follows the browser's OS light/dark preference. Map colors never change.</p>
       <div class="hud-field">
         <button id="progressive-preview-toggle" type="button" aria-pressed="false"
           title="Show terrain and streets before buildings and adjacent region; click to use the full-scene startup fallback">Progressive first frame: on</button>
@@ -631,6 +724,32 @@
       };
       setSprintSpeed(initialSprint,false);
       sprintSlider.addEventListener("input",()=>setSprintSpeed(sprintSlider.value,true));
+      // Only the HUD panels respond to system theme updates. This reads the
+      // browser's prefers-color-scheme media feature (including via the OS
+      // desktop portal when supported) and never reloads the Rust renderer.
+      const hudThemeSelect=document.getElementById("hud-theme-select");
+      const hudThemeKey="urbarium-hud-theme-v1";
+      const hudThemeMedia=window.matchMedia?.("(prefers-color-scheme: dark)");
+      let hudThemePreference=document.documentElement.dataset.hudThemePreference||"system";
+      const updateHudTheme=()=>{
+        const resolved=hudThemePreference==="system"
+          ?(hudThemeMedia?.matches===false?"light":"dark"):hudThemePreference;
+        document.documentElement.dataset.hudThemePreference=hudThemePreference;
+        document.documentElement.dataset.hudTheme=resolved;
+      };
+      hudThemeSelect.value=hudThemePreference;
+      hudThemeSelect.addEventListener("change",()=>{
+        const choice=hudThemeSelect.value;
+        if(!["system","light","dark"].includes(choice))return;
+        hudThemePreference=choice;
+        updateHudTheme();
+        try{localStorage.setItem(hudThemeKey,choice);}catch(_){}
+      });
+      if(hudThemeMedia?.addEventListener)
+        hudThemeMedia.addEventListener("change",updateHudTheme);
+      else if(hudThemeMedia?.addListener)
+        hudThemeMedia.addListener(updateHudTheme);
+      updateHudTheme();
       const menu = document.getElementById("renderer-select");
       const health = document.getElementById("renderer-health");
       const status = document.getElementById("status");
