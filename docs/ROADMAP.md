@@ -136,8 +136,8 @@ overlays. Zoning and the broader "information world" remain deferred.
 
 - [x] Add the first source-backed west-side I-110 / Westlake section immediately
       west of Downtown. Package its city/DEM assets independently, check
-      building ownership and terrain seams, and keep it standalone with a
-      conservative default detailed-cell budget until joined streaming is ready.
+      building ownership and terrain seams; the region now participates
+      in the same catalog-driven joined renderer as Downtown and Little Tokyo.
 - [ ] Expand from Downtown LA to neighborhood-sized chunks across Los Angeles County.
 - [ ] Support user-selected destination regions without requiring a contiguous
       rendered corridor; maintain consistent independent source/provenance
@@ -150,12 +150,15 @@ overlays. Zoning and the broader "information world" remain deferred.
       low-poly building massing as a distant fallback. Report both the detailed
       cell count and compact fallback bytes; this is not a hard whole-browser
       memory allocation limit.
-- [ ] Make the adjustable residency budget work across joined, tiled regions
-      rather than only standalone camera-local streaming. Stream region source
-      data by camera distance and keep a coarser visible terrain/building
-      representation at long range; never silently remove distant skyline
-      geometry. Add hysteresis and screen-space LOD only when evidence-backed
-      QA proves no visible pop-in or significant memory regressions.
+- [x] Apply one total detailed GPU-cell budget across the joined Downtown /
+      Little Tokyo / Westlake world, with per-section sourced terrain and far
+      building massing, camera-following detail, and collision across seams.
+      Automate per-region ingestion, source/DEM seam tests and browser QA from
+      the catalog, without hand-writing a test for every region.
+- [ ] Add on-demand source-region paging and CPU/collision eviction for larger
+      catalogs. Keep coarse terrain/buildings visible at long range; add
+      spatial indexing, hysteresis and screen-space LOD only with measured
+      performance and visual regression gates.
 - [ ] Acquire adjacent I-110 west-side corridor regions one at a time, and
       verify source ownership, DEM seams, memory, and distant skyline before
       the next region is added.

@@ -88,20 +88,31 @@ for i,a in enumerate(regions):
             x["source_id"] for x in second["buildings"]}
         assert not common,(a["id"],b["id"],"duplicated seam buildings",sorted(common)[:10])
         aw,as_,ae,an=a["bbox"];bw,bs,be,bn=b["bbox"]
-        if abs(ae-bw)>1e-9 and abs(be-aw)>1e-9:continue
-        lon=ae if abs(ae-bw)<=1e-9 else be
-        low,high=max(as_,bs),min(an,bn)
-        if high<=low:continue
-        seams=[]
-        for index in range(21):
-            lat=low+(high-low)*index/20
-            seams.append(abs(sample(ta,lat,lon)-sample(tb,lat,lon)))
+        orientation=None
+        if abs(ae-bw)<=1e-9 or abs(be-aw)<=1e-9:
+            lon=ae if abs(ae-bw)<=1e-9 else be
+            low,high=max(as_,bs),min(an,bn)
+            if high>low:
+                orientation="east-west"
+                points=[(lat,lon) for lat in (
+                    low+(high-low)*i/20 for i in range(21))]
+        elif abs(an-bs)<=1e-9 or abs(bn-as_)<=1e-9:
+            lat=an if abs(an-bs)<=1e-9 else bn
+            low,high=max(aw,bw),min(ae,be)
+            if high>low:
+                orientation="north-south"
+                points=[(lat,lon) for lon in (
+                    low+(high-low)*i/20 for i in range(21))]
+        if not orientation:continue
+        seams=[abs(sample(ta,lat,lon)-sample(tb,lat,lon))
+               for lat,lon in points]
         greatest=max(seams)
-        # Source DEM tile seams with more than 20m of vertical disagreement
-        # cannot be depicted as continuous geometry.
-        assert greatest<20,(a["id"],b["id"],"terrain crack",greatest)
+        # A vertical seam in either direction must not contain a large
+        # discontinuity from separate DEM acquisitions.
+        assert greatest<20,(a["id"],b["id"],orientation,
+                            "terrain crack",greatest)
         summary[f'{a["id"]}+{b["id"]}']={
-            "sharedBoundary":"east-west",
+            "sharedBoundary":orientation,
             "sampledPoints":len(seams),
             "maximumElevationMismatchM":round(greatest,3)}
 print("WORLD_GEOMETRY_QA",json.dumps(summary,sort_keys=True))

@@ -36,10 +36,7 @@ on:
       - scripts/fetch-terrain.py
       - src/gltf.rs
       - src/main.rs
-      - regions/downtown-la.json
-      - regions/little-tokyo-east.json
-      - regions/i110-westlake.json
-      - regions/catalog.json
+      - regions/*.json
       - scripts/build-region-overture.sh
       - scripts/validate-region-catalog.py
       - scripts/build-downtown-overture.sh

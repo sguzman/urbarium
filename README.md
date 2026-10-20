@@ -12,13 +12,14 @@ pipeline and a browser viewer using **WebAssembly + wgpu (WebGL2/WebGPU)**.
 
 - Source-derived buildings, terrain and road/path surfaces for a bounded
   **Downtown LA** area (approximately 1.5 × 1.2 km).
-- An independently acquired **Little Tokyo / northern Arts District** section;
-  the original two-section joined world remains the default.
-- A third source-backed **I-110 / Westlake** section west of Downtown, selectable
-  from the region menu. It initially runs standalone with a 12-cell detailed
-  mesh budget and source-footprint distant skyline massing. The joined-world
-  toggle stays unavailable for this section until shared GPU residency is
-  implemented; `?detailcells=6` selects a lower detailed-cell budget.
+- Three joined, independently sourced LA sections: **Downtown, Little Tokyo /
+  northern Arts District, and I-110 / Westlake**. Any section can be selected
+  as the launch area, and the default joined world loads the other catalog
+  sections after the first rendered frame.
+- A **single camera-local detailed-cell budget** (48 by default) shared among
+  currently loaded geographic sections. Nonresident cells retain exact-source
+  building footprint massing. Use `?detailcells=6` for the lowest detail
+  budget or `?world=0` for a standalone diagnostic.
 - First-person movement, fast-travel toggle, collision against building
   footprints, and a north-up minimap with real geographic landmark anchors.
 - Progressive rendering: terrain and streets first, then buildings and

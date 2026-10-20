@@ -143,28 +143,35 @@ camera-local mesh cells are paged in and out, so reducing detail doesn't
 produce a suddenly empty skyline. This is geometric LOD, not a photographic
 billboard, and road, roof and fine facade details are not retained at far LOD.
 
-**Advanced → Detailed geometry cells** selects a live detail limit of
-6, 12, 24, 48 or 96 in standalone progressive mode (also available as
-`?world=0&detailcells=12`). Diagnostics report detailed residents, evictions,
-low-detail cell count and far proxy buffer bytes. These are GPU geometry
-residency settings, **not** a strict browser RAM limit: source City data,
-collision geometry, terrain, caches and the browser remain separately resident.
-The I-110 / Westlake expansion starts as a separate selectable section with
-a default limit of 12 detailed mesh cells; the previously validated Downtown
-and Little Tokyo options retain their existing defaults. The expanded
-section's normal first frame, skyline fallback, six-cell limit and both
-graphics backends are covered in browser QA. This does not yet mean
-geography across multiple selected sections shares a single cell budget.
+**Advanced → Detailed geometry cells** selects a live total detail limit of
+6, 12, 24, 48 or 96 across the currently loaded geographic sections
+(`?detailcells=6` for the lowest budget). Joined-world default is 48;
+standalone default is 96. The Rust cell scheduler ranks cells across source
+regions in one world coordinate frame, so moving toward another section
+reassigns detail instead of doubling GPU-resident detailed meshes.
+Far massing retains original footprint shape and height where detailed cells
+are evicted or not yet built.
 
-The joined two-section renderer still retains both full sections; its prior
-2.4 km artificial neighbor draw cutoff was removed because hiding an already
-resident region did not save GPU memory. Joined-region dynamic streaming and
-per-region far LOD remain future work, prerequisites for the longer I-110 /
-South Bay corridor.
+The initial Downtown, Little Tokyo and I-110 / Westlake sources are joined by
+default. The viewer loads the selected section for its real first frame,
+then fetches each other catalog section independently. It builds source
+terrain and footprint-derived far massing, and generates at most one new
+detailed neighbor mesh cell per frame when primary meshing has not already
+used that frame. On regional boundaries, collision and terrain sampling use
+the owning section's original coordinates. The minimap combines all loaded
+sections using the same geographic placement transforms.
 
-The original geographic city and collision data remain resident in CPU memory.
-Conservative coverage is intentional: **true occlusion culling has not yet
-been implemented**.
+**Important limitation:** this is a shared *GPU detailed-cell* budget,
+not a browser RAM or download ceiling. Full city source data, collision
+structures, the lightweight terrain and distant skyline for each catalog
+section still accumulate in CPU/browser memory as the catalog grows.
+On-demand source-region paging/eviction, spatial indexing, screen-space LOD
+and adaptive resource caps are remaining prerequisites before scaling
+through all of Los Angeles County. A previous arbitrary 2.4 km draw cutoff
+was retired because it hid already-loaded skyline without saving memory.
+Conservative frustum culling is draw-only; true occlusion culling is not
+yet implemented. Automated headless Chromium QA is not a substitute for
+hardware-specific Edge cold-transfer measurements.
 
 The initial coarse terrain/road preview is replaced with terrain-only after
 the first active neighborhood is complete, avoiding permanent duplicate road
