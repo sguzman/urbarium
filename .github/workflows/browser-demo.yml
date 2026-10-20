@@ -94,7 +94,7 @@ jobs:
           cities=()
           while IFS= read -r rid; do
             cities+=(--city "data/processed/$rid.json")
-          done < <(python3 -c 'import json; [print(r["id"]) for r in json.load(open("regions/catalog.json"))["regions"]')
+          done < <(python3 -c 'import json; [print(r["id"]) for r in json.load(open("regions/catalog.json"))["regions"]]')
           python3 scripts/publish_road_conflicts.py "${cities[@]}" --out web/assets/road-conflict-locations.json
       - name: Install pinned Trunk WebAssembly bundler
         run: |
