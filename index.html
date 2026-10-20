@@ -426,14 +426,14 @@
           </select>
         </label>
       </div>
-      <p id="msaa-note" class="hud-hint">Changing MSAA restarts the renderer.
-        Uses extra GPU framebuffer memory; unsupported hardware falls back to Off.</p>
+      <p id="msaa-note" class="hud-hint">Changes apply live without moving the camera.
+        4× MSAA uses more GPU memory; unsupported hardware stays at Off.</p>
       <div class="hud-field">
         <button id="safe-gpu-toggle" type="button" aria-pressed="false"
           title="Restart using a capped 640k-pixel framebuffer and at most 30 rendered frames per second">Conservative GPU: off</button>
       </div>
       <p id="gpu-fallback-message" class="scene-note" role="status" hidden></p>
-      <p class="hud-hint">Renderer and anti-aliasing changes restart the viewer. Resolution changes are live.</p>
+      <p class="hud-hint">Changing the graphics backend restarts the viewer. Anti-aliasing and resolution changes are live.</p>
     </section>
     <section id="hud-pane-details" class="hud-pane" role="tabpanel"
       aria-labelledby="hud-tab-details" hidden>
@@ -1176,20 +1176,28 @@
       const msaaNote=document.getElementById("msaa-note");
       msaaSelect.value=document.documentElement.dataset.msaaSamples||"1";
       msaaSelect.addEventListener("change",()=>{
+        // Rust rebuilds only the color/depth attachments and render pipelines
+        // on the next draw. Do NOT navigate: the user's camera, streamed
+        // cells and selected panel must survive the quality change.
+        document.documentElement.dataset.msaaSamples=msaaSelect.value;
         const url=new URL(location.href);
         if(msaaSelect.value==="1")url.searchParams.delete("msaa");
         else url.searchParams.set("msaa","4");
-        location.assign(url.href);
+        history.replaceState(null,"",url.href);
+        msaaNote.textContent="Applying anti-aliasing to the running renderer...";
+        // If the adapter cannot support this request, no GPU sample-count
+        // change will occur. The status stays at the supported fallback.
+        requestAnimationFrame(()=>requestAnimationFrame(refreshMsaa));
       });
       const msaaStatus=document.getElementById("status");
       const refreshMsaa=()=>{
         const active=msaaStatus?.dataset.msaaSamples;
         if(active){
           msaaNote.textContent=active==="4"
-            ?"4× MSAA active · more GPU memory. Changing this restarts the viewer."
+            ?"4× MSAA active · more GPU memory. Camera and loaded city preserved."
             : msaaSelect.value==="4"
               ?"4× MSAA unavailable on this graphics backend; running with AA Off."
-              :"MSAA Off · smallest color/depth framebuffer. Changing this restarts the viewer.";
+              :"MSAA Off · minimal framebuffer memory. Camera and loaded city preserved.";
         }
       };
       new MutationObserver(refreshMsaa).observe(msaaStatus,{

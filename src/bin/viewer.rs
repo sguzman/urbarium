@@ -1053,6 +1053,69 @@ fn set_chunk_telemetry(resident:usize,wanted:usize,built:u64,evicted:u64,
     let _=(resident,wanted,built,evicted,initial_complete);
 }
 
+fn create_city_pipelines(device:&wgpu::Device,layout:&wgpu::PipelineLayout,
+    shader:&wgpu::ShaderModule,format:wgpu::TextureFormat,msaa_samples:u32)
+    ->(wgpu::RenderPipeline,wgpu::RenderPipeline)
+{
+    let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+        label:Some("Urbarium city pipeline"),
+        layout:Some(&layout),
+        vertex:wgpu::VertexState{
+            module:&shader,entry_point:Some("vs_main"),
+            buffers:&[Some(wgpu::VertexBufferLayout{
+                array_stride:size_of::<GpuVertex>() as u64,
+                step_mode:wgpu::VertexStepMode::Vertex,
+                attributes:&VERTEX_ATTRS,
+            })],
+            compilation_options:Default::default(),
+        },
+        fragment:Some(wgpu::FragmentState{
+            module:&shader,entry_point:Some("fs_main"),
+            targets:&[Some(format.into())],
+            compilation_options:Default::default(),
+        }),
+        primitive:wgpu::PrimitiveState {
+            topology:wgpu::PrimitiveTopology::TriangleList,
+            cull_mode:None,..Default::default()
+        },
+        depth_stencil:Some(wgpu::DepthStencilState {
+            format:wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled:Some(true),depth_compare:Some(wgpu::CompareFunction::LessEqual),
+            stencil:Default::default(),bias:Default::default(),
+        }),
+        multisample:wgpu::MultisampleState{count:msaa_samples,
+            ..Default::default()},multiview_mask:None,cache:None,
+    });
+    let sky_pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+        label:Some("Urbarium procedural time-of-day sky"),
+        layout:Some(&layout),
+        vertex:wgpu::VertexState{
+            module:&shader,entry_point:Some("sky_vs"),buffers:&[],
+            compilation_options:Default::default(),
+        },
+        fragment:Some(wgpu::FragmentState{
+            module:&shader,entry_point:Some("sky_fs"),
+            targets:&[Some(format.into())],
+            compilation_options:Default::default(),
+        }),
+        primitive:wgpu::PrimitiveState {
+            topology:wgpu::PrimitiveTopology::TriangleList,
+            cull_mode:None,..Default::default()
+        },
+        // WebGPU/WebGL2 require the sky pipeline's attachment signature
+        // to match the render pass even though sky must not change depth.
+        depth_stencil:Some(wgpu::DepthStencilState {
+            format:wgpu::TextureFormat::Depth24Plus,
+            depth_write_enabled:Some(false),
+            depth_compare:Some(wgpu::CompareFunction::Always),
+            stencil:Default::default(),bias:Default::default(),
+        }),
+        multisample:wgpu::MultisampleState{count:msaa_samples,
+            ..Default::default()},multiview_mask:None,cache:None,
+    });
+    (pipeline,sky_pipeline)
+}
+
 struct Graphics {
     window: SharedWindow,
     surface: wgpu::Surface<'static>,
@@ -1062,6 +1125,9 @@ struct Graphics {
     surface_is_srgb: bool,
     pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
+    shader:wgpu::ShaderModule,
+    pipeline_layout:wgpu::PipelineLayout,
+    msaa_4x_supported:bool,
     depth: wgpu::TextureView,
     msaa_samples: u32,
     msaa_color: Option<wgpu::TextureView>,
@@ -1094,6 +1160,25 @@ struct Graphics {
     inspect_request:u32,
 }
 impl Graphics {
+    // Live GPU-only AA changes. Never recreate the window, Rust world,
+    // camera, streaming cells, or geographic data.
+    fn refresh_msaa(&mut self){
+        let requested=browser_msaa_samples();
+        let target=if requested==4 && self.msaa_4x_supported {4}else{1};
+        if target==self.msaa_samples{return;}
+        // Both render pipelines must agree with the color/depth attachment
+        // sample counts. Rebuild both before the next render pass.
+        let (pipeline,sky_pipeline)=create_city_pipelines(
+            &self.device,&self.pipeline_layout,&self.shader,self.config.format,target);
+        let depth=Self::depth_view(&self.device,self.config.width,self.config.height,target);
+        let color=Self::color_msaa_view(&self.device,&self.config,target);
+        self.pipeline=pipeline;
+        self.sky_pipeline=sky_pipeline;
+        self.depth=depth;
+        self.msaa_color=color;
+        self.msaa_samples=target;
+        expose_msaa_samples(target);
+    }
     fn color_msaa_view(device:&wgpu::Device,config:&wgpu::SurfaceConfiguration,
         samples:u32)->Option<wgpu::TextureView>{
         if samples<=1 {return None;}
@@ -1510,6 +1595,7 @@ impl Graphics {
             // Stop submitting work and retain the actual GPU failure.
             return false;
         }
+        self.refresh_msaa();
         let frame = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(frame) |
             wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -1809,9 +1895,10 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     // Explicit opt-in only. Adapter capabilities decide whether 4x MSAA
     // is safe on this WebGPU/WebGL2 backend; otherwise stay single-sampled.
     let msaa_flags=adapter.get_texture_format_features(config.format).flags;
-    let msaa_samples=if browser_msaa_samples()==4 &&
-        msaa_flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4 |
-            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE) {4}else{1};
+    let msaa_4x_supported=msaa_flags.contains(
+        wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4 |
+        wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE);
+    let msaa_samples=if browser_msaa_samples()==4 && msaa_4x_supported {4}else{1};
     expose_msaa_samples(msaa_samples);
     surface.configure(&device,&config);
     set_collision_count(collision.obstacle_count());
@@ -1854,62 +1941,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         bind_group_layouts:&[Some(&camera_layout)],
         immediate_size:0,
     });
-    let pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
-        label:Some("Urbarium city pipeline"),
-        layout:Some(&layout),
-        vertex:wgpu::VertexState{
-            module:&shader,entry_point:Some("vs_main"),
-            buffers:&[Some(wgpu::VertexBufferLayout{
-                array_stride:size_of::<GpuVertex>() as u64,
-                step_mode:wgpu::VertexStepMode::Vertex,
-                attributes:&VERTEX_ATTRS,
-            })],
-            compilation_options:Default::default(),
-        },
-        fragment:Some(wgpu::FragmentState{
-            module:&shader,entry_point:Some("fs_main"),
-            targets:&[Some(config.format.into())],
-            compilation_options:Default::default(),
-        }),
-        primitive:wgpu::PrimitiveState {
-            topology:wgpu::PrimitiveTopology::TriangleList,
-            cull_mode:None,..Default::default()
-        },
-        depth_stencil:Some(wgpu::DepthStencilState {
-            format:wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled:Some(true),depth_compare:Some(wgpu::CompareFunction::LessEqual),
-            stencil:Default::default(),bias:Default::default(),
-        }),
-        multisample:wgpu::MultisampleState{count:msaa_samples,
-            ..Default::default()},multiview_mask:None,cache:None,
-    });
-    let sky_pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
-        label:Some("Urbarium procedural time-of-day sky"),
-        layout:Some(&layout),
-        vertex:wgpu::VertexState{
-            module:&shader,entry_point:Some("sky_vs"),buffers:&[],
-            compilation_options:Default::default(),
-        },
-        fragment:Some(wgpu::FragmentState{
-            module:&shader,entry_point:Some("sky_fs"),
-            targets:&[Some(config.format.into())],
-            compilation_options:Default::default(),
-        }),
-        primitive:wgpu::PrimitiveState {
-            topology:wgpu::PrimitiveTopology::TriangleList,
-            cull_mode:None,..Default::default()
-        },
-        // WebGPU/WebGL2 require the sky pipeline's attachment signature
-        // to match the render pass even though sky must not change depth.
-        depth_stencil:Some(wgpu::DepthStencilState {
-            format:wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled:Some(false),
-            depth_compare:Some(wgpu::CompareFunction::Always),
-            stencil:Default::default(),bias:Default::default(),
-        }),
-        multisample:wgpu::MultisampleState{count:msaa_samples,
-            ..Default::default()},multiview_mask:None,cache:None,
-    });
+    let (pipeline,sky_pipeline)=create_city_pipelines(
+        &device,&layout,&shader,config.format,msaa_samples);
     let depth=Graphics::depth_view(&device,config.width,config.height,msaa_samples);
     let msaa_color=Graphics::color_msaa_view(&device,&config,msaa_samples);
     let vertex_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
@@ -1946,7 +1979,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         "Downtown LA".to_owned()
     }else{city.region.name.clone()};
     let graphics=Graphics {
-        window,surface,device,queue,config,surface_is_srgb,pipeline,sky_pipeline,depth,
+        window,surface,device,queue,config,surface_is_srgb,pipeline,sky_pipeline,
+        shader,pipeline_layout:layout,msaa_4x_supported,depth,
         msaa_samples,msaa_color,
         street_camera:camera.clone(),overview_camera,camera_request:0,
         camera,collision,terrain,region:city.region,

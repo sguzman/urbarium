@@ -1409,7 +1409,58 @@ with sync_playwright() as p:
         else:
             assert "unavailable" in note,note
         assert not errors,errors
-        print("MSAA graphics option + low-detail real-footprint LOD passed",
+        # Changing MSAA must NOT navigate. Preserve camera, terrain/mesh
+        # residency, DOM instance, and the already-rendered frame counter.
+        baseline=page.evaluate("""() => ({
+            timeOrigin:performance.timeOrigin,
+            root:document.documentElement,
+            pose:document.querySelector("#status").dataset.cameraPose,
+            frames:Number(document.querySelector("#status").dataset.frameCount),
+            resident:Number(document.querySelector("#status").dataset.chunksResident),
+            region:document.querySelector("#status").dataset.regionId
+        })""")
+        page.locator("#msaa-select").select_option("1")
+        page.wait_for_function("""(prior) => {
+            const s=document.querySelector("#status");
+            return s?.dataset.msaaSamples==="1" &&
+                Number(s.dataset.frameCount)>prior;
+        }""",arg=baseline["frames"],timeout=20000)
+        assert page.locator("#msaa-select").input_value()=="1"
+        middle=page.evaluate("""() => ({
+            timeOrigin:performance.timeOrigin,
+            pose:document.querySelector("#status").dataset.cameraPose,
+            frames:Number(document.querySelector("#status").dataset.frameCount),
+            resident:Number(document.querySelector("#status").dataset.chunksResident),
+            region:document.querySelector("#status").dataset.regionId,
+            tab:document.querySelector("#hud-tab-graphics").getAttribute("aria-selected")
+        })""")
+        assert middle["timeOrigin"]==baseline["timeOrigin"],"MSAA Off navigated the page"
+        assert middle["pose"]==baseline["pose"],"MSAA Off moved the camera"
+        assert middle["resident"]==baseline["resident"]==6
+        assert middle["region"]==baseline["region"]
+        assert middle["tab"]=="true","MSAA Off reset the graphics tab"
+        page.locator("#msaa-select").select_option("4")
+        page.wait_for_function("""([prior,expected]) => {
+            const s=document.querySelector("#status");
+            return s?.dataset.msaaSamples===expected &&
+                Number(s.dataset.frameCount)>prior+2;
+        }""",arg=[middle["frames"],actual],timeout=20000)
+        final=page.evaluate("""() => ({
+            timeOrigin:performance.timeOrigin,
+            pose:document.querySelector("#status").dataset.cameraPose,
+            frames:Number(document.querySelector("#status").dataset.frameCount),
+            resident:Number(document.querySelector("#status").dataset.chunksResident),
+            region:document.querySelector("#status").dataset.regionId,
+            tab:document.querySelector("#hud-tab-graphics").getAttribute("aria-selected")
+        })""")
+        assert final["timeOrigin"]==baseline["timeOrigin"],"MSAA 4x navigated the page"
+        assert final["pose"]==baseline["pose"],"MSAA 4x moved the camera"
+        assert final["resident"]==baseline["resident"]==6
+        assert final["region"]==baseline["region"]
+        assert final["tab"]=="true","MSAA 4x reset the graphics tab"
+        assert final["frames"]>middle["frames"]>baseline["frames"]
+        assert not errors,errors
+        print("MSAA Off/4x switched LIVE without navigation, camera movement or mesh eviction",
               {"requested":4,"active":actual,"residents":6,
                "farCells":page.locator("#status").get_attribute("data-far-massing-cells")})
         print("Source-driven road conflicts: explicit 3D review links for both regions passed")
