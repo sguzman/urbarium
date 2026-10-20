@@ -112,10 +112,6 @@ jobs:
           grep -q -- '--user-data-dir=\"\$profile\"' scripts/edge-vulkan-render.sh
           grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-render.sh
       - name: Compile real Rust/WebGPU WASM app
-        env:
-          # Reduce the transferred viewer WASM; leave the native/worker builds alone.
-          CARGO_PROFILE_RELEASE_LTO: fat
-          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
         run: trunk build --release --public-url ./
       - name: Start hashed WASM download before blocking scripts
         run: |
