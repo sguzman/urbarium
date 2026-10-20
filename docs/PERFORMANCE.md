@@ -186,27 +186,31 @@ The first-frame subset and complete source count are exposed as
 `data-first-frame-streets` and `data-source-streets`; browser QA verifies
 the first is smaller and nonempty while full scene enrichment still succeeds.
 
-## Persistent WASM executable cache (October 17)
+## Viewer WASM loading and browser caching (October 20)
 
-The viewer now registers a scoped service worker (`wasm-sw.js`) without
-blocking the first frame. When it controls the page, it intercepts **only**
-Trunk's content-fingerprinted `urbarium-viewer-*_bg.wasm` requests. It returns
-a CacheStorage hit without a network download, or streams a network response
-immediately and saves a clone asynchronously for the next visit. At most the
-two latest WASM revisions are retained. All HTML, CSS, generated JavaScript,
-geography JSON and other requests continue through their normal paths;
-geographic JSON retains its separate SHA256 cache.
+The release build emits a content-fingerprinted Rust viewer WASM file. Its
+existing native `rel="preload"` link is moved ahead of synchronous startup
+scripts, allowing the browser to request the module early without changing
+Trunk's module initializer. WASM requests use **native browser HTTP caching**;
+the main viewer does not use a custom CacheStorage interception layer.
+The retained `wasm-sw.js` is a pass-through migration worker with **no fetch
+handler**, replacing the older cache-first implementation.
 
-The Details tab distinguishes an observed disk cache hit from a fetch whose
-Resource Timing transfer count is merely zero. The diagnostic JSON includes
-`startup.wasmCache`. On the first visit the service worker may not yet control the document;
-therefore the page also intercepts the first WASM response and saves a
-clone asynchronously without waiting before 3D startup. Production builds
-remove Trunk's eager WASM preload, which otherwise bypasses that first
-request interception. The generated module bootstrap remains unchanged. Its next reload
-can then use the same binary directly from the service worker. Browser storage eviction, private mode or disabled service workers
-may require another download. This helps repeated WASM transfers, **not**
-first-ever WASM compilation or full-city geometry generation.
+A new viewer WASM fingerprint can require a fresh transfer, while a matching
+fingerprint may be reused according to normal browser caching behavior.
+Browser storage eviction, response headers, network conditions and browser
+implementation affect reuse. In particular, a zero Resource Timing transfer
+count alone does **not** prove a disk-cache hit. The Details panel and
+downloadable renderer report expose when the WASM request started, how long
+it took, when it completed, and the browser-reported bytes. The initial
+request may complete much later on a slow connection even when compilation
+and first-frame rendering are functioning normally.
+
+The CI startup benchmark measures cold and warm first **real rendered** frames
+using a local HTTP server and automated Chromium. It verifies the early
+preload, actual WASM loading and rendering; it does **not** reproduce GitHub
+Pages transfer latency or establish a universal startup target for Edge.
+Geographic asset caching remains independent and is documented below.
 
 ## Persistent geography cache and refresh
 
