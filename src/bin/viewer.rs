@@ -398,8 +398,13 @@ export function publish_city_for_minimap(data) {
     window.dispatchEvent(new Event('urbarium-city-ready'));
 }
 export function publish_neighbor_city_for_minimap(data) {
-    window.__urbariumNeighborCityJson=data;
-    window.dispatchEvent(new Event('urbarium-neighbor-city-ready'));
+    try {
+        const id=JSON.parse(data)?.region?.id;
+        if(!id)throw Error("Missing geographic section ID");
+        window.__urbariumNeighborCities??={};
+        window.__urbariumNeighborCities[id]=data;
+        window.dispatchEvent(new Event('urbarium-neighbor-city-ready'));
+    } catch(error) {console.error("Invalid joined geography",error);}
 }
 export function publish_terrain_for_minimap(data) {
     window.__urbariumTerrainJson = data;
@@ -1006,6 +1011,25 @@ type NeighborCpu=(
     Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>,TerrainGrid,Region,
     CollisionWorld,urbarium::world::TilePlacement,[f64;4]
 );
+// Streamed sections retain source/collision data and terrain, but never upload
+// a full neighbor-city mesh. Detailed road/building buffers share one global
+// camera-local budget, with an always-visible source-footprint skyline.
+type RegionalCpu=(
+    City,TerrainGrid,CollisionWorld,urbarium::world::TilePlacement,[f64;4]
+);
+struct RegionalTile{
+    source:City,
+    terrain:TerrainGrid,
+    collision:CollisionWorld,
+    placement:urbarium::world::TilePlacement,
+    bounds:[f64;4],
+    ground:ChunkBuffers,
+    far:Option<FarGpu>,
+    chunks:BTreeMap<urbarium::streaming::ChunkKey,ChunkBuffers>,
+    built:u64,
+    evicted:u64,
+}
+
 
 struct ChunkBuffers{
     vertex:Option<wgpu::Buffer>,
@@ -1016,6 +1040,26 @@ struct ChunkBuffers{
     batches:Vec<DrawBatch>,
     bytes:usize,
 }
+fn upload_world_chunk(device:&wgpu::Device,
+    vertices:Vec<GpuVertex>,indices:Vec<u32>,batches:Vec<DrawBatch>,
+    label:&str)->ChunkBuffers{
+    let bounds=urbarium::frustum::Bounds3::from_positions(
+        vertices.iter().map(|v|v.position));
+    let bytes=vertices.len()*size_of::<GpuVertex>()+
+        indices.len()*size_of::<u32>();
+    let vertex=(!vertices.is_empty()).then(||
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+            label:Some(label),contents:bytemuck::cast_slice(&vertices),
+            usage:wgpu::BufferUsages::VERTEX,
+        }));
+    let index=(!indices.is_empty()).then(||
+        device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+            label:Some(label),contents:bytemuck::cast_slice(&indices),
+            usage:wgpu::BufferUsages::INDEX,
+        }));
+    ChunkBuffers{vertex,index,bounds,batches,bytes}
+}
+
 struct FarGpu {
     vertex:wgpu::Buffer,
     index:wgpu::Buffer,
@@ -1146,7 +1190,8 @@ struct Graphics {
     batches:Vec<DrawBatch>,
     world_preview:bool,
     primary_bounds:[f64;4],
-    neighbor:Option<ResidentTile>,
+    neighbor:Option<ResidentTile>, // nonprogressive bridge diagnostic only
+    regional:BTreeMap<String,RegionalTile>, // bounded joined region streaming
     deferred_scene:Option<DeferredScene>,
     stream:Option<ChunkStream>,
     far:Option<FarGpu>,
@@ -1236,12 +1281,19 @@ impl Graphics {
         let mut z=prior.z as f64+movement.z as f64;
         let inside=|x:f64,z:f64| {
             urbarium::world::within(self.primary_bounds,x,z) ||
+            self.regional.values().any(|tile|
+                urbarium::world::within(tile.bounds,x,z)) ||
             self.neighbor.as_ref().is_some_and(|tile|
                 urbarium::world::within(tile.bounds,x,z))
         };
         let height=|x:f64,z:f64| -> f32 {
             if urbarium::world::within(self.primary_bounds,x,z) {
                 self.terrain.sample_surface(&self.region,x,z)
+            }else if let Some(tile)=self.regional.values().find(|tile|
+                urbarium::world::within(tile.bounds,x,z)) {
+                let local=tile.placement.local(x,z);
+                tile.terrain.sample_surface(&tile.source.region,local[0],local[1])+
+                    tile.placement.up_m
             }else if let Some(tile)=self.neighbor.as_ref().filter(|tile|
                 urbarium::world::within(tile.bounds,x,z)) {
                 tile.height(x,z)
@@ -1273,10 +1325,22 @@ impl Graphics {
         // instead of treating it as an impassable wall.
         let in_primary=urbarium::world::within(self.primary_bounds,x,z);
         let collision=if in_primary {Some((&self.collision,None))}
-            else {self.neighbor.as_ref().map(|tile|(&tile.collision,Some(tile.placement)))};
+            else {
+                self.regional.values().find(|tile|
+                    urbarium::world::within(tile.bounds,x,z))
+                    .map(|tile|(&tile.collision,Some(tile.placement)))
+                .or_else(||self.neighbor.as_ref().map(|tile|
+                    (&tile.collision,Some(tile.placement))))
+            };
         if let Some((world,placement))=collision {
             let bounds=if in_primary {self.primary_bounds}
-                else {self.neighbor.as_ref().map(|tile|tile.bounds).unwrap_or(self.primary_bounds)};
+                else {
+                    self.regional.values().find(|tile|
+                        urbarium::world::within(tile.bounds,x,z))
+                        .map(|tile|tile.bounds)
+                        .or_else(||self.neighbor.as_ref().map(|tile|tile.bounds))
+                        .unwrap_or(self.primary_bounds)
+                };
             let margin=0.5;
             let safely_inside=x>bounds[0]+margin&&x<bounds[2]-margin&&
                 z>bounds[1]+margin&&z<bounds[3]-margin;
@@ -1331,6 +1395,133 @@ impl Graphics {
         }
         self.gpu_mesh_bytes+=bytes;
         set_world_telemetry(2,0);
+    }
+
+    fn set_regional_stream(&mut self,source:RegionalCpu)->Result<(),String>{
+        let (city,terrain,collision,placement,bounds)=source;
+        if self.regional.contains_key(&city.region.id){return Ok(());}
+        let region=&city.region;
+        let mut ground_vertices=Vec::new();
+        let mut ground_indices=Vec::new();
+        let surface=terrain.mesh(region)?;
+        append_part(&surface,[0.39,0.44,0.42],
+            &mut ground_vertices,&mut ground_indices)?;
+        for v in &mut ground_vertices {
+            v.position=placement.point(v.position[0],v.position[1],v.position[2]);
+        }
+        let ground=upload_world_chunk(&self.device,ground_vertices,ground_indices,
+            vec![DrawBatch{layer:SceneLayer::Ground,first_index:0,
+                count:surface.indices.len() as u32}],"Joined region terrain");
+        let massing=urbarium::far_lod::build_far_massing(&city,&terrain)?;
+        let far=if !massing.indices.is_empty(){
+            let mut vertices=massing.vertices;
+            for vertex in &mut vertices{
+                vertex.position=placement.point(
+                    vertex.position[0],vertex.position[1],vertex.position[2]);
+            }
+            let cells=massing.cells.iter().map(|&(key,batch)|{
+                let start=batch.first_index as usize;
+                let end=start+batch.count as usize;
+                let bounds=urbarium::frustum::Bounds3::from_positions(
+                    massing.indices[start..end].iter()
+                        .map(|&i|vertices[i as usize].position));
+                (key,batch,bounds)
+            }).collect();
+            let bytes=vertices.len()*size_of::<GpuVertex>()+
+                massing.indices.len()*size_of::<u32>();
+            let far=FarGpu{
+                vertex:self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                    label:Some("Joined distant building geometry"),
+                    contents:bytemuck::cast_slice(&vertices),
+                    usage:wgpu::BufferUsages::VERTEX,
+                }),
+                index:self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
+                    label:Some("Joined distant building indices"),
+                    contents:bytemuck::cast_slice(&massing.indices),
+                    usage:wgpu::BufferUsages::INDEX,
+                }),
+                cells,bytes,
+            };
+            Some(far)
+        }else{None};
+        self.gpu_mesh_bytes+=ground.bytes+far.as_ref().map_or(0,|f|f.bytes);
+        let id=city.region.id.clone();
+        self.regional.insert(id,RegionalTile{
+            source:city,terrain,collision,placement,bounds,ground,far,
+            chunks:BTreeMap::new(),built:0,evicted:0,
+        });
+        set_world_telemetry(1+self.regional.len(),0);
+        Ok(())
+    }
+
+    /// Shared resident-cell budget: a chunk near the camera in ANY section
+    /// competes on equal terms. Source-footprint far massing remains in memory
+    /// even when a detailed cell is evicted or has not yet been built.
+    fn world_wanted(&self,limit:usize)
+      ->Vec<(String,urbarium::streaming::ChunkKey)> {
+        let camera=Point{x:self.camera.position.x as f64,
+            z:self.camera.position.z as f64};
+        let origin=urbarium::world::TilePlacement::between(
+            &self.region,self.terrain.origin_elevation_m,
+            &self.region,self.terrain.origin_elevation_m);
+        let mut sections=vec![(&self.region,origin)];
+        for tile in self.regional.values(){
+            sections.push((&tile.source.region,tile.placement));
+        }
+        urbarium::world::prioritized_world_cells(camera,&sections,limit)
+    }
+
+    fn update_regional_chunks(&mut self,
+        wanted:&[(String,urbarium::streaming::ChunkKey)],allow_build:bool){
+        let mut remaining=allow_build;
+        for (id,tile) in &mut self.regional {
+            let local_wanted:Vec<_>=wanted.iter().filter(|(owner,_)|owner==id)
+                .map(|(_,key)|*key).collect();
+            let obsolete:Vec<_>=tile.chunks.keys().copied()
+                .filter(|key|!local_wanted.contains(key)).collect();
+            for key in obsolete {
+                if let Some(old)=tile.chunks.remove(&key){
+                    self.gpu_mesh_bytes=self.gpu_mesh_bytes.saturating_sub(old.bytes);
+                    tile.evicted+=1;
+                }
+            }
+        }
+        // Build at most ONE detailed region cell per rendered frame, and only
+        // if the primary region did not consume this frame's mesh allowance.
+        // The global priority order is nearest camera first, not section order.
+        if remaining {
+            for (id,key) in wanted {
+                let Some(tile)=self.regional.get_mut(id) else{continue;};
+                if tile.chunks.contains_key(key){continue;}
+                match urbarium::chunk_mesh::build_chunk_payload(
+                    &tile.source,&tile.terrain,*key){
+                    Ok(mut payload)=>{
+                        for v in &mut payload.vertices{
+                            v.position=tile.placement.point(
+                                v.position[0],v.position[1],v.position[2]);
+                        }
+                        let chunk=upload_world_chunk(&self.device,
+                            payload.vertices,payload.indices,payload.batches,
+                            "Joined region detailed cell");
+                        self.gpu_mesh_bytes+=chunk.bytes;
+                        tile.chunks.insert(*key,chunk);
+                        tile.built+=1;
+                    }
+                    Err(error)=>info(&format!(
+                        "Joined region cell {id} ({},{}): {error}",key.x,key.z)),
+                }
+                remaining=false;
+                break;
+            }
+        }
+        #[cfg(target_arch="wasm32")]
+        if let Some(status)=web_sys::window().and_then(|w|w.document())
+            .and_then(|d|d.get_element_by_id("status")){
+            let resident=self.regional.values().map(|tile|tile.chunks.len()).sum::<usize>();
+            let total=self.regional.values().map(|tile|tile.built).sum::<u64>();
+            let _=status.set_attribute("data-regional-chunks-resident",&resident.to_string());
+            let _=status.set_attribute("data-regional-chunks-built",&total.to_string());
+        }
     }
 
     fn begin_streaming(&mut self,job:DeferredScene){
@@ -1408,12 +1599,14 @@ impl Graphics {
         set_elevated_span_count(elevated);
     }
     fn update_chunks(&mut self){
-        let Some(stream)=self.stream.as_mut() else{return};
         let camera=Point{x:self.camera.position.x as f64,
             z:self.camera.position.z as f64};
         let limit=browser_detail_chunk_budget();
-        let wanted=urbarium::streaming::desired_chunks_with_limit(
-            camera,&stream.source.region,limit);
+        let world_wanted=self.world_wanted(limit);
+        let wanted:Vec<_>=world_wanted.iter()
+            .filter(|(id,_)|id==&self.region.id)
+            .map(|(_,key)|*key).collect();
+        let Some(stream)=self.stream.as_mut() else{return};
         let previous_cell=stream.last_camera_cell.replace(
             urbarium::streaming::ChunkKey::at(camera));
         let moved=previous_cell!=stream.last_camera_cell;
@@ -1484,6 +1677,7 @@ impl Graphics {
                 }
             }
         }
+        let primary_built=finished.is_some();
         if let Some((key,ChunkMeshPayload{vertices,indices,batches}))=finished {
             let bounds=urbarium::frustum::Bounds3::from_positions(
                 vertices.iter().map(|v|v.position));
@@ -1540,7 +1734,9 @@ impl Graphics {
         }
         if complete {
             set_scene_detail(if self.world_preview {
-                if self.neighbor.is_some() {"joined"} else {"neighbor"}
+                if !self.regional.is_empty()||self.neighbor.is_some(){
+                    "joined"
+                }else{"neighbor"}
             }else{"complete"});
         }
         set_chunk_telemetry(resident,wanted.len(),built,evicted,initialized);
@@ -1551,6 +1747,16 @@ impl Graphics {
             let _=el.set_attribute("data-far-massing-cells",&distant.to_string());
             let _=el.set_attribute("data-far-massing-bytes",
                 &self.far.as_ref().map_or(0,|far|far.bytes).to_string());
+        }
+        // Discard obsolete neighbor detailed cells even if primary just built.
+        // Avoid generating two costly Rust chunks in a single frame.
+        self.update_regional_chunks(&world_wanted,!primary_built);
+        #[cfg(target_arch="wasm32")]
+        if let Some(status)=web_sys::window().and_then(|w|w.document())
+            .and_then(|d|d.get_element_by_id("status")){
+            let local=self.stream.as_ref().map_or(0,|s|s.chunks.len());
+            let others=self.regional.values().map(|tile|tile.chunks.len()).sum::<usize>();
+            let _=status.set_attribute("data-world-detailed-resident",&(local+others).to_string());
         }
     }
 
@@ -1701,6 +1907,52 @@ impl Graphics {
                 }
             }
             let mut secondary_draws=0;
+            for tile in self.regional.values(){
+                // Each joined section has one terrain buffer, optional exact-
+                // footprint skyline, and only the globally selected detail.
+                if let (Some(vertices),Some(indices))=(&tile.ground.vertex,&tile.ground.index){
+                    pass.set_vertex_buffer(0,vertices.slice(..));
+                    pass.set_index_buffer(indices.slice(..),wgpu::IndexFormat::Uint32);
+                    for batch in &tile.ground.batches{
+                        if !scene_layer_visible(batch.layer){continue;}
+                        pass.draw_indexed(batch.first_index..
+                            batch.first_index+batch.count,0,0..1);
+                        drawn_calls+=1;
+                        secondary_draws+=1;
+                        drawn_triangles+=batch.count/3;
+                    }
+                }
+                for cell in tile.chunks.values(){
+                    if frustum_enabled && !frustum.may_draw(cell.bounds){continue;}
+                    if let (Some(vertices),Some(indices))=(&cell.vertex,&cell.index){
+                        pass.set_vertex_buffer(0,vertices.slice(..));
+                        pass.set_index_buffer(indices.slice(..),wgpu::IndexFormat::Uint32);
+                        for batch in &cell.batches{
+                            if !scene_layer_visible(batch.layer){continue;}
+                            pass.draw_indexed(batch.first_index..
+                                batch.first_index+batch.count,0,0..1);
+                            drawn_calls+=1;
+                            secondary_draws+=1;
+                            drawn_triangles+=batch.count/3;
+                        }
+                    }
+                }
+                if let Some(far)=&tile.far{
+                    if scene_layer_visible(SceneLayer::Buildings){
+                        pass.set_vertex_buffer(0,far.vertex.slice(..));
+                        pass.set_index_buffer(far.index.slice(..),wgpu::IndexFormat::Uint32);
+                        for (key,batch,bounds) in &far.cells{
+                            if tile.chunks.contains_key(key){continue;}
+                            if frustum_enabled && !frustum.may_draw(*bounds){continue;}
+                            pass.draw_indexed(batch.first_index..
+                                batch.first_index+batch.count,0,0..1);
+                            drawn_calls+=1;
+                            secondary_draws+=1;
+                            drawn_triangles+=batch.count/3;
+                        }
+                    }
+                }
+            }
             if let Some(neighbor)=&self.neighbor {
                 let b=neighbor.bounds;
                 let px=(self.camera.position.x as f64).clamp(b[0],b[2]);
@@ -1723,7 +1975,8 @@ impl Graphics {
                     }
                 }
             }
-            set_world_telemetry(if self.neighbor.is_some(){2}else{1},secondary_draws);
+            set_world_telemetry(1+self.regional.len()+
+                usize::from(self.neighbor.is_some()),secondary_draws);
         }
         self.queue.submit([encoder.finish()]);
         self.queue.present(frame);
@@ -1986,6 +2239,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
         camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,
         world_preview:browser_joined_world(),primary_bounds,neighbor,
+        regional:BTreeMap::new(),
         deferred_scene,stream:None,far:None,primary_gpu_bytes,
         rendered_frames:0,batches,gpu_mesh_bytes,
         active_draw_calls:0,active_triangles:0,
@@ -2020,6 +2274,54 @@ async fn enrich_scene(job:DeferredScene,proxy:EventLoopProxy<AppEvent>) {
     }
     if joined {
         enrich_neighbor(city,terrain,bridge_preview,proxy).await;
+    }
+}
+
+/// Source-backed joined-world stream. The list comes from the same catalog
+/// used by the browser region picker and release packaging. New regions are
+/// automatically discovered; no title-specific pairing or two-region switch.
+async fn enrich_regions(city:City,terrain:TerrainGrid,proxy:EventLoopProxy<AppEvent>){
+    #[cfg(target_arch="wasm32")]
+    gloo_timers::future::TimeoutFuture::new(160).await;
+    let catalog:serde_json::Value=match serde_json::from_str(
+        include_str!("../../regions/catalog.json")){
+        Ok(value)=>value,
+        Err(error)=>{
+            info(&format!("Joined catalog rejected: {error}"));
+            return;
+        }
+    };
+    let Some(regions)=catalog["regions"].as_array() else{
+        info("Joined catalog has no source regions");
+        return;
+    };
+    for item in regions {
+        let Some(id)=item["id"].as_str() else{continue};
+        if id==city.region.id{continue;}
+        set_scene_detail("neighbor");
+        let result:Result<RegionalCpu,String>=async {
+            let other=fetch_city(id,false).await?;
+            let ground=fetch_terrain(id,false).await?;
+            ground.validate(&other.region)?;
+            let placement=urbarium::world::TilePlacement::between(
+                &city.region,terrain.origin_elevation_m,
+                &other.region,ground.origin_elevation_m);
+            let bounds=placement.bounds(&other.region);
+            let obstacles=CollisionWorld::from_city_with_terrain(&other,Some(&ground));
+            Ok((other,ground,obstacles,placement,bounds))
+        }.await;
+        match result{
+            Ok(data)=>{
+                if proxy.send_event(AppEvent::RegionalDetail(Box::new(data))).is_err(){
+                    return;
+                }
+                // Browser render loop handles the terrain and distant massing
+                // before another section arrives, bounding peak CPU pressure.
+                #[cfg(target_arch="wasm32")]
+                gloo_timers::future::TimeoutFuture::new(150).await;
+            }
+            Err(error)=>info(&format!("Joined region {id} unavailable: {error}")),
+        }
     }
 }
 
@@ -2058,6 +2360,7 @@ enum AppEvent {
     Ready(Graphics),
     PrimaryDetail(Vec<GpuVertex>,Vec<u32>,Vec<DrawBatch>),
     NeighborDetail(Box<NeighborCpu>),
+    RegionalDetail(Box<RegionalCpu>),
     Error(String), PointerLock(bool),
     ViewportResize(PhysicalSize<u32>), VisibilityChanged
 }
@@ -2137,6 +2440,15 @@ impl ApplicationHandler<AppEvent> for App {
                 if let Stage::Ready(gfx)=&mut self.state{
                     gfx.set_neighbor(*payload);
                     set_scene_detail("joined");
+                    gfx.window.request_redraw();
+                }
+            }
+            AppEvent::RegionalDetail(payload)=>{
+                if let Stage::Ready(gfx)=&mut self.state{
+                    match gfx.set_regional_stream(*payload){
+                        Ok(())=>set_scene_detail("joined"),
+                        Err(error)=>info(&format!("Joined region error: {error}")),
+                    }
                     gfx.window.request_redraw();
                 }
             }
@@ -2262,10 +2574,10 @@ impl ApplicationHandler<AppEvent> for App {
                                     let terrain=job.terrain.clone();
                                     #[cfg(target_arch="wasm32")]
                                     wasm_bindgen_futures::spawn_local(
-                                        enrich_neighbor(city,terrain,false,proxy));
+                                        enrich_regions(city,terrain,proxy));
                                     #[cfg(not(target_arch="wasm32"))]
                                     pollster::block_on(
-                                        enrich_neighbor(city,terrain,false,proxy));
+                                        enrich_regions(city,terrain,proxy));
                                 }
                                 gfx.begin_streaming(job);
                             }else{
