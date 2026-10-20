@@ -406,6 +406,12 @@ export function publish_neighbor_city_for_minimap(data) {
         window.dispatchEvent(new Event('urbarium-neighbor-city-ready'));
     } catch(error) {console.error("Invalid joined geography",error);}
 }
+// Read the release-stamped HTML catalog at runtime. Future geography-only
+// releases must not change the Rust WASM hash or force binary downloads.
+export function joined_region_ids() {
+    const rows=window.__urbariumRegionCatalog?.regions||[];
+    return JSON.stringify(rows.map(row=>row.id));
+}
 export function publish_terrain_for_minimap(data) {
     window.__urbariumTerrainJson = data;
     window.dispatchEvent(new Event('urbarium-terrain-ready'));
@@ -425,6 +431,7 @@ export function fallback_from_software_webgpu() {
 extern "C" {
     fn publish_city_for_minimap(data:&str);
     fn publish_neighbor_city_for_minimap(data:&str);
+    fn joined_region_ids()->String;
     fn publish_terrain_for_minimap(data:&str);
     fn fallback_from_software_webgpu();
 }
@@ -2283,21 +2290,20 @@ async fn enrich_scene(job:DeferredScene,proxy:EventLoopProxy<AppEvent>) {
 async fn enrich_regions(city:City,terrain:TerrainGrid,proxy:EventLoopProxy<AppEvent>){
     #[cfg(target_arch="wasm32")]
     gloo_timers::future::TimeoutFuture::new(160).await;
-    let catalog:serde_json::Value=match serde_json::from_str(
-        include_str!("../../regions/catalog.json")){
-        Ok(value)=>value,
-        Err(error)=>{
-            info(&format!("Joined catalog rejected: {error}"));
-            return;
-        }
-    };
-    let Some(regions)=catalog["regions"].as_array() else{
-        info("Joined catalog has no source regions");
-        return;
-    };
-    for item in regions {
-        let Some(id)=item["id"].as_str() else{continue};
-        if id==city.region.id{continue;}
+    #[cfg(target_arch="wasm32")]
+    let ids:Vec<String>=serde_json::from_str(&joined_region_ids())
+        .unwrap_or_default();
+    #[cfg(not(target_arch="wasm32"))]
+    let ids:Vec<String>=serde_json::from_str::<serde_json::Value>(
+        include_str!("../../regions/catalog.json")).ok()
+        .and_then(|c|c["regions"].as_array().map(|rows|rows.iter()
+            .filter_map(|row|row["id"].as_str().map(str::to_owned))
+            .collect())).unwrap_or_default();
+    for id in &ids {
+        if id==&city.region.id ||
+            id.is_empty() || id.len()>=80 ||
+            !id.bytes().all(|b|b.is_ascii_lowercase()||
+                b.is_ascii_digit()||b==b'-'){continue;}
         set_scene_detail("neighbor");
         let result:Result<RegionalCpu,String>=async {
             let other=fetch_city(id,false).await?;
