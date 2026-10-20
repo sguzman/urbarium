@@ -473,6 +473,24 @@ fn browser_frustum_culling()->bool {
     #[cfg(not(target_arch="wasm32"))]
     true
 }
+fn browser_msaa_samples()->u32 {
+    #[cfg(target_arch="wasm32")]
+    if let Some(value)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.document_element())
+        .and_then(|el|el.get_attribute("data-msaa-samples")){
+        return if value=="4" {4} else {1};
+    }
+    1
+}
+fn expose_msaa_samples(samples:u32) {
+    #[cfg(target_arch="wasm32")]
+    if let Some(el)=web_sys::window().and_then(|w|w.document())
+        .and_then(|d|d.get_element_by_id("status")){
+        let _=el.set_attribute("data-msaa-samples",&samples.to_string());
+    }
+    #[cfg(not(target_arch="wasm32"))]
+    let _=samples;
+}
 fn browser_detail_chunk_budget()->usize {
     #[cfg(target_arch="wasm32")]
     return web_sys::window().and_then(|w|w.document())
@@ -1045,6 +1063,8 @@ struct Graphics {
     pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     depth: wgpu::TextureView,
+    msaa_samples: u32,
+    msaa_color: Option<wgpu::TextureView>,
     camera: Camera,
     street_camera: Camera,
     overview_camera: Camera,
@@ -1074,12 +1094,26 @@ struct Graphics {
     inspect_request:u32,
 }
 impl Graphics {
-    fn depth_view(device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
+    fn color_msaa_view(device:&wgpu::Device,config:&wgpu::SurfaceConfiguration,
+        samples:u32)->Option<wgpu::TextureView>{
+        if samples<=1 {return None;}
+        Some(device.create_texture(&wgpu::TextureDescriptor{
+            label:Some("Urbarium MSAA color"),
+            size:wgpu::Extent3d{width:config.width.max(1),
+                height:config.height.max(1),depth_or_array_layers:1},
+            mip_level_count:1,sample_count:samples,
+            dimension:wgpu::TextureDimension::D2,format:config.format,
+            usage:wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats:&[],
+        }).create_view(&wgpu::TextureViewDescriptor::default()))
+    }
+    fn depth_view(device: &wgpu::Device, width: u32, height: u32,
+        samples:u32) -> wgpu::TextureView {
         device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Urbarium depth"),
             size: wgpu::Extent3d { width: width.max(1), height: height.max(1),
                 depth_or_array_layers: 1 },
-            mip_level_count: 1, sample_count: 1,
+            mip_level_count: 1, sample_count: samples,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Depth24Plus,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -1091,7 +1125,10 @@ impl Graphics {
         self.config.width=size.width.max(1);
         self.config.height=size.height.max(1);
         self.surface.configure(&self.device,&self.config);
-        self.depth=Self::depth_view(&self.device,self.config.width,self.config.height);
+        self.depth=Self::depth_view(&self.device,self.config.width,self.config.height,
+            self.msaa_samples);
+        self.msaa_color=Self::color_msaa_view(&self.device,&self.config,
+            self.msaa_samples);
         expose_surface_size(self.config.width,self.config.height);
     }
     fn resize(&mut self,size:PhysicalSize<u32>) {
@@ -1505,7 +1542,9 @@ impl Graphics {
             let mut pass=encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label:Some("Urbarium city"),
                 color_attachments:&[Some(wgpu::RenderPassColorAttachment {
-                    view:&view,depth_slice:None,resolve_target:None,
+                    view:self.msaa_color.as_ref().unwrap_or(&view),
+                    depth_slice:None,
+                    resolve_target:self.msaa_color.as_ref().map(|_|&view),
                     ops:wgpu::Operations {
                         load:wgpu::LoadOp::Clear(wgpu::Color{r:0.065,g:0.09,b:0.13,a:1.0}),
                         store:wgpu::StoreOp::Store
@@ -1767,6 +1806,13 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     let surface_is_srgb=matches!(config.format,
         wgpu::TextureFormat::Bgra8UnormSrgb|wgpu::TextureFormat::Rgba8UnormSrgb);
     expose_gpu_details(&gpu_info,config.format,surface_is_srgb);
+    // Explicit opt-in only. Adapter capabilities decide whether 4x MSAA
+    // is safe on this WebGPU/WebGL2 backend; otherwise stay single-sampled.
+    let msaa_flags=adapter.get_texture_format_features(config.format).flags;
+    let msaa_samples=if browser_msaa_samples()==4 &&
+        msaa_flags.contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_X4 |
+            wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE) {4}else{1};
+    expose_msaa_samples(msaa_samples);
     surface.configure(&device,&config);
     set_collision_count(collision.obstacle_count());
     let camera=spawn_camera;
@@ -1834,7 +1880,8 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
             depth_write_enabled:Some(true),depth_compare:Some(wgpu::CompareFunction::LessEqual),
             stencil:Default::default(),bias:Default::default(),
         }),
-        multisample:Default::default(),multiview_mask:None,cache:None,
+        multisample:wgpu::MultisampleState{count:msaa_samples,
+            ..Default::default()},multiview_mask:None,cache:None,
     });
     let sky_pipeline=device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
         label:Some("Urbarium procedural time-of-day sky"),
@@ -1860,9 +1907,11 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
             depth_compare:Some(wgpu::CompareFunction::Always),
             stencil:Default::default(),bias:Default::default(),
         }),
-        multisample:Default::default(),multiview_mask:None,cache:None,
+        multisample:wgpu::MultisampleState{count:msaa_samples,
+            ..Default::default()},multiview_mask:None,cache:None,
     });
-    let depth=Graphics::depth_view(&device,config.width,config.height);
+    let depth=Graphics::depth_view(&device,config.width,config.height,msaa_samples);
+    let msaa_color=Graphics::color_msaa_view(&device,&config,msaa_samples);
     let vertex_buffer=device.create_buffer_init(&wgpu::util::BufferInitDescriptor{
         label:Some("Urbarium vertices"),contents:bytemuck::cast_slice(&vertices),
         usage:wgpu::BufferUsages::VERTEX,
@@ -1898,6 +1947,7 @@ async fn try_init(window:SharedWindow,proxy:EventLoopProxy<AppEvent>) -> Result<
     }else{city.region.name.clone()};
     let graphics=Graphics {
         window,surface,device,queue,config,surface_is_srgb,pipeline,sky_pipeline,depth,
+        msaa_samples,msaa_color,
         street_camera:camera.clone(),overview_camera,camera_request:0,
         camera,collision,terrain,region:city.region,
         camera_buffer,camera_bind_group,vertices:vertex_buffer,indices:index_buffer,index_count,

@@ -73,6 +73,8 @@
       document.documentElement.dataset.renderPixelBudget =
         ({auto:1800000,high:1800000,balanced:1100000,low:640000})[
           document.documentElement.dataset.renderQuality];
+      document.documentElement.dataset.msaaSamples =
+        params.get("msaa")==="4"?"4":"1";
       if (mode === "webgl2") {
         try {
           Object.defineProperty(navigator, "gpu", {
@@ -417,11 +419,21 @@
         </label>
       </div>
       <div class="hud-field">
+        <label class="renderer-control" for="msaa-select">Anti-aliasing
+          <select id="msaa-select" aria-label="Multi-sample anti-aliasing">
+            <option value="1">Off · least memory</option>
+            <option value="4">4× MSAA · smoother edges</option>
+          </select>
+        </label>
+      </div>
+      <p id="msaa-note" class="hud-hint">Changing MSAA restarts the renderer.
+        Uses extra GPU framebuffer memory; unsupported hardware falls back to Off.</p>
+      <div class="hud-field">
         <button id="safe-gpu-toggle" type="button" aria-pressed="false"
           title="Restart using a capped 640k-pixel framebuffer and at most 30 rendered frames per second">Conservative GPU: off</button>
       </div>
       <p id="gpu-fallback-message" class="scene-note" role="status" hidden></p>
-      <p class="hud-hint">Changing the renderer restarts the viewer. Changing resolution is live.</p>
+      <p class="hud-hint">Renderer and anti-aliasing changes restart the viewer. Resolution changes are live.</p>
     </section>
     <section id="hud-pane-details" class="hud-pane" role="tabpanel"
       aria-labelledby="hud-tab-details" hidden>
@@ -1160,6 +1172,30 @@
         document.documentElement.dataset.geographyLatest=asset+":"+state;
       });
       menu.value = mode;
+      const msaaSelect=document.getElementById("msaa-select");
+      const msaaNote=document.getElementById("msaa-note");
+      msaaSelect.value=document.documentElement.dataset.msaaSamples||"1";
+      msaaSelect.addEventListener("change",()=>{
+        const url=new URL(location.href);
+        if(msaaSelect.value==="1")url.searchParams.delete("msaa");
+        else url.searchParams.set("msaa","4");
+        location.assign(url.href);
+      });
+      const msaaStatus=document.getElementById("status");
+      const refreshMsaa=()=>{
+        const active=msaaStatus?.dataset.msaaSamples;
+        if(active){
+          msaaNote.textContent=active==="4"
+            ?"4× MSAA active · more GPU memory. Changing this restarts the viewer."
+            : msaaSelect.value==="4"
+              ?"4× MSAA unavailable on this graphics backend; running with AA Off."
+              :"MSAA Off · smallest color/depth framebuffer. Changing this restarts the viewer.";
+        }
+      };
+      new MutationObserver(refreshMsaa).observe(msaaStatus,{
+        attributes:true,attributeFilter:["data-msaa-samples"]
+      });
+      refreshMsaa();
       const safeToggle=document.getElementById("safe-gpu-toggle");
       const safeMode=document.documentElement.dataset.safeGpu==="true";
       safeToggle.setAttribute("aria-pressed",String(safeMode));
