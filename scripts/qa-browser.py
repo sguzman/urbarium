@@ -972,6 +972,22 @@ with sync_playwright() as p:
         assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
         assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
         print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
+        # West-side geography is a separate real source section. Keep it
+        # standalone until multi-region memory residency is bounded.
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&region=i110-westlake&detailcells=6",
+                  wait_until="domcontentloaded")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.regionId==="i110-westlake" &&
+                s.dataset.renderStage==="first-present" &&
+                Number(s.dataset.frameCount)>3 &&
+                Number(s.dataset.worldSections)===1;
+        }""",timeout=60000)
+        assert page.locator("#region-select").input_value()=="i110-westlake"
+        assert page.locator("#world-preview-toggle").get_attribute("aria-pressed")=="false"
+        assert page.locator("#minimap-canvas").get_attribute("data-map-ready")=="true"
+        assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
+        print("I-110/Westlake: standalone sourced 3D/terrain/minimap passed")
         # Real neighboring geometry loaded into a separate GPU buffer under a
         # strict residency cap, with camera crossing the geographic seam.
         page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&world=0','')}&progressive=0",

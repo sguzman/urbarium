@@ -26,6 +26,17 @@
         -118.226,
         34.056
       ]
+    },
+    {
+      "id": "i110-westlake",
+      "label": "I-110 / Westlake (west of Downtown)",
+      "definition": "regions/i110-westlake.json",
+      "bbox": [
+        -118.274,
+        34.045,
+        -118.258,
+        34.056
+      ]
     }
   ]
 }

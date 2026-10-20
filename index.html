@@ -25,13 +25,15 @@
           document.documentElement.dataset.reviewFocus=focusText;
         }
       }
-      // Complete Downtown + Little Tokyo is the default; world=0 for standalone.
-       document.documentElement.dataset.worldPreview=params.get("world")==="0"?"false":"true";
-      // The joined city must never block its first frame on the complete
-      // geometry build. Preserve progressive=0 only for standalone or the
-      // explicitly experimental bridge preview used for diagnostics.
-      const joinedDefault=params.get("world")!=="0" &&
-        params.get("bridges")!=="1";
+      // Keep the proven two-section Downtown/Little Tokyo default.
+      // New source regions start in bounded standalone streaming mode.
+      // Do not load a full third section until shared-region GPU budgeting is ready.
+      const joinedAllowed=selected.id==="downtown-la" ||
+        selected.id==="little-tokyo-east";
+      const joined=joinedAllowed && params.get("world")!=="0";
+      document.documentElement.dataset.worldPreview=joined?"true":"false";
+      // Joined startup must render the first real frame before enrichment.
+      const joinedDefault=joined && params.get("bridges")!=="1";
       document.documentElement.dataset.progressivePreview=
         (joinedDefault || params.get("progressive")!=="0")?"true":"false";
       // Remove stale slow-start links rather than carrying progressive=0

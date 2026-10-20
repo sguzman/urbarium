@@ -38,6 +38,7 @@ on:
       - src/main.rs
       - regions/downtown-la.json
       - regions/little-tokyo-east.json
+      - regions/i110-westlake.json
       - regions/catalog.json
       - scripts/build-region-overture.sh
       - scripts/validate-region-catalog.py
@@ -85,12 +86,19 @@ jobs:
           python3 scripts/fetch-terrain.py --region regions/little-tokyo-east.json --out data/processed/little-tokyo-east-terrain.json
           cp data/processed/little-tokyo-east.json web/assets/little-tokyo-east.json
           cp data/processed/little-tokyo-east-terrain.json web/assets/little-tokyo-east-terrain.json
+          # Expand geography one source-backed section at a time. The new
+          # western section is standalone until joined GPU budgets are verified.
+          bash scripts/build-region-overture.sh regions/i110-westlake.json i110-westlake
+          python3 scripts/fetch-terrain.py --region regions/i110-westlake.json --out data/processed/i110-westlake-terrain.json
+          cp data/processed/i110-westlake.json web/assets/i110-westlake.json
+          cp data/processed/i110-westlake-terrain.json web/assets/i110-westlake-terrain.json
       - name: Build source-backed 3D conflict review locations
         run: |
           python3 -m unittest discover -s scripts -p 'test_publish_road_conflicts.py'
           python3 scripts/publish_road_conflicts.py \
             --city data/processed/downtown-la.json \
             --city data/processed/little-tokyo-east.json \
+            --city data/processed/i110-westlake.json \
             --out web/assets/road-conflict-locations.json
       - name: Install pinned Trunk WebAssembly bundler
         run: |
@@ -138,9 +146,11 @@ jobs:
           assert (dist/"index.html").is_file()
           assert (dist/"assets"/"downtown-la.json").is_file()
           assert (dist/"assets"/"little-tokyo-east.json").is_file()
+          assert (dist/"assets"/"i110-westlake.json").is_file()
+          assert (dist/"assets"/"i110-westlake-terrain.json").is_file()
           conflict_review=json.loads((dist/"assets"/"road-conflict-locations.json").read_text())
           assert conflict_review["schema_version"]==1
-          assert len(conflict_review["regions"])==2
+          assert len(conflict_review["regions"])==3
           assert sum(r["centerline_conflicts"] for r in conflict_review["regions"])==len(conflict_review["cases"])
           assert all(c["centerline_inside_m"]>0.05 for c in conflict_review["cases"])
           assert all(len(c["focus_lonlat"])==2 for c in conflict_review["cases"])
@@ -150,6 +160,16 @@ jobs:
           east_terrain=json.loads((dist/"assets"/"little-tokyo-east-terrain.json").read_text())
           assert east_terrain["region_id"]=="little-tokyo-east"
           assert east_terrain["width"]*east_terrain["height"]==len(east_terrain["heights_m"])
+          west=json.loads((dist/"assets"/"i110-westlake.json").read_text())
+          assert west["region"]["id"]=="i110-westlake"
+          assert len(west["streets"])>100 and len(west["buildings"])>50, (
+              len(west["streets"]),len(west["buildings"]))
+          west_terrain=json.loads((dist/"assets"/"i110-westlake-terrain.json").read_text())
+          assert west_terrain["region_id"]=="i110-westlake"
+          assert west_terrain["width"]*west_terrain["height"]==len(west_terrain["heights_m"])
+          # A new region must not silently multiply browser transfer size.
+          assert (dist/"assets"/"i110-westlake.json").stat().st_size < 2 * (
+              dist/"assets"/"downtown-la.json").stat().st_size
           city=json.loads((dist/"assets"/"downtown-la.json").read_text())
           assert len(city["streets"]) > 500
           assert len(city["buildings"]) > 300
@@ -189,7 +209,8 @@ jobs:
           assert hashes,"Missing geography content-version stamp in bundled HTML"
           versions=json.loads(hashes.group(1))
           for filename in ("downtown-la.json","downtown-la-terrain.json",
-                           "little-tokyo-east.json","little-tokyo-east-terrain.json"):
+                           "little-tokyo-east.json","little-tokyo-east-terrain.json",
+                           "i110-westlake.json","i110-westlake-terrain.json"):
               digest=hashlib.sha256((dist/"assets"/filename).read_bytes()).hexdigest()
               assert versions.get(filename)==digest,("Geography manifest mismatch",filename)
           print("Published cache versions:",{k:v[:12] for k,v in versions.items()})
@@ -215,7 +236,7 @@ jobs:
           assert 'id="layer-landmarks"' not in page
           assert 'refresh-geography' in page
           assert 'id="region-select"' in page
-          assert len(json.loads(page.split('window.__urbariumRegionCatalog = ',1)[1].split(';',1)[0])["regions"])==2
+          assert len(json.loads(page.split('window.__urbariumRegionCatalog = ',1)[1].split(';',1)[0])["regions"])==3
           print("Browser package:",len(city["streets"]),"streets;",
                 len(city["buildings"]),"buildings;",
                 wasm[0].stat().st_size,"WASM bytes")
