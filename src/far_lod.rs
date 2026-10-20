@@ -108,7 +108,9 @@ mod tests {
             .unwrap();
         let mut roof_area=0.0f64;
         for tri in mesh.indices.chunks_exact(3){
-            let pts=tri.map(|i|mesh.vertices[i as usize].position);
+            let pts=[mesh.vertices[tri[0] as usize].position,
+                mesh.vertices[tri[1] as usize].position,
+                mesh.vertices[tri[2] as usize].position];
             if pts.iter().all(|p|(p[1]-22.).abs()<0.001){
                 let a=pts[0];let b=pts[1];let c=pts[2];
                 let area=((b[0]-a[0])*(c[2]-a[2])-
@@ -133,7 +135,9 @@ mod tests {
         ]);
         let mesh=crate::geometry::mesh_building(&b,HeightPolicy::default()).unwrap();
         let area=mesh.indices.chunks_exact(3).filter_map(|tri|{
-            let [a,b,c]=tri.map(|i|mesh.vertices[i as usize].position);
+            let [a,b,c]=[mesh.vertices[tri[0] as usize].position,
+                mesh.vertices[tri[1] as usize].position,
+                mesh.vertices[tri[2] as usize].position];
             ((a[1]-22.).abs()<0.001&&(b[1]-22.).abs()<0.001&&
               (c[1]-22.).abs()<0.001).then_some(
                   ((b[0]-a[0])*(c[2]-a[2])-
