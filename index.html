@@ -1117,7 +1117,7 @@
         link.click();link.remove();
         setTimeout(()=>URL.revokeObjectURL(url),30000);
         document.getElementById("render-report-status").textContent=
-          "Renderer report downloaded. Upload the JSON file to ChatGPT.";
+          "Renderer report downloaded. Keep the JSON file for troubleshooting.";
       });
       document.getElementById("copy-viewer-diagnostics").addEventListener("click",async()=>{
         const info=JSON.stringify({

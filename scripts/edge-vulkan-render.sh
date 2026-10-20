@@ -34,7 +34,7 @@ printf 'Urbarium real WebGPU rendering test: AMD iGPU / Wayland / Vulkan\n'
 printf 'Temporary isolated Edge profile: %s\n' "$profile"
 printf 'Normal Edge, Hyprland and GPU settings remain unchanged.\n'
 printf 'Wait around 15 seconds, then click Download 3D rendering report.\n'
-printf 'Upload urbarium-render-report-*.json to ChatGPT.\n'
+printf 'Save urbarium-render-report-*.json for troubleshooting or a bug report.\n'
 printf 'Edge may print a Vulkan/Wayland incompatibility warning even when adapter discovery succeeds.\n'
 printf 'If unstable or hot, immediately close this Edge test window.\n\n'
 

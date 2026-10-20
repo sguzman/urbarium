@@ -25,7 +25,7 @@ trap 'rm -rf -- "$profile"' EXIT
 printf '\nUrbarium WebGPU hardware diagnostic (isolated Edge window)\n'
 printf 'Dedicated temporary profile: %s\n' "$profile"
 printf 'Normal Edge profile and flags are unchanged.\n'
-printf 'In the window, click "Run adapter test and download JSON"; upload the JSON to ChatGPT.\n'
+printf 'In the window, click "Run adapter test and download JSON"; keep the JSON for diagnostics.\n'
 printf 'The GPU test does not render a city or load your private browsing data.\n'
 printf 'This test enables Chromium Vulkan in a separate Edge process; if unstable, close it.\n\n'
 

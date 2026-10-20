@@ -40,7 +40,7 @@ with sync_playwright() as p:
     page.on("response", lambda r: print("HTTP ERROR:", r.status, r.url)
             if r.status >= 400 else None)
     qa_mode = "webgl2" if force_webgl else "webgpu"
-    # Reproduce the user's real regression: browser storage contains
+    # Regression scenario: browser storage contains
     # valid-looking but pre-bridge geography from an older deployment.
     # The new build MUST ignore it and fetch the fingerprinted assets once.
     page.goto("http://127.0.0.1:8010/assets/landmarks.json",
