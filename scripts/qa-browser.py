@@ -113,6 +113,7 @@ with sync_playwright() as p:
         # The theme only changes HUD controls. Test browser OS color
         # preference changes, explicit overrides and persistent selection.
         # Nothing in the world, minimap, or session may be reinitialized.
+        page.locator("#hud-tab-advanced").click()
         theme_select=page.locator("#hud-theme-select")
         assert theme_select.input_value()=="system"
         theme_origin=page.evaluate("() => performance.timeOrigin")
@@ -140,6 +141,10 @@ with sync_playwright() as p:
         assert light["minimap"]==baseline["minimap"]
         assert light["mapCanvas"]==baseline["mapCanvas"]
         assert light["worldCanvas"]==baseline["worldCanvas"]
+        theme_select.select_option("light")
+        assert theme_snapshot()["resolved"]=="light"
+        assert page.evaluate("""() =>
+            localStorage.getItem("urbarium-hud-theme-v1")""")=="light"
         theme_select.select_option("dark")
         page.wait_for_function("""() => document.documentElement.dataset.hudTheme==="dark" """)
         dark=theme_snapshot()
@@ -160,6 +165,7 @@ with sync_playwright() as p:
         assert theme_snapshot()["mapCanvas"]==baseline["mapCanvas"]
         assert theme_snapshot()["worldCanvas"]==baseline["worldCanvas"]
         assert not errors,errors
+        page.locator("#hud-tab-explore").click()
         print("HUD system/light/dark palette switching, persistence and map isolation passed")
 
         # Progressive geometry is now the default; retain the full-scene
