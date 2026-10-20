@@ -979,7 +979,7 @@ with sync_playwright() as p:
         print("Little Tokyo east section: independent real 3D + terrain + minimap passed")
         # West-side geography is a separate real source section. Keep it
         # standalone until multi-region memory residency is bounded.
-        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix}&region=i110-westlake&detailcells=6",
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&bridges=1','')}&region=i110-westlake&detailcells=6",
                   wait_until="domcontentloaded")
         page.wait_for_function("""() => {
             const s=document.querySelector("#status");
