@@ -134,6 +134,10 @@ previously validated asphalt-first pedestrian rules, source ownership,
 terrain seams and browser performance. Geographic regions are not zoning
 overlays. Zoning and the broader "information world" remain deferred.
 
+- [x] Add the first source-backed west-side I-110 / Westlake section immediately
+      west of Downtown. Package its city/DEM assets independently, check
+      building ownership and terrain seams, and keep it standalone with a
+      conservative default detailed-cell budget until joined streaming is ready.
 - [ ] Expand from Downtown LA to neighborhood-sized chunks across Los Angeles County.
 - [ ] Support user-selected destination regions without requiring a contiguous
       rendered corridor; maintain consistent independent source/provenance

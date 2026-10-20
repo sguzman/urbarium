@@ -149,6 +149,13 @@ billboard, and road, roof and fine facade details are not retained at far LOD.
 low-detail cell count and far proxy buffer bytes. These are GPU geometry
 residency settings, **not** a strict browser RAM limit: source City data,
 collision geometry, terrain, caches and the browser remain separately resident.
+The I-110 / Westlake expansion starts as a separate selectable section with
+a default limit of 12 detailed mesh cells; the previously validated Downtown
+and Little Tokyo options retain their existing defaults. The expanded
+section's normal first frame, skyline fallback, six-cell limit and both
+graphics backends are covered in browser QA. This does not yet mean
+geography across multiple selected sections shares a single cell budget.
+
 The joined two-section renderer still retains both full sections; its prior
 2.4 km artificial neighbor draw cutoff was removed because hiding an already
 resident region did not save GPU memory. Joined-region dynamic streaming and
