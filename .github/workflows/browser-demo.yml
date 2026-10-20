@@ -112,7 +112,15 @@ jobs:
           grep -q -- '--user-data-dir=\"\$profile\"' scripts/edge-vulkan-render.sh
           grep -q -- '--render-node-override=/dev/dri/renderD128' scripts/edge-vulkan-render.sh
       - name: Compile real Rust/WebGPU WASM app
+        env:
+          # Reduce the transferred viewer WASM; leave the native/worker builds alone.
+          CARGO_PROFILE_RELEASE_LTO: fat
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "1"
         run: trunk build --release --public-url ./
+      - name: Start hashed WASM download before blocking scripts
+        run: |
+          python3 scripts/hoist-wasm-preload.py --self-test
+          python3 scripts/hoist-wasm-preload.py dist/index.html
       - name: Build CPU-only Rust WASM mesh worker
         run: |
           cargo build --release --target wasm32-unknown-unknown --features viewer --bin urbarium-mesh-worker
@@ -156,6 +164,9 @@ jobs:
           wasm=list(dist.glob("*.wasm"))
           js=list(dist.glob("*.js"))
           assert wasm and js,(wasm,js)
+          viewer_wasm=list(dist.glob("urbarium-viewer-*_bg.wasm"))
+          assert len(viewer_wasm)==1,viewer_wasm
+          print("Main viewer WASM size:",viewer_wasm[0].stat().st_size,"bytes")
           assert (dist/"minimap.js").is_file(), "Minimap JavaScript missing from published site"
           assert (dist/"gpu-test.html").is_file(), "GPU diagnostic page must be shipped"
           assert (dist/"data-cache.js").is_file(), "Persistent geography cache script missing"
@@ -177,6 +188,7 @@ jobs:
           import hashlib,re
           page=(dist/"index.html").read_text()
           assert re.search(r'<link\b(?=[^>]*\brel="preload")(?=[^>]*\btype="application/wasm")',page), "Restore browser-native WASM preload"
+          assert page.index('rel="preload"')<page.index("<script"),"WASM preload must precede blocking scripts"
           hashes=re.search(r'window\.__urbariumGeographyVersions\s*=\s*(\{[^;]+\});',page)
           assert hashes,"Missing geography content-version stamp in bundled HTML"
           versions=json.loads(hashes.group(1))

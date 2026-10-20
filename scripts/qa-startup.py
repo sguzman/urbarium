@@ -21,6 +21,11 @@ with sync_playwright() as p:
         began=time.monotonic()
         page.goto(url,wait_until="domcontentloaded")
         assert page.locator('link[rel="preload"][type="application/wasm"]').count()==1
+        assert page.evaluate("""() => {
+            const preload=document.querySelector('link[rel="preload"][type="application/wasm"]');
+            const script=document.head.querySelector('script');
+            return !!preload && !!script && !!(preload.compareDocumentPosition(script) & Node.DOCUMENT_POSITION_FOLLOWING);
+        }"""),"WASM preload must load before blocking scripts"
         assert page.locator("#startup-preview").count()==0
         page.wait_for_function("""() =>
             document.querySelector("#status")?.dataset.renderStage==="first-present" &&
@@ -32,8 +37,11 @@ with sync_playwright() as p:
                 /urbarium-viewer-[0-9a-f]+_bg\.wasm/.test(x.name));
             return {
                 nativeCache:window.__urbariumWasmCache?.source,
+                wasmRequestStartMs:wasm?Math.round(wasm.startTime):null,
                 wasmFetchMs:wasm?Math.round(wasm.responseEnd-wasm.startTime):null,
                 wasmResponseAtMs:wasm?Math.round(wasm.responseEnd):null,
+                wasmTransferBytes:wasm?Math.round(wasm.transferSize):null,
+                wasmDecodedBytes:wasm?Math.round(wasm.decodedBodySize):null,
                 frameCount:Number(document.querySelector("#status").dataset.frameCount),
                 previewCanvasCount:document.querySelectorAll("#startup-preview").length
             };
