@@ -37,6 +37,7 @@ with sync_playwright() as p:
     page.on("request", lambda r: requests.append(r.url))
     errors = []
     page.on("pageerror", lambda e: (errors.append(str(e)), print("PAGE ERROR:", str(e))))
+    page.on("crash", lambda _: errors.append("Chromium tab crashed during viewer QA"))
     page.on("console", lambda m: print("CONSOLE", m.type, m.text))
     page.on("requestfailed", lambda r: print("REQUEST FAILED:", r.url, r.failure))
     page.on("response", lambda r: print("HTTP ERROR:", r.status, r.url)
@@ -1033,6 +1034,50 @@ with sync_playwright() as p:
                 Number(s?.dataset.worldSecondaryDrawcalls)>0;
         }""",timeout=30000)
         print("Catalog joined-world QA passed with one shared six-cell budget")
+        # A real exploration regression: exercise fast movement for several
+        # seconds while every region is resident, and reject device loss,
+        # tab crashes, runaway mesh residency and stalled presentations.
+        # This runs on both WebGPU and WebGL2 and never changes startup code.
+        page.mouse.click(650,450)
+        page.wait_for_function(
+            "() => document.pointerLockElement !== null",timeout=12000)
+        page.locator("#sprint-speed").evaluate("""el=>{
+            el.value="180";el.dispatchEvent(new Event("input",{bubbles:true}));
+        }""")
+        page.keyboard.press("Shift")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.speedMode==="fast" &&
+                Math.abs(Number(s.dataset.speedMps)-180)<0.01;
+        }""",timeout=10000)
+        page.keyboard.down("e")
+        page.wait_for_timeout(1000)
+        page.keyboard.up("e")
+        last_frames=int(page.locator("#status").get_attribute("data-frame-count"))
+        for key in ("w","d","s"):
+            page.keyboard.down(key)
+            try:
+                page.wait_for_timeout(4500)
+            finally:
+                page.keyboard.up(key)
+            sample=page.evaluate("""() => {
+                const s=document.querySelector("#status");
+                return {frames:Number(s.dataset.frameCount),
+                    gpuLost:s.dataset.gpuDeviceLost,
+                    regions:Number(s.dataset.worldSections),
+                    detailed:Number(s.dataset.worldDetailedResident),
+                    gpuBytes:Number(s.dataset.gpuMeshBytes)};
+            }""")
+            assert sample["frames"]>last_frames+2,("Rendering stalled during fast travel",key,sample)
+            assert sample["gpuLost"]=="false",("GPU lost during fast travel",key,sample)
+            assert sample["regions"]==len(region_ids),("Joined section disappeared",key,sample)
+            assert 0<=sample["detailed"]<=6,("Detailed GPU cell budget exceeded",key,sample)
+            assert 0<=sample["gpuBytes"]<256*1024*1024,("GPU mesh memory exceeded stress budget",key,sample)
+            assert not errors,("Browser error during fast travel",key,errors)
+            last_frames=sample["frames"]
+        page.keyboard.press("Shift")
+        print("Joined-world sustained 180 m/s flight passed on",qa_mode,
+              "with resident cells <=6 and no GPU/browser crash")
         # Real neighboring geometry loaded into a separate GPU buffer under a
         # strict residency cap, with camera crossing the geographic seam.
         page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}{suffix.replace('&world=0','')}&progressive=0",
