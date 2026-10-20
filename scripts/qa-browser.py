@@ -1385,6 +1385,33 @@ with sync_playwright() as p:
                          .get_attribute("data-eye-clearance"))>90.0
             assert page.locator("#status").get_attribute("data-gpu-backend")==selected_backend
             assert not errors,errors
+        # Graphics-tab MSAA and lowest-detail skyline are exercised together.
+        # This catches multi-sampled color/depth mismatches and low-memory
+        # fallback errors on BOTH WebGPU and forced WebGL2.
+        page.goto(f"http://127.0.0.1:8010/?renderer={qa_mode}"+
+                  ("&allow-software=1" if not force_webgl else "")+
+                  "&world=1&detailcells=6&msaa=4",
+                  wait_until="domcontentloaded")
+        page.wait_for_function("""() => {
+            const s=document.querySelector("#status");
+            return s?.dataset.renderStage==="first-present" &&
+                Number(s.dataset.frameCount)>2 &&
+                Number(s.dataset.chunksResident)===6 &&
+                Number(s.dataset.farMassingCells)>0 &&
+                ["1","4"].includes(s.dataset.msaaSamples);
+        }""",timeout=90000)
+        page.locator("#hud-tab-graphics").click()
+        assert page.locator("#msaa-select").input_value()=="4"
+        actual=page.locator("#status").get_attribute("data-msaa-samples")
+        note=page.locator("#msaa-note").inner_text()
+        if actual=="4":
+            assert "4× MSAA active" in note,note
+        else:
+            assert "unavailable" in note,note
+        assert not errors,errors
+        print("MSAA graphics option + low-detail real-footprint LOD passed",
+              {"requested":4,"active":actual,"residents":6,
+               "farCells":page.locator("#status").get_attribute("data-far-massing-cells")})
         print("Source-driven road conflicts: explicit 3D review links for both regions passed")
         print("6-second continuous rendering stability smoke test passed")
         print("Browser viewer WASM + drawn frames + visual canvas + camera keys: passed")
