@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "name": "Urbarium public geographic reconstruction ontology",
+  "status": "descriptive_model_for_partial_city_pilot",
+  "purpose": "Describe source geographic features, region envelopes, processing steps, and explicitly qualified 3D outputs; not a stored geographic dataset.",
+  "reference_docs": [
+    "docs/WORLD.md",
+    "docs/DATA.md",
+    "docs/OVERTURE.md",
+    "regions/catalog.json"
+  ],
+  "coordinate_systems": {
+    "source": "EPSG:4326 WGS84 longitude/latitude",
+    "region_bounds_order": [
+      "west",
+      "south",
+      "east",
+      "north"
+    ],
+    "local_axes": {
+      "x": "east in meters",
+      "z": "north in meters",
+      "y": "up in meters"
+    }
+  },
+  "entity_types": [
+    {
+      "id": "region",
+      "meaning": "Named geographic processing/viewer section defined by a bounding box, not an official jurisdiction."
+    },
+    {
+      "id": "source_dataset",
+      "meaning": "Externally maintained dataset with its own provenance, access terms, and geographic coverage."
+    },
+    {
+      "id": "source_feature",
+      "meaning": "Provider-identified road, path, building, part, or elevation feature."
+    },
+    {
+      "id": "building_footprint",
+      "meaning": "Source polygon or multipolygon, including holes and optional measured attributes."
+    },
+    {
+      "id": "building_part",
+      "meaning": "Source building-part feature attached by provider identity to an observed parent when possible."
+    },
+    {
+      "id": "transport_segment",
+      "meaning": "Source-derived way or centerline, not surveyed pavement or verified connectivity."
+    },
+    {
+      "id": "terrain_sample",
+      "meaning": "Source terrain/elevation observation with recorded units and provenance."
+    },
+    {
+      "id": "derived_geometry",
+      "meaning": "Mesh or geometric representation derived from source features by documented transforms."
+    },
+    {
+      "id": "viewer_scene",
+      "meaning": "Interactive rendering of a region, which does not by itself imply geographic completeness."
+    }
+  ],
+  "relation_types": [
+    {
+      "id": "derived_from",
+      "domain": "derived_geometry",
+      "range": "source_feature"
+    },
+    {
+      "id": "located_within_work_envelope",
+      "domain": "source_feature",
+      "range": "region"
+    },
+    {
+      "id": "provided_by",
+      "domain": "source_feature",
+      "range": "source_dataset"
+    },
+    {
+      "id": "rendered_in",
+      "domain": "derived_geometry",
+      "range": "viewer_scene"
+    },
+    {
+      "id": "part_of",
+      "domain": "building_part",
+      "range": "building_footprint"
+    }
+  ],
+  "region_catalog": "regions/catalog.json",
+  "source_policy": {
+    "references": [
+      "docs/DATA.md"
+    ],
+    "raw_geography_stored_in_repo": false,
+    "missing_height": "unknown unless expressly marked as rendering approximation"
+  },
+  "pilots": [
+    {
+      "id": "downtown-la",
+      "label": "Downtown LA",
+      "definition": "regions/downtown-la.json",
+      "study_rectangle": [
+        -118.258,
+        34.045,
+        -118.242,
+        34.056
+      ],
+      "status": "geographic_3d_prototype_not_complete_reconstruction"
+    },
+    {
+      "id": "little-tokyo-east",
+      "label": "Little Tokyo / Arts District",
+      "definition": "regions/little-tokyo-east.json",
+      "study_rectangle": [
+        -118.242,
+        34.04,
+        -118.226,
+        34.056
+      ],
+      "status": "geographic_3d_prototype_not_complete_reconstruction"
+    },
+    {
+      "id": "i110-westlake",
+      "label": "I-110 / Westlake (west of Downtown)",
+      "definition": "regions/i110-westlake.json",
+      "study_rectangle": [
+        -118.274,
+        34.045,
+        -118.258,
+        34.056
+      ],
+      "status": "geographic_3d_prototype_not_complete_reconstruction"
+    }
+  ]
+}

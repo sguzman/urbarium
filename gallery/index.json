@@ -1,0 +1,32 @@
+{
+  "format_version": 1,
+  "scope": "Existing public Urbarium geographic reconstruction demonstrations; not comprehensive city coverage.",
+  "entries": [
+    {
+      "id": "downtown-los-angeles-pilot",
+      "title": "Downtown Los Angeles 3D geographic pilot",
+      "status": "in_progress_partial_prototype",
+      "page": "index.html",
+      "website_url": "https://sguzman.github.io/urbarium/",
+      "source_readme": "README.md",
+      "regions": [
+        {
+          "id": "downtown-la",
+          "label": "Downtown LA",
+          "definition": "regions/downtown-la.json"
+        },
+        {
+          "id": "little-tokyo-east",
+          "label": "Little Tokyo / Arts District",
+          "definition": "regions/little-tokyo-east.json"
+        },
+        {
+          "id": "i110-westlake",
+          "label": "I-110 / Westlake (west of Downtown)",
+          "definition": "regions/i110-westlake.json"
+        }
+      ],
+      "limitations": "Geometry derives from incomplete provider data; building representations, roads, and interchanges are not surveyed or certified urban reconstructions."
+    }
+  ]
+}
